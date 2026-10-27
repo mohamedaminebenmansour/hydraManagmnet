@@ -49,7 +49,8 @@ public class PartyService {
     public record UpdatePartyRequest(String name, String type, String phone, Boolean active) {}
 
     // ══════════════════════════════════════════════════════════════
-    //  AUTH HELPERS
+    //  AUTH HELPERS — uses PERM_PARTY_MANAGE for writes.
+    //  Reads are gated by PERM_CASH_READ at the controller level (@PreAuthorize).
     // ══════════════════════════════════════════════════════════════
 
     private AppUser currentUser(Authentication auth) {
@@ -57,20 +58,25 @@ public class PartyService {
                 .orElseThrow(() -> new IllegalStateException("Unknown user: " + auth.getName()));
     }
 
+    /** True if the caller holds the given PERM_ authority (or is_owner). */
+    private boolean hasPermission(Authentication auth, String perm) {
+        String authority = "PERM_" + perm;
+        return auth.getAuthorities().stream()
+                .map(org.springframework.security.core.GrantedAuthority::getAuthority)
+                .anyMatch(authority::equals);
+    }
+
     /**
-     * Anyone authenticated in the org can list parties. Create/update requires
-     * FINANCE or OWNER — to avoid random chantier users creating fake suppliers.
+     * Anyone with PERM_PARTY_MANAGE can write parties. The controller
+     * @PreAuthorize already enforces this; we double-check here as
+     * defence-in-depth (and to give a clearer BusinessRuleException vs
+     * Spring's default 403 AccessDenied body).
      */
-    private void requireFinanceOrOwner(AppUser me) {
+    private void requireCanManage(Authentication auth, AppUser me) {
         if (Boolean.TRUE.equals(me.getIsOwner())) return;
-        Integer cnt = jdbc.queryForObject("""
-                select count(*) from user_role ur
-                join role r on r.id = ur.role_id
-                where ur.user_id = ? and r.code in ('FINANCE','OWNER','DIRECTION','ACHAT','CHEF_PROJET')
-                """, Integer.class, me.getId());
-        if (cnt == null || cnt == 0) {
+        if (!hasPermission(auth, "PARTY_MANAGE")) {
             throw new BusinessRuleException("FORBIDDEN",
-                    "Rôle FINANCE/ACHAT/CHEF_PROJET/OWNER requis pour gérer les tiers");
+                    "Permission manquante: PERM_PARTY_MANAGE — gestion des tiers");
         }
     }
 
@@ -124,7 +130,7 @@ public class PartyService {
     @Transactional
     public PartyResponse create(Authentication auth, CreatePartyRequest req) {
         AppUser me = currentUser(auth);
-        requireFinanceOrOwner(me);
+        requireCanManage(auth, me);
 
         if (req.name() == null || req.name().isBlank()) {
             throw new BadRequestException("NAME_REQUIRED", "Le nom du tiers est obligatoire");
@@ -148,7 +154,7 @@ public class PartyService {
     @Transactional
     public PartyResponse update(Authentication auth, UUID id, UpdatePartyRequest req) {
         AppUser me = currentUser(auth);
-        requireFinanceOrOwner(me);
+        requireCanManage(auth, me);
 
         List<Map<String, Object>> rows = jdbc.queryForList(
                 "select id from party where id = ? and org_id = ?", id, me.getOrgId());
@@ -191,7 +197,7 @@ public class PartyService {
     @Transactional
     public void deleteOrDeactivate(Authentication auth, UUID id) {
         AppUser me = currentUser(auth);
-        requireFinanceOrOwner(me);
+        requireCanManage(auth, me);
 
         List<Map<String, Object>> rows = jdbc.queryForList(
                 "select id from party where id = ? and org_id = ?", id, me.getOrgId());

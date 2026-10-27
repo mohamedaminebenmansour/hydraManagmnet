@@ -2,6 +2,7 @@ package tn.hydra.cash;
 
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.*;
 
@@ -10,6 +11,11 @@ import java.util.UUID;
 
 /**
  * Party REST endpoints — directory of sous-traitants / fournisseurs per org.
+ *
+ * Permission model (seeded in V22__cash_permissions.sql):
+ *   PERM_CASH_READ    — list + get parties (parties are part of the cash domain)
+ *   PERM_PARTY_MANAGE — create / update / delete parties
+ *
  * Base path: /api/parties
  */
 @RestController
@@ -24,6 +30,7 @@ public class PartyController {
 
     /** GET /api/parties?type=SUB&includeInactive=false */
     @GetMapping
+    @PreAuthorize("hasAuthority('PERM_CASH_READ')")
     public ResponseEntity<List<PartyService.PartyResponse>> list(
             @RequestParam(required = false) String type,
             @RequestParam(defaultValue = "false") boolean includeInactive,
@@ -33,6 +40,7 @@ public class PartyController {
 
     /** GET /api/parties/{id} */
     @GetMapping("/{id}")
+    @PreAuthorize("hasAuthority('PERM_CASH_READ')")
     public ResponseEntity<PartyService.PartyResponse> get(
             @PathVariable UUID id, Authentication auth) {
         return ResponseEntity.ok(svc.get(auth, id));
@@ -40,6 +48,7 @@ public class PartyController {
 
     /** POST /api/parties — body: { name, type, phone } */
     @PostMapping
+    @PreAuthorize("hasAuthority('PERM_PARTY_MANAGE')")
     public ResponseEntity<PartyService.PartyResponse> create(
             @RequestBody PartyService.CreatePartyRequest req,
             Authentication auth) {
@@ -49,6 +58,7 @@ public class PartyController {
 
     /** PUT /api/parties/{id} — body: { name?, type?, phone?, active? } */
     @PutMapping("/{id}")
+    @PreAuthorize("hasAuthority('PERM_PARTY_MANAGE')")
     public ResponseEntity<PartyService.PartyResponse> update(
             @PathVariable UUID id,
             @RequestBody PartyService.UpdatePartyRequest req,
@@ -58,6 +68,7 @@ public class PartyController {
 
     /** DELETE /api/parties/{id} — soft-deactivate if referenced, hard-delete otherwise. */
     @DeleteMapping("/{id}")
+    @PreAuthorize("hasAuthority('PERM_PARTY_MANAGE')")
     public ResponseEntity<Void> delete(@PathVariable UUID id, Authentication auth) {
         svc.deleteOrDeactivate(auth, id);
         return ResponseEntity.noContent().build();

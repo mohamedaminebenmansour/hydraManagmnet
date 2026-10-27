@@ -2,6 +2,7 @@ package tn.hydra.cash;
 
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.security.core.Authentication;
+import org.springframework.security.core.GrantedAuthority;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import tn.hydra.audit.EventLogService;
@@ -122,6 +123,49 @@ public class CashService {
                                     UUID postedBy, Instant postedAt,
                                     UUID voidedBy, Instant voidedAt, String voidReason) {}
 
+    /**
+     * Richer movement response — includes the human-readable names of the
+     * related entities so the frontend doesn't have to N+1 query pots, party,
+     * project, and the postedBy/voidedBy users.
+     *
+     * Backend-side JOINs: from_pot.name, to_pot.name, party.name, project.name,
+     * postedByUser.full_name, voidedByUser.full_name.
+     */
+    public record MovementDetailResponse(
+            UUID id, UUID orgId, String movementType,
+            BigDecimal amount, String currency, LocalDate movementDate,
+            UUID fromPotId, String fromPotName,
+            UUID toPotId, String toPotName,
+            UUID projectId, String projectName,
+            UUID partyId, String partyName, String partyType,
+            String label, String note, String status,
+            UUID processInstanceId, UUID createdBy, Instant createdAt,
+            UUID postedBy, String postedByName, Instant postedAt,
+            UUID voidedBy, String voidedByName, Instant voidedAt, String voidReason) {}
+
+    /** One event in the movement timeline. */
+    public record MovementTimelineEvent(
+            String action,         // CASH_MOVEMENT_CREATED | SUBMITTED | POSTED | VOIDED | REJECTED
+            Instant at,            // event_log.created_at
+            UUID userId,           // event_log.user_id (nullable for system-triggered)
+            String userName,       // app_user.full_name (nullable)
+            String details         // event_log.details (raw JSON string for the frontend to parse)
+    ) {}
+
+    /** Full timeline view = movement snapshot + ordered events. */
+    public record MovementTimeline(
+            UUID movementId,
+            String movementType,
+            BigDecimal amount,
+            String currency,
+            String status,
+            String fromPotName,
+            String toPotName,
+            String partyName,
+            String projectName,
+            UUID processInstanceId,
+            List<MovementTimelineEvent> events) {}
+
     public record CreateMovementRequest(String movementType, BigDecimal amount,
                                          LocalDate movementDate, UUID fromPotId, UUID toPotId,
                                          UUID projectId, UUID partyId,
@@ -138,7 +182,9 @@ public class CashService {
     public record VoidRequest(String reason) {}
 
     // ══════════════════════════════════════════════════════════════
-    //  AUTH HELPERS
+    //  AUTH HELPERS — proper permission checks via PERM_* authorities
+    //  (seeded in V22__cash_permissions.sql). Owner auto-gets all perms
+    //  via HydraUserDetailsService.allPermissions().
     // ══════════════════════════════════════════════════════════════
 
     private AppUser currentUser(Authentication auth) {
@@ -146,44 +192,41 @@ public class CashService {
                 .orElseThrow(() -> new IllegalStateException("Unknown user: " + auth.getName()));
     }
 
-    /**
-     * Require: is_owner OR FINANCE business role OR project member (for project-scoped actions).
-     * The "action" param is just for the error message.
-     */
-    private void requireCanWrite(AppUser me, UUID projectId, String action) {
-        if (Boolean.TRUE.equals(me.getIsOwner())) return;
-        // Check business role: FINANCE, ACHAT, CHEF_PROJET, DIRECTION
-        Integer cnt = jdbc.queryForObject("""
-                select count(*) from user_role ur
-                join role r on r.id = ur.role_id
-                where ur.user_id = ? and r.code in ('FINANCE','OWNER','DIRECTION','ACHAT','CHEF_PROJET')
-                """, Integer.class, me.getId());
-        if (cnt != null && cnt > 0) return;
-        // Project member fallback for project-scoped actions
-        if (projectId != null) {
-            Integer pm = jdbc.queryForObject(
-                    "select count(*) from project_member where project_id = ? and user_id = ?",
-                    Integer.class, projectId, me.getId());
-            if (pm != null && pm > 0) return;
-        }
-        throw new BusinessRuleException("FORBIDDEN",
-                "Action non autorisée : " + action + " nécessite OWNER/FINANCE/CHEF_PROJET ou appartenance au chantier");
+    /** True if the caller holds the given PERM_ authority (or is_owner). */
+    private boolean hasPermission(Authentication auth, String perm) {
+        String authority = "PERM_" + perm;
+        return auth.getAuthorities().stream()
+                .map(GrantedAuthority::getAuthority)
+                .anyMatch(authority::equals);
     }
 
-    /** Stricter check for POST and VOID: is_owner OR FINANCE business role. */
-    private void requireCanPostOrVoid(AppUser me) {
-        if (Boolean.TRUE.equals(me.getIsOwner())) return;
-        Integer cnt = jdbc.queryForObject("""
-                select count(*) from user_role ur
-                join role r on r.id = ur.role_id
-                where ur.user_id = ? and r.code in ('FINANCE','OWNER','DIRECTION')
-                """, Integer.class, me.getId());
-        if (cnt == null || cnt == 0) {
+    /** Throw 403 BusinessRuleException if caller lacks the perm. */
+    private void requirePermission(Authentication auth, String perm, String action) {
+        if (!hasPermission(auth, perm)) {
             throw new BusinessRuleException("FORBIDDEN",
-                    "Comptabilisation (POST/VOID) nécessite OWNER/FINANCE/DIRECTION");
+                    "Permission manquante: PERM_" + perm + " — action: " + action);
         }
     }
 
+    /**
+     * Require: is_owner OR has PERM_CASH_DRAFT permission.
+     * (Project membership is enforced separately via requireProjectAccess.)
+     */
+    private void requireCanWrite(Authentication auth, AppUser me, UUID projectId, String action) {
+        if (Boolean.TRUE.equals(me.getIsOwner())) return;
+        requirePermission(auth, "CASH_DRAFT", action);
+    }
+
+    /**
+     * Require: is_owner OR has PERM_CASH_POST for POST, PERM_CASH_VOID for VOID.
+     * The caller disambiguates which perm to check (POST vs VOID are different actions).
+     */
+    private void requireCanPostOrVoid(Authentication auth, AppUser me, String perm) {
+        if (Boolean.TRUE.equals(me.getIsOwner())) return;
+        requirePermission(auth, perm, "post-or-void");
+    }
+
+    /** Project member check — for project-scoped reads + writes on PROJECT pots. */
     private void requireProjectAccess(AppUser me, UUID projectId) {
         if (Boolean.TRUE.equals(me.getIsOwner())) return;
         if (projectId == null) return;
@@ -245,7 +288,7 @@ public class CashService {
     @Transactional
     public PotResponse ensureCompanyPot(Authentication auth) {
         AppUser me = currentUser(auth);
-        requireCanWrite(me, null, "ensure-company-pot");
+        requireCanWrite(auth, me, null, "ensure-company-pot");
 
         // Try to fetch existing active company pot
         List<Map<String, Object>> rows = jdbc.queryForList("""
@@ -396,7 +439,7 @@ public class CashService {
             }
         }
 
-        requireCanWrite(me, resolvedProjectId, "create-movement");
+        requireCanWrite(auth, me, resolvedProjectId, "create-movement");
 
         // Validate pot ownership (must be in caller's org)
         validatePotInOrg(req.fromPotId(), me.getOrgId());
@@ -439,7 +482,7 @@ public class CashService {
         }
 
         UUID projectId = (UUID) row.get("project_id");
-        requireCanWrite(me, projectId, "update-movement");
+        requireCanWrite(auth, me, projectId, "update-movement");
 
         validateMovementInput(req.movementType(), req.amount(), req.movementDate(),
                 req.fromPotId(), req.toPotId());
@@ -471,6 +514,93 @@ public class CashService {
         UUID projectId = (UUID) row.get("project_id");
         if (projectId != null) requireProjectAccess(me, projectId);
         return toMovementResponse(row);
+    }
+
+    /**
+     * Richer GET — single movement with pot names, party name, project name,
+     * postedBy name, voidedBy name. One JOINed query, no client-side N+1.
+     */
+    public MovementDetailResponse getMovementDetail(Authentication auth, UUID id) {
+        AppUser me = currentUser(auth);
+        List<Map<String, Object>> rows = jdbc.queryForList("""
+                select m.id, m.org_id, m.movement_type, m.amount, m.currency, m.movement_date,
+                       m.from_pot_id, fp.name as from_pot_name,
+                       m.to_pot_id,   tp.name as to_pot_name,
+                       m.project_id,  p.name as project_name,
+                       m.party_id,    py.name as party_name, py.type as party_type,
+                       m.label, m.note, m.status, m.process_instance_id,
+                       m.created_by,  m.created_at,
+                       m.posted_by,   pbu.full_name as posted_by_name,  m.posted_at,
+                       m.voided_by,   vu.full_name as voided_by_name,   m.voided_at,
+                       m.void_reason
+                from cash_movement m
+                left join cash_pot fp  on fp.id = m.from_pot_id
+                left join cash_pot tp  on tp.id = m.to_pot_id
+                left join project  p   on p.id  = m.project_id
+                left join party    py  on py.id  = m.party_id
+                left join app_user pbu on pbu.id = m.posted_by
+                left join app_user vu  on vu.id  = m.voided_by
+                where m.id = ? and m.org_id = ?
+                """, id, me.getOrgId());
+        if (rows.isEmpty()) {
+            throw new ResourceNotFoundException("MOVEMENT_NOT_FOUND", "Mouvement introuvable");
+        }
+        Map<String, Object> row = rows.get(0);
+        UUID projectId = (UUID) row.get("project_id");
+        if (projectId != null) requireProjectAccess(me, projectId);
+        return toMovementDetailResponse(row);
+    }
+
+    /**
+     * Movement timeline — ordered audit events for this movement.
+     * Events come from event_log WHERE entity_type='cash_movement' AND entity_id=movementId.
+     * Each event has: action, at, userId, userName (resolved via JOIN), details (raw JSON).
+     *
+     * Returns events for: CREATED, SUBMITTED, POSTED, VOIDED, REJECTED.
+     */
+    public MovementTimeline getMovementTimeline(Authentication auth, UUID movementId) {
+        AppUser me = currentUser(auth);
+        // Validate movement exists + caller has access (reuses fetchMovementForRead)
+        Map<String, Object> movement = fetchMovementForRead(movementId, me.getOrgId());
+        UUID projectId = (UUID) movement.get("project_id");
+        if (projectId != null) requireProjectAccess(me, projectId);
+
+        // Fetch the snapshot fields (pot names, party name, project name)
+        MovementDetailResponse snapshot = getMovementDetail(auth, movementId);
+
+        // Fetch all events
+        List<Map<String, Object>> eventRows = jdbc.queryForList("""
+                select el.action, el.created_at, el.user_id, el.details, u.full_name
+                from event_log el
+                left join app_user u on u.id = el.user_id
+                where el.entity_type = 'cash_movement'
+                  and el.entity_id = ?
+                order by el.created_at asc
+                """, movementId);
+
+        List<MovementTimelineEvent> events = eventRows.stream()
+                .map(r -> new MovementTimelineEvent(
+                        (String) r.get("action"),
+                        toInstant(r.get("created_at")),
+                        (UUID) r.get("user_id"),
+                        (String) r.get("full_name"),
+                        r.get("details") == null ? null : r.get("details").toString()
+                ))
+                .toList();
+
+        return new MovementTimeline(
+                movementId,
+                snapshot.movementType(),
+                snapshot.amount(),
+                snapshot.currency(),
+                snapshot.status(),
+                snapshot.fromPotName(),
+                snapshot.toPotName(),
+                snapshot.partyName(),
+                snapshot.projectName(),
+                snapshot.processInstanceId(),
+                events
+        );
     }
 
     /**
@@ -542,6 +672,81 @@ public class CashService {
                 .toList();
     }
 
+    /**
+     * Richer list — same filters as listMovements, but returns MovementDetailResponse
+     * with JOIN'd names. The frontend typically wants this version to avoid N+1
+     * fetches per row.
+     */
+    public List<MovementDetailResponse> listMovementsDetail(
+            Authentication auth, UUID potId, UUID partyId, UUID projectId,
+            String status, LocalDate from, LocalDate to) {
+
+        AppUser me = currentUser(auth);
+        if (projectId != null) requireProjectAccess(me, projectId);
+
+        StringBuilder sql = new StringBuilder("""
+                select m.id, m.org_id, m.movement_type, m.amount, m.currency, m.movement_date,
+                       m.from_pot_id, fp.name as from_pot_name,
+                       m.to_pot_id,   tp.name as to_pot_name,
+                       m.project_id,  p.name as project_name,
+                       m.party_id,    py.name as party_name, py.type as party_type,
+                       m.label, m.note, m.status, m.process_instance_id,
+                       m.created_by,  m.created_at,
+                       m.posted_by,   pbu.full_name as posted_by_name,  m.posted_at,
+                       m.voided_by,   vu.full_name as voided_by_name,   m.voided_at,
+                       m.void_reason
+                from cash_movement m
+                left join cash_pot fp  on fp.id = m.from_pot_id
+                left join cash_pot tp  on tp.id = m.to_pot_id
+                left join project  p   on p.id  = m.project_id
+                left join party    py  on py.id  = m.party_id
+                left join app_user pbu on pbu.id = m.posted_by
+                left join app_user vu  on vu.id  = m.voided_by
+                where m.org_id = ?
+                """);
+        List<Object> args = new ArrayList<>();
+        args.add(me.getOrgId());
+
+        if (potId != null) {
+            sql.append(" and (m.from_pot_id = ? or m.to_pot_id = ?)");
+            args.add(potId); args.add(potId);
+        }
+        if (partyId != null) {
+            sql.append(" and m.party_id = ?");
+            args.add(partyId);
+        }
+        if (projectId != null) {
+            sql.append(" and m.project_id = ?");
+            args.add(projectId);
+        }
+        if (status != null && !status.isBlank()) {
+            sql.append(" and m.status = ?");
+            args.add(status.trim().toUpperCase());
+        }
+        if (from != null) {
+            sql.append(" and m.movement_date >= ?");
+            args.add(Date.valueOf(from));
+        }
+        if (to != null) {
+            sql.append(" and m.movement_date <= ?");
+            args.add(Date.valueOf(to));
+        }
+        sql.append(" order by m.movement_date desc, m.created_at desc");
+
+        return jdbc.queryForList(sql.toString(), args.toArray())
+                .stream()
+                .map(CashService::toMovementDetailResponse)
+                .filter(m -> {
+                    if (Boolean.TRUE.equals(me.getIsOwner())) return true;
+                    if (m.projectId() == null) return true;
+                    Integer cnt = jdbc.queryForObject(
+                            "select count(*) from project_member where project_id = ? and user_id = ?",
+                            Integer.class, m.projectId(), me.getId());
+                    return cnt != null && cnt > 0;
+                })
+                .toList();
+    }
+
     // ══════════════════════════════════════════════════════════════
     //  POST / VOID — the immutable accounting core
     // ══════════════════════════════════════════════════════════════
@@ -559,7 +764,7 @@ public class CashService {
     @Transactional
     public PostResponse postMovement(Authentication auth, UUID id, boolean force) {
         AppUser me = currentUser(auth);
-        requireCanPostOrVoid(me);
+        requireCanPostOrVoid(auth, me, "CASH_POST");
 
         Map<String, Object> row = fetchMovementForUpdate(id, me.getOrgId());
         String status = (String) row.get("status");
@@ -636,7 +841,7 @@ public class CashService {
     @Transactional
     public MovementResponse voidMovement(Authentication auth, UUID id, VoidRequest req) {
         AppUser me = currentUser(auth);
-        requireCanPostOrVoid(me);
+        requireCanPostOrVoid(auth, me, "CASH_VOID");
 
         if (req == null || req.reason() == null || req.reason().isBlank()) {
             throw new BadRequestException("REASON_REQUIRED",
@@ -927,6 +1132,44 @@ public class CashService {
                 (UUID) row.get("posted_by"),
                 toInstant(row.get("posted_at")),
                 (UUID) row.get("voided_by"),
+                toInstant(row.get("voided_at")),
+                (String) row.get("void_reason")
+        );
+    }
+
+    /** Mapper for the richer response — uses JOIN'd columns (from_pot_name, etc.). */
+    private static MovementDetailResponse toMovementDetailResponse(Map<String, Object> row) {
+        Object movementDateObj = row.get("movement_date");
+        LocalDate movementDate = movementDateObj == null ? null
+                : (movementDateObj instanceof Date d ? d.toLocalDate()
+                    : LocalDate.parse(movementDateObj.toString()));
+        return new MovementDetailResponse(
+                (UUID) row.get("id"),
+                (UUID) row.get("org_id"),
+                (String) row.get("movement_type"),
+                (BigDecimal) row.get("amount"),
+                (String) row.get("currency"),
+                movementDate,
+                (UUID) row.get("from_pot_id"),
+                (String) row.get("from_pot_name"),
+                (UUID) row.get("to_pot_id"),
+                (String) row.get("to_pot_name"),
+                (UUID) row.get("project_id"),
+                (String) row.get("project_name"),
+                (UUID) row.get("party_id"),
+                (String) row.get("party_name"),
+                (String) row.get("party_type"),
+                (String) row.get("label"),
+                (String) row.get("note"),
+                (String) row.get("status"),
+                (UUID) row.get("process_instance_id"),
+                (UUID) row.get("created_by"),
+                toInstant(row.get("created_at")),
+                (UUID) row.get("posted_by"),
+                (String) row.get("posted_by_name"),
+                toInstant(row.get("posted_at")),
+                (UUID) row.get("voided_by"),
+                (String) row.get("voided_by_name"),
                 toInstant(row.get("voided_at")),
                 (String) row.get("void_reason")
         );
