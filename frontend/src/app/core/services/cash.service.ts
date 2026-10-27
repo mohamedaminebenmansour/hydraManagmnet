@@ -5,6 +5,7 @@ import { MessageService } from 'primeng/api';
 
 import {
   CashPot, CashMovement, MovementBody, BalanceResponse, PostResponse,
+  SubmitPaymentBody, SubmitPaymentResponse, MovementTimeline,
   mapPot, mapMovement, formatAmount,
 } from '@app/core/models/cash.model';
 
@@ -189,6 +190,53 @@ export class CashService {
     );
   }
 
+  /**
+   * POST /api/cash/movements/submit-payment — B5 short payment UX.
+   * Creates the OUT draft + starts the PAYMENT_APPROVAL workflow atomically.
+   * Returns null (with a toast) on failure.
+   */
+  submitPayment(body: SubmitPaymentBody): Observable<SubmitPaymentResponse | null> {
+    return this.http.post<AnyRaw>('/api/cash/movements/submit-payment', body).pipe(
+      map(raw => ({
+        movement: mapMovement(raw?.['movement']),
+        processInstanceId: String(raw?.['processInstanceId'] ?? ''),
+      })),
+      catchError(err => {
+        this.toastError(err, 'Impossible d\'envoyer le paiement pour validation');
+        return of(null);
+      })
+    );
+  }
+
+  /** GET /api/cash/movements/{id}/timeline — audit events + snapshot (B6). */
+  getTimeline(id: string): Observable<MovementTimeline | null> {
+    return this.http.get<AnyRaw>(`/api/cash/movements/${id}/timeline`).pipe(
+      map(raw => ({
+        movementId: String(raw?.['movementId'] ?? id),
+        movementType: String(raw?.['movementType'] ?? 'OUT'),
+        amount: Number(raw?.['amount'] ?? 0),
+        currency: String(raw?.['currency'] ?? 'TND'),
+        status: String(raw?.['status'] ?? 'DRAFT'),
+        fromPotName: raw?.['fromPotName'] ?? null,
+        toPotName: raw?.['toPotName'] ?? null,
+        partyName: raw?.['partyName'] ?? null,
+        projectName: raw?.['projectName'] ?? null,
+        processInstanceId: raw?.['processInstanceId'] ?? null,
+        events: (Array.isArray(raw?.['events']) ? raw['events'] : []).map((e: AnyRaw) => ({
+          action: String(e?.['action'] ?? ''),
+          at: e?.['at'] ?? null,
+          userId: e?.['userId'] ?? null,
+          userName: e?.['userName'] ?? null,
+          details: e?.['details'] ?? null,
+        })),
+      })),
+      catchError(err => {
+        this.toastError(err, 'Historique indisponible');
+        return of(null);
+      })
+    );
+  }
+
   // ── CACHE HELPERS ──────────────────────────────────────────────
 
   /** Get a pot by id from the cache (or fetch it if not cached). */
@@ -218,7 +266,7 @@ export class CashService {
     this.msgs.add({
       severity: 'error',
       summary: 'Erreur',
-      detail: err?.error?.message ?? err?.error?.code ?? fallback,
+      detail: err?.error?.message ?? err?.error?.detail ?? err?.error?.code ?? fallback,
     });
   }
 }

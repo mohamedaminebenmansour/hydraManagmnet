@@ -12,16 +12,21 @@ import { PartyService } from '@app/core/services/party.service';
 import { AuthService } from '@app/core/auth.service';
 import { PERM } from '@app/core/permissions';
 import {
-  CashMovement, formatAmount, formatDate,
+  CashMovement, MovementTimeline, formatAmount, formatDate,
   movementTypeVisual, movementStatusVisual, movementPending,
+  timelineActionVisual, parseTimelineDetails,
+  REJECTED_VISUAL, movementRejected,
 } from '@app/core/models/cash.model';
 
 /**
  * MovementDetailComponent — /tresorerie/operations/:id
  *
- * Shows all fields + status chip.
- * DRAFT (no process)  → Valider (poster, CASH_POST) + Modifier
+ * Shows all fields + status chip + audit timeline (B6, GET /timeline).
+ * DRAFT (no process) IN/TRANSFER → Valider (poster, CASH_POST) + Modifier
+ * DRAFT (no process) OUT → NO direct post (B5): payments must go through the
+ *   approval workflow — offers "Dupliquer et soumettre" (prefilled payment form)
  * DRAFT (process en cours) → "En attente" chip, no action buttons
+ * DRAFT (process rejeté)  → "Rejeté" chip (TASK 4) + resubmission shortcut
  * POSTED → Annuler (CASH_VOID) with required reason dialog
  * VOID   → read-only
  */
@@ -58,8 +63,8 @@ import {
             <div class="md-amount" [class.in]="m.movementType === 'IN'" [class.out]="m.movementType === 'OUT'">
               {{ m.movementType === 'IN' ? '+' : '−' }}{{ fmt(m.amount) }}
             </div>
-            <span class="md-status" [style.--st-color]="sv(m.status, pd(m)).color" [style.--st-soft]="sv(m.status, pd(m)).soft">
-              <i class="pi" [class]="sv(m.status, pd(m)).icon"></i> {{ sv(m.status, pd(m)).label }}
+            <span class="md-status" [style.--st-color]="chip(m).color" [style.--st-soft]="chip(m).soft">
+              <i class="pi" [class]="chip(m).icon"></i> {{ chip(m).label }}
             </span>
           </div>
         </header>
@@ -122,13 +127,34 @@ import {
             <div class="md-note info">
               <i class="pi pi-clock"></i>
               Un processus d'approbation est en cours — l'opération sera comptabilisée automatiquement à la validation.
+              <a [routerLink]="['/mes-taches']">Mes tâches</a>
             </div>
           } @else if (m.status === 'DRAFT') {
             @if (canDraft) {
               <button pButton label="Modifier" icon="pi pi-pencil" severity="info" [outlined]="true"
                       [routerLink]="['/tresorerie/operations', m.id, 'edit']"></button>
             }
-            @if (canPost) {
+            @if (m.movementType === 'OUT') {
+              <!-- B5: no naked post for OUT — approval workflow only -->
+              @if (isRejected()) {
+                <!-- TASK 4: the approval was refused → clear French feedback -->
+                <div class="md-note danger">
+                  <i class="pi pi-times-circle"></i>
+                  Paiement refusé lors de la validation — voir l'historique ci-dessous pour le motif.
+                </div>
+              } @else {
+                <div class="md-note muted">
+                  <i class="pi pi-shield"></i>
+                  Les sorties d'argent passent par le workflow de validation.
+                </div>
+              }
+              @if (canSubmit) {
+                <button pButton [label]="isRejected() ? 'Soumettre à nouveau' : 'Dupliquer et soumettre'"
+                        icon="pi pi-send" severity="success"
+                        [loading]="acting()"
+                        (click)="duplicateAndSubmit()"></button>
+              }
+            } @else if (canPost) {
               <button pButton label="Valider (poster)" icon="pi pi-check" severity="success"
                       [loading]="acting()"
                       (click)="post()"></button>
@@ -155,6 +181,36 @@ import {
             </div>
           }
         </div>
+
+        <!-- B6: audit timeline from GET /api/cash/movements/{id}/timeline -->
+        @if (timeline(); as t) {
+          <div class="md-timeline">
+            <h2><i class="pi pi-history"></i> Historique</h2>
+            @if (t.events.length === 0) {
+              <div class="md-note muted"><i class="pi pi-info-circle"></i> Aucun événement enregistré.</div>
+            } @else {
+              <ol class="tl-list">
+                @for (ev of t.events; track $index) {
+                  <li class="tl-item">
+                    <span class="tl-dot" [style.background]="tav(ev.action).color">
+                      <i class="pi" [class]="tav(ev.action).icon"></i>
+                    </span>
+                    <div class="tl-body">
+                      <div class="tl-head">
+                        <span class="tl-action">{{ tav(ev.action).label }}</span>
+                        @if (ev.at) { <span class="tl-date">{{ fmtDateTime(ev.at) }}</span> }
+                      </div>
+                      <div class="tl-meta">
+                        @if (ev.userName) { <span><i class="pi pi-user"></i> {{ ev.userName }}</span> }
+                        @if (eventReason(ev)) { <span class="tl-reason">{{ eventReason(ev) }}</span> }
+                      </div>
+                    </div>
+                  </li>
+                }
+              </ol>
+            }
+          </div>
+        }
         } @else {
         <div class="md-empty">
           <i class="pi pi-exclamation-circle"></i>
@@ -196,6 +252,7 @@ export class MovementDetailComponent implements OnInit {
   private auth = inject(AuthService);
 
   movement = signal<CashMovement | null>(null);
+  timeline = signal<MovementTimeline | null>(null);
   voidReason = '';
   loading = signal(true);
   acting = signal(false);
@@ -205,13 +262,49 @@ export class MovementDetailComponent implements OnInit {
   canDraft = this.auth.can(PERM.CASH_DRAFT);
   canPost = this.auth.can(PERM.CASH_POST);
   canVoid = this.auth.can(PERM.CASH_VOID);
+  canSubmit = this.auth.can(PERM.CASH_SUBMIT);
 
   // Template helpers
   tv = movementTypeVisual;
   sv = movementStatusVisual;
   pd = movementPending;
+  tav = timelineActionVisual;
   fmt = (a: number) => formatAmount(a);
   formatDate = formatDate;
+
+  /**
+   * Status chip for the hero (TASK 4 — complete French chip set):
+   * Brouillon | En attente | Comptabilisé | Rejeté | Annulé.
+   * "Rejeté" = DRAFT whose approval timeline contains a rejection event.
+   */
+  chip(m: CashMovement) {
+    if (movementRejected(m, this.timeline()?.events)) return REJECTED_VISUAL;
+    return movementStatusVisual(m.status, movementPending(m));
+  }
+
+  /** True when the movement's approval was rejected (drives the action note). */
+  isRejected(): boolean {
+    const m = this.movement();
+    return !!m && movementRejected(m, this.timeline()?.events);
+  }
+
+  /** Timeline event timestamp — date + time (fr-FR). */
+  fmtDateTime(iso: string | null | undefined): string {
+    if (!iso) return '—';
+    const d = new Date(iso);
+    if (isNaN(d.getTime())) return iso;
+    return d.toLocaleString('fr-FR', {
+      day: '2-digit', month: '2-digit', year: 'numeric',
+      hour: '2-digit', minute: '2-digit'
+    });
+  }
+
+  /** Human-readable reason extracted from the event details JSON. */
+  eventReason(ev: { details?: string | null }): string | null {
+    const d = parseTimelineDetails(ev.details);
+    return (d && typeof d['reason'] === 'string' && d['reason'].trim())
+      ? d['reason'].trim() : null;
+  }
 
   private id = '';
 
@@ -230,8 +323,30 @@ export class MovementDetailComponent implements OnInit {
       this.voidReason = '';
       this.loading.set(false);
     });
+    // B6 — audit timeline (independent from the movement fetch)
+    this.cashService.getTimeline(this.id).subscribe(t => this.timeline.set(t));
     this.partyService.loadParties().subscribe();
     this.cashService.loadPots().subscribe();
+  }
+
+  /**
+   * B5 — OUT drafts cannot be posted directly. This opens the prefilled
+   * payment form (amount/date/pot/party/label/project) where the user clicks
+   * « Envoyer pour validation » — creating a fresh submit-payment request.
+   */
+  duplicateAndSubmit(): void {
+    const m = this.movement();
+    if (!m) return;
+    this.router.navigate(['/tresorerie/operations/new'], {
+      queryParams: {
+        type: 'OUT',
+        fromPotId: m.fromPotId ?? '',
+        projectId: m.projectId ?? '',
+        partyId: m.partyId ?? '',
+        amount: m.amount,
+        label: m.label ?? '',
+      },
+    });
   }
 
   potName(id: string | null | undefined): string {

@@ -1,5 +1,8 @@
 <div class="head">
-  <h2><i class="pi pi-ticket"></i> Tickets</h2>
+  <div class="head-title">
+    <h2><i class="pi pi-ticket"></i> Tâches / Signalements</h2>
+    <p class="head-sub">Problèmes et travaux assignés sur les chantiers. Les validations de paiement se traitent dans « Mes tâches ».</p>
+  </div>
   @if (canWrite()) {
     <p-button icon="pi pi-plus" label="Nouveau" (onClick)="openCreate()" />
   }

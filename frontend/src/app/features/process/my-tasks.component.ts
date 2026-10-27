@@ -1,6 +1,7 @@
 ﻿import { Component, OnInit, inject, signal, computed } from '@angular/core';
 import { NgClass } from '@angular/common';
 import { FormsModule } from '@angular/forms';
+import { Router } from '@angular/router';
 import { ButtonModule } from 'primeng/button';
 import { MessageService } from 'primeng/api';
 import { DialogModule } from 'primeng/dialog';
@@ -9,6 +10,7 @@ import { TagModule } from 'primeng/tag';
 import { BadgeModule } from 'primeng/badge';
 import { ProcessService } from '@app/core/services/process.service';
 import { MyTask, StepStatus, ROLE_ICONS, STATUS_INFO, dotColorClass } from '@app/core/models/process.model';
+import { formatAmount } from '@app/core/models/cash.model';
 
 @Component({
   selector: 'app-my-tasks',
@@ -19,7 +21,9 @@ import { MyTask, StepStatus, ROLE_ICONS, STATUS_INFO, dotColorClass } from '@app
     <section class="my-tasks proc-bg">
       <header class="section-header">
         <h2><i class="pi pi-check-square"></i> Mes t\u00e2ches</h2>
-        <p-badge [value]="pendingCount()" size="large" severity="warn" *ngIf="pendingCount() > 0" />
+        @if (pendingCount() > 0) {
+          <p-badge [value]="pendingCount()" size="large" severity="warn" />
+        }
       </header>
 
       @if (loading()) {
@@ -39,7 +43,9 @@ import { MyTask, StepStatus, ROLE_ICONS, STATUS_INFO, dotColorClass } from '@app
 
         <div class="tasks-grid">
           @for (task of visibleTasks(); track task.stepInstanceId) {
-            <div class="task-card">
+            <div class="task-card"
+                 [class.clickable]="task.subjectType === 'CASH_MOVEMENT' && task.subjectId"
+                 (click)="openSubject(task)">
               <div class="card-header">
                 <span class="card-project">{{ task.projectName || task.templateName || 'Processus' }}</span>
                 @if (task.assigneeRole) {
@@ -48,6 +54,13 @@ import { MyTask, StepStatus, ROLE_ICONS, STATUS_INFO, dotColorClass } from '@app
               </div>
               <div class="card-body">
                 <p class="card-step">{{ task.stepName }}</p>
+                @if (task.subjectType === 'CASH_MOVEMENT' && (task.subjectAmount || task.subjectLabel)) {
+                  <p class="card-subject">
+                    <i class="pi pi-wallet"></i>
+                    @if (task.subjectAmount) { <strong>{{ fmtAmount(task.subjectAmount) }}</strong> }
+                    @if (task.subjectLabel) { <span class="subj-label">{{ task.subjectLabel }}</span> }
+                  </p>
+                }
                 <p class="card-assignee">{{ task.assigneeName || 'Non assign\u00e9' }}</p>
               </div>
               <div class="card-actions">
@@ -58,7 +71,7 @@ import { MyTask, StepStatus, ROLE_ICONS, STATUS_INFO, dotColorClass } from '@app
                         severity="success"
                         size="small"
                         [outlined]="true"
-                        (onClick)="validate(task)"
+                        (click)="onValidate($event, task)"
                         class="btn-validate"
                   ></button>
                   <button pButton
@@ -67,7 +80,7 @@ import { MyTask, StepStatus, ROLE_ICONS, STATUS_INFO, dotColorClass } from '@app
                         severity="danger"
                         size="small"
                         [outlined]="true"
-                        (onClick)="openRejectDialog(task)"
+                        (click)="onReject($event, task)"
                         class="btn-reject"
                   ></button>
                 } @else {
@@ -101,6 +114,7 @@ import { MyTask, StepStatus, ROLE_ICONS, STATUS_INFO, dotColorClass } from '@app
 export class MyTasksComponent implements OnInit {
   private processService = inject(ProcessService);
   private msgs = inject(MessageService);
+  private router = inject(Router);
 
   loading = signal(true);
   allTasks = signal<MyTask[]>([]);
@@ -166,6 +180,27 @@ export class MyTasksComponent implements OnInit {
 
   canAct(task: MyTask): boolean {
     return task.status === 'PENDING';
+  }
+
+  /** Action buttons live inside the clickable card — stop the bubbling so
+   *  openSubject()'s navigation doesn't race the action (B5). */
+  onValidate(ev: MouseEvent, task: MyTask): void {
+    ev.stopPropagation();
+    this.validate(task);
+  }
+
+  onReject(ev: MouseEvent, task: MyTask): void {
+    ev.stopPropagation();
+    this.openRejectDialog(task);
+  }
+
+  fmtAmount = (a: number | null | undefined): string => formatAmount(a ?? 0);
+
+  /** CASH_MOVEMENT tasks deep-link to the movement detail (B5). */
+  openSubject(task: MyTask): void {
+    if (task.subjectType === 'CASH_MOVEMENT' && task.subjectId) {
+      this.router.navigate(['/tresorerie/operations', task.subjectId]);
+    }
   }
 
   validate(task: MyTask): void {

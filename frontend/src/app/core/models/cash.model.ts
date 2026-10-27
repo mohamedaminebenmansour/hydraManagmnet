@@ -77,6 +77,70 @@ export interface PostResponse {
   fromPotBalanceAfter?: number | null;
 }
 
+/** Body for POST /api/cash/movements/submit-payment (B5 short payment UX). */
+export interface SubmitPaymentBody {
+  fromPotId: string;
+  amount: number;
+  movementDate: string; // yyyy-MM-dd
+  projectId: string;
+  partyId?: string | null;
+  label?: string;
+  note?: string;
+}
+
+/** Response of submit-payment: the new DRAFT movement + the running process. */
+export interface SubmitPaymentResponse {
+  movement: CashMovement;
+  processInstanceId: string;
+}
+
+/** One event of the movement timeline (from event_log). */
+export interface MovementTimelineEvent {
+  action: string; // CASH_MOVEMENT_CREATED | SUBMITTED | POSTED | VOIDED | REJECTED
+  at: string | null;
+  userId?: string | null;
+  userName?: string | null;
+  details?: string | null; // raw JSON string
+}
+
+/** GET /api/cash/movements/{id}/timeline — snapshot + ordered events. */
+export interface MovementTimeline {
+  movementId: string;
+  movementType: MovementType | string;
+  amount: number;
+  currency: string;
+  status: MovementStatus | string;
+  fromPotName?: string | null;
+  toPotName?: string | null;
+  partyName?: string | null;
+  projectName?: string | null;
+  processInstanceId?: string | null;
+  events: MovementTimelineEvent[];
+}
+
+/** Timeline action → French label + icon + color. */
+export const TIMELINE_ACTION_VISUAL: Record<string, { label: string; icon: string; color: string }> = {
+  CASH_MOVEMENT_CREATED:   { label: 'Opération créée',             icon: 'pi-pencil',       color: '#64748b' },
+  CASH_MOVEMENT_SUBMITTED: { label: 'Envoyée pour validation',     icon: 'pi-send',         color: '#d97706' },
+  CASH_MOVEMENT_POSTED:    { label: 'Comptabilisée',               icon: 'pi-check-circle', color: '#16a34a' },
+  CASH_MOVEMENT_VOIDED:    { label: 'Annulée',                     icon: 'pi-ban',          color: '#b91c1c' },
+  CASH_MOVEMENT_REJECTED:  { label: 'Refusée',                     icon: 'pi-times',        color: '#b91c1c' },
+};
+
+export function timelineActionVisual(action: string | null | undefined) {
+  return TIMELINE_ACTION_VISUAL[String(action ?? '').toUpperCase()] ??
+         { label: action || 'Événement', icon: 'pi-circle-fill', color: '#94a3b8' };
+}
+
+/** Parse the event details JSON defensively (null when not valid JSON). */
+export function parseTimelineDetails(raw: string | null | undefined): Record<string, any> | null {
+  if (!raw) return null;
+  try {
+    const v = JSON.parse(raw);
+    return (v && typeof v === 'object' && !Array.isArray(v)) ? v : null;
+  } catch { return null; }
+}
+
 // ============================================================================
 //  VISUAL LANGUAGE — colors + icons (consistent with HYDRA design system)
 // ============================================================================
@@ -128,6 +192,31 @@ export const MOVEMENT_STATUS_VISUAL: Record<MovementStatus, MovementStatusVisual
 const PENDING_VISUAL: MovementStatusVisual = {
   icon: 'pi-clock', color: '#d97706', soft: '#fffbeb', label: 'En attente',
 };
+
+/**
+ * Visual for a DRAFT movement whose approval process ended in a rejection.
+ * The ledger keeps the movement DRAFT (money was never posted) — but the
+ * owner must see at a glance that the payment was REFUSED, not still pending.
+ */
+export const REJECTED_VISUAL: MovementStatusVisual = {
+  icon: 'pi-times-circle', color: '#b91c1c', soft: '#fef2f2', label: 'Rejeté',
+};
+
+/** Timeline actions that mark an approval as refused (backend: ProcessService + CashService). */
+export const REJECTION_ACTIONS = ['PROCESS_REJECTED', 'STEP_REJECTED', 'CASH_MOVEMENT_REJECTED'];
+
+/**
+ * A DRAFT movement is "Rejeté" when its approval timeline contains a
+ * rejection event (process/step/cash rejection). Used on the movement
+ * detail page, where the merged timeline (TASK 2) is available.
+ */
+export function movementRejected(
+  m: Pick<CashMovement, 'status'> | null | undefined,
+  events?: { action: string }[] | null
+): boolean {
+  return String(m?.status ?? '').toUpperCase() === 'DRAFT' &&
+         !!events?.some(e => REJECTION_ACTIONS.includes(String(e?.action ?? '').toUpperCase()));
+}
 
 /**
  * A DRAFT movement with a running approval process is "pending":

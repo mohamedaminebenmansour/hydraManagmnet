@@ -17,9 +17,10 @@ export class ProjectService {
     );
   }
 
-  /** Backend GET /api/projects/options → [{ id, name }] (lightweight). */
-  options(): Observable<{ id: string; name: string }[]> {
-    return this.http.get<{ id: string; name: string }[]>('/api/projects/options');
+  /** Backend GET /api/projects/options → [{ id, name, projectType }] (lightweight). */
+  options(): Observable<{ id: string; name: string; projectType?: string | null }[]> {
+    return this.http.get<{ id: string; name: string; projectType?: string | null }[]>(
+      '/api/projects/options');
   }
 
   /** GET /api/projects/{id} */

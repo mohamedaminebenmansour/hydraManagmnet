@@ -218,3 +218,26 @@
     align-items: flex-start;
   }
 }
+
+/* B5 — payment subject line on task cards */
+.task-card {
+  &.clickable { cursor: pointer; transition: transform .12s ease, box-shadow .12s ease; }
+  &.clickable:hover { transform: translateY(-2px); box-shadow: 0 8px 20px rgba(15, 23, 42, .10); }
+
+  .card-subject {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin: 6px 0 2px;
+    font-size: 13.5px;
+    color: #0f172a;
+    .pi { color: #0d9488; font-size: 13px; }
+    strong { font-weight: 700; white-space: nowrap; }
+    .subj-label {
+      color: #64748b;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+  }
+}

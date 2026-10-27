@@ -44,6 +44,47 @@ export const CHANTIER_TYPE_VISUAL: Record<string, TypeVisual> = {
     icon: 'pi-folder', color: '#64748b', soft: '#f8fafc',
     gradient: 'linear-gradient(135deg, #94a3b8 0%, #64748b 100%)',
     label: 'Autre'
+  },
+  // ── natures métier hydraulique (miroir du backend ProjectType) ─────────
+  ADDUCTION: {
+    icon: 'pi-compass', color: '#2563eb', soft: '#eff6ff',
+    gradient: 'linear-gradient(135deg, #60a5fa 0%, #2563eb 100%)',
+    label: 'Adduction'
+  },
+  IRRIGATION: {
+    icon: 'pi-sun', color: '#b45309', soft: '#fffbeb',
+    gradient: 'linear-gradient(135deg, #fbbf24 0%, #b45309 100%)',
+    label: 'Irrigation'
+  },
+  VANNE: {
+    icon: 'pi-toggle-on', color: '#0ea5e9', soft: '#f0f9ff',
+    gradient: 'linear-gradient(135deg, #38bdf8 0%, #0284c7 100%)',
+    label: 'Chambre de vanne'
+  },
+  FORAGE: {
+    icon: 'pi-angle-double-down', color: '#92400e', soft: '#fffbeb',
+    gradient: 'linear-gradient(135deg, #d97706 0%, #92400e 100%)',
+    label: 'Forage'
+  },
+  POMPAGE: {
+    icon: 'pi-cog', color: '#ea580c', soft: '#fff7ed',
+    gradient: 'linear-gradient(135deg, #fb923c 0%, #ea580c 100%)',
+    label: 'Station de pompage'
+  },
+  ASSAINISSEMENT: {
+    icon: 'pi-filter', color: '#059669', soft: '#ecfdf5',
+    gradient: 'linear-gradient(135deg, #34d399 0%, #059669 100%)',
+    label: 'Assainissement'
+  },
+  REHABILITATION: {
+    icon: 'pi-refresh', color: '#7c3aed', soft: '#f5f3ff',
+    gradient: 'linear-gradient(135deg, #a78bfa 0%, #7c3aed 100%)',
+    label: 'Réhabilitation'
+  },
+  BASSIN: {
+    icon: 'pi-inbox', color: '#0891b2', soft: '#ecfeff',
+    gradient: 'linear-gradient(135deg, #22d3ee 0%, #0e7490 100%)',
+    label: 'Bassin'
   }
 };
 

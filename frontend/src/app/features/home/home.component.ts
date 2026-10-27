@@ -24,7 +24,7 @@ interface Tile {
 }
 
 const TILES: Tile[] = [
-  { label: 'Tickets',     icon: 'pi-ticket',    path: '/tickets', perm: PERM.TICKET_READ, color: '#d97706', gradient: 'linear-gradient(135deg, #fbbf24, #d97706)', desc: 'Travaux assignés' },
+  { label: 'Tâches / Signalements', icon: 'pi-ticket', path: '/tickets', perm: PERM.TICKET_READ, color: '#d97706', gradient: 'linear-gradient(135deg, #fbbf24, #d97706)', desc: 'Problèmes et travaux assignés' },
   { label: 'Chantiers',   icon: 'pi-briefcase', path: '/projects', perm: PERM.PROJECT_READ, color: '#0d9488', gradient: 'linear-gradient(135deg, #2dd4bf, #0d9488)', desc: 'Projets et travaux' },
   { label: 'Processus',   icon: 'pi-sitemap',   path: '/processus', perm: '', color: '#7c3aed', gradient: 'linear-gradient(135deg, #a78bfa, #7c3aed)', desc: 'Workflows métier' },
   { label: 'Utilisateurs', icon: 'pi-users',     path: '/users',   perm: PERM.USER_CREATE, color: '#2563eb', gradient: 'linear-gradient(135deg, #60a5fa, #2563eb)', desc: 'Gérer les accès' },

@@ -182,50 +182,13 @@ export function stepStatusVisual(s: string | null | undefined): StatusVisual {
 // ============================================================================
 //  4. TYPES DE CHANTIERS — couleur + dégradé + icône
 // ============================================================================
-
-export interface TypeVisual {
-  icon: string;
-  color: string;
-  soft: string;
-  gradient: string;
-  label: string;
-}
-
-export const CHANTIER_TYPE_VISUAL: Record<string, TypeVisual> = {
-  RESERVOIR: {
-    icon: 'pi-database', color: '#0891b2', soft: '#ecfeff',
-    gradient: 'linear-gradient(135deg, #22d3ee 0%, #0891b2 100%)', label: 'Réservoir'
-  },
-  RESEAU: {
-    icon: 'pi-sitemap', color: '#4f46e5', soft: '#eef2ff',
-    gradient: 'linear-gradient(135deg, #818cf8 0%, #4f46e5 100%)', label: 'Réseau'
-  },
-  BRANCHEMENTS: {
-    icon: 'pi-share-alt', color: '#0d9488', soft: '#f0fdfa',
-    gradient: 'linear-gradient(135deg, #2dd4bf 0%, #0d9488 100%)', label: 'Branchements'
-  },
-  MIXTE: {
-    icon: 'pi-th-large', color: '#7c3aed', soft: '#f5f3ff',
-    gradient: 'linear-gradient(135deg, #a78bfa 0%, #7c3aed 100%)', label: 'Mixte'
-  },
-  AUTRE: {
-    icon: 'pi-folder', color: '#64748b', soft: '#f8fafc',
-    gradient: 'linear-gradient(135deg, #94a3b8 0%, #64748b 100%)', label: 'Autre'
-  }
-};
-
-export function typeVisual(t: string | null | undefined): TypeVisual {
-  return (t && CHANTIER_TYPE_VISUAL[t]) || CHANTIER_TYPE_VISUAL['AUTRE'];
-}
-
-export const CHANTIER_STATUS_VISUAL: Record<string, StatusVisual> = {
-  ACTIF:   { icon: 'pi-play', color: '#16a34a', soft: '#f0fdf4', label: 'En cours' },
-  CLOTURE: { icon: 'pi-lock', color: '#64748b', soft: '#f1f5f9', label: 'Clôturé' }
-};
-
-export function statusVisual(s: string | null | undefined): StatusVisual {
-  return (s && CHANTIER_STATUS_VISUAL[s]) || CHANTIER_STATUS_VISUAL['ACTIF'];
-}
+// Single source of truth is chantier-visual.ts (extended with the hydraulic
+// domain types ADDUCTION/IRRIGATION/VANNE/FORAGE/POMPAGE/ASSAINISSEMENT/
+// REHABILITATION/BASSIN). Re-exported here so legacy imports keep working.
+export {
+  CHANTIER_TYPE_VISUAL, typeVisual,
+  CHANTIER_STATUS_VISUAL, statusVisual
+} from './chantier-visual';
 
 // ============================================================================
 //  5. TYPES DE PROCESSUS — par catégorie métier

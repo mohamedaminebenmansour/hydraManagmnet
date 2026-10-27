@@ -22,9 +22,15 @@ import {
  * MovementFormComponent — /tresorerie/operations/new (create)
  *                          /tresorerie/operations/:id/edit (edit DRAFT)
  *
- * Visual type selector (3 big cards IN/OUT/TRANSFER with icons+colors),
- * simple fields, prefilled from query params when coming from a pot detail.
- * Buttons: "Enregistrer brouillon" (CASH_DRAFT) + "Enregistrer et valider" (CASH_POST).
+ * Two layouts:
+ *  - OUT create → SHORT PAYMENT UX (B5): montant + sous-traitant + libellé
+ *    up front, caisse/projet/note under « Plus d'options », and a primary
+ *    « Envoyer pour validation » button (submitPayment → PAYMENT_APPROVAL).
+ *    Prefilled from project strip: type=OUT & fromPotId=<caisse chantier> &
+ *    projectId — date defaults to today.
+ *  - IN / TRANSFER (and edit mode) → full 4-step layout.
+ * Buttons: "Enregistrer brouillon" (CASH_DRAFT) + "Enregistrer et valider"
+ * (CASH_POST, IN/TRANSFER only — OUT must go through the approval workflow).
  */
 @Component({
   selector: 'app-movement-form',
@@ -69,6 +75,97 @@ import {
         </div>
       </div>
 
+      <!-- SHORT PAYMENT UX (B5): OUT creation — montant / tiers / libellé -->
+      @if (movementType === 'OUT' && !isEdit()) {
+        <div class="mf-section">
+          <h2><span class="s-num">2</span> Montant et date</h2>
+          <div class="field-row">
+            <div class="field">
+              <label>Montant <span class="req">*</span></label>
+              <p-inputnumber [(ngModel)]="amount" mode="decimal"
+                             [minFractionDigits]="3" [maxFractionDigits]="3"
+                             placeholder="0,000" [min]="0"
+                             inputStyleClass="w-100" styleClass="w-100" />
+            </div>
+            <div class="field">
+              <label>Date <span class="req">*</span></label>
+              <p-datepicker [(ngModel)]="movementDate" dateFormat="dd/mm/yy"
+                            [showIcon]="true" styleClass="w-100" />
+            </div>
+          </div>
+        </div>
+
+        <div class="mf-section">
+          <h2><span class="s-num">3</span> À qui, pour quoi</h2>
+          <div class="field">
+            <label>Sous-traitant / fournisseur</label>
+            <p-select [options]="partyOptions()" optionValue="id" optionLabel="name"
+                      [(ngModel)]="partyId" placeholder="Aucun"
+                      filter filterPlaceholder="Rechercher" styleClass="w-100" [showClear]="true" />
+          </div>
+          <div class="field">
+            <label>Libellé <small>(court)</small></label>
+            <input pInputText [(ngModel)]="label" maxlength="120"
+                   placeholder="Ex: Paiement Pipetech — Tronçon 3" />
+          </div>
+        </div>
+
+        <details class="mf-more">
+          <summary><i class="pi pi-chevron-down"></i> Plus d'options</summary>
+          <div class="mf-more-body">
+            <div class="field">
+              <label>Caisse source <span class="req">*</span></label>
+              <p-select [options]="potOptions()" optionValue="id" optionLabel="name"
+                        [(ngModel)]="fromPotId" placeholder="D'où sort l'argent ?"
+                        filter filterPlaceholder="Rechercher" styleClass="w-100" />
+            </div>
+            <div class="field">
+              <label>Projet concerné <small>(requis pour une validation)</small></label>
+              <p-select [options]="projectOptions()" optionValue="id" optionLabel="name"
+                        [(ngModel)]="projectId" placeholder="Aucun (opération générale)"
+                        filter filterPlaceholder="Rechercher" styleClass="w-100" [showClear]="true" />
+            </div>
+            <div class="field">
+              <label>Note <small>(optionnel)</small></label>
+              <textarea pInputTextarea [(ngModel)]="note" rows="2"
+                        placeholder="Détails, référence facture, acompte %, …"></textarea>
+            </div>
+          </div>
+        </details>
+
+        <div class="mf-actions">
+          @if (!canDraft) {
+            <div class="mf-warn" style="width: 100%">
+              <i class="pi pi-lock"></i>
+              Lecture seule — vous n'avez pas le droit de créer des opérations.
+            </div>
+          } @else {
+            <button pButton label="Annuler" severity="secondary" [text]="true"
+                    routerLink="/tresorerie"></button>
+            <div class="mf-actions-right">
+              <button pButton label="Enregistrer brouillon" icon="pi pi-save"
+                             severity="info" [outlined]="true"
+                             [loading]="saving()"
+                             [disabled]="!isValid()"
+                             (click)="save(false)"></button>
+              @if (canSubmit) {
+                <button pButton label="Envoyer pour validation" icon="pi pi-send"
+                               severity="success"
+                               [loading]="saving()"
+                               [disabled]="!isValid()"
+                               (click)="submitForApproval()"></button>
+              }
+            </div>
+            @if (canSubmit && !projectId) {
+              <div class="mf-warn" style="width: 100%">
+                <i class="pi pi-info-circle"></i>
+                « Envoyer pour validation » nécessite un projet rattaché (Plus d'options).
+              </div>
+            }
+          }
+        </div>
+      } @else {
+      <!-- FULL LAYOUT (IN / TRANSFER / edit mode) -->
       <!-- STEP 2: amount + date -->
       <div class="mf-section">
         <h2><span class="s-num">2</span> Montant et date</h2>
@@ -163,16 +260,24 @@ import {
                            [loading]="saving()"
                            [disabled]="!isValid()"
                            (click)="save(false)"></button>
-            @if (!isEdit() && canPost) {
+            @if (!isEdit() && canPost && movementType !== 'OUT') {
               <button pButton label="Enregistrer et valider" icon="pi pi-check"
                              severity="success"
                              [loading]="saving()"
                              [disabled]="!isValid()"
                              (click)="save(true)"></button>
             }
+            @if (isEdit() && movementType === 'OUT' && canSubmit) {
+              <div class="mf-warn">
+                <i class="pi pi-info-circle"></i>
+                Pour soumettre ce brouillon au workflow, créez un nouveau paiement —
+                la validation part d'une demande fraîche.
+              </div>
+            }
           </div>
         }
       </div>
+      }
     </section>
   `,
 })
@@ -187,6 +292,7 @@ export class MovementFormComponent implements OnInit {
   // Permission gates (route only requires CASH_READ — write actions re-checked here)
   canDraft = this.auth.can(PERM.CASH_DRAFT);
   canPost = this.auth.can(PERM.CASH_POST);
+  canSubmit = this.auth.can(PERM.CASH_SUBMIT);
 
   // Edit mode
   editId = '';
@@ -257,6 +363,11 @@ export class MovementFormComponent implements OnInit {
       if (pid) this.projectId = pid;
       const party = qp.get('partyId');
       if (party) this.partyId = party;
+      // Deep-link prefill (e.g. « Dupliquer et soumettre » from a movement detail)
+      const amt = qp.get('amount');
+      if (amt && Number(amt) > 0) this.amount = Number(amt);
+      const lbl = qp.get('label');
+      if (lbl) this.label = lbl;
     }
 
     // Load pots + parties (project options from ProjectService come via cash service pots)
@@ -349,6 +460,37 @@ export class MovementFormComponent implements OnInit {
         });
         this.cashService.invalidatePots();
         this.router.navigate(['/tresorerie/operations', id]);
+      }
+    });
+  }
+
+  /**
+   * B5 — primary CTA for OUT: create the draft AND start the
+   * PAYMENT_APPROVAL workflow in one call (submit-payment).
+   * Requires a project (the backend rejects payments without one).
+   */
+  submitForApproval(): void {
+    if (!this.isValid()) return;
+    if (!this.projectId) {
+      this.msgs.add({ severity: 'warn', summary: 'Projet requis',
+        detail: 'Rattachez le paiement à un projet avant de l\'envoyer pour validation.' });
+      return;
+    }
+    this.saving.set(true);
+    this.cashService.submitPayment({
+      fromPotId: this.fromPotId!,
+      amount: this.amount!,
+      movementDate: this.toYmd(this.movementDate),
+      projectId: this.projectId,
+      partyId: this.partyId,
+      label: this.label.trim() || undefined,
+      note: this.note.trim() || undefined,
+    }).subscribe(res => {
+      this.saving.set(false);
+      if (res) {
+        this.msgs.add({ severity: 'success', summary: 'Paiement envoyé',
+          detail: 'Il attend maintenant la validation du workflow d\'approbation.' });
+        this.router.navigate(['/tresorerie/operations', res.movement.id]);
       }
     });
   }

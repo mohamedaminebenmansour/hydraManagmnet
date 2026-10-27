@@ -29,6 +29,11 @@ export interface MyTask {
   assigneeName?: string;
   requiresAttachment?: boolean;
   startedAt?: string;
+  // Subject display info (B5): when subjectType === 'CASH_MOVEMENT' the
+  // backend joins the movement's label + amount so "Mes tâches" can show
+  // "Paiement — 2 500,000 TND" without extra fetches. Null for other subjects.
+  subjectLabel?: string | null;
+  subjectAmount?: number | null;
   // Extra fields for chantier-level progress display (added in v1.1)
   currentStepOrder?: number;
   currentStepName?: string;
@@ -158,6 +163,9 @@ export function mapMyTask(raw: any): MyTask {
     assigneeName: String(raw?.assigneeName ?? raw?.assignee_name ?? raw?.assigneeUserEmail ?? raw?.assignee ?? ''),
     requiresAttachment: Boolean(raw?.requiresAttachment ?? raw?.requires_attachment ?? false),
     startedAt: String(raw?.startedAt ?? raw?.started_at ?? ''),
+    // B5 — subject display info for CASH_MOVEMENT tasks (backend LEFT JOIN)
+    subjectLabel: raw?.subjectLabel ?? raw?.subject_label ?? null,
+    subjectAmount: raw?.subjectAmount ?? raw?.subject_amount ?? null,
     // v1.1 fields for chantier-level progress display
     currentStepOrder: raw?.currentStepOrder ?? raw?.current_step_order ?? undefined,
     currentStepName: String(raw?.currentStepName ?? raw?.current_step_name ?? ''),

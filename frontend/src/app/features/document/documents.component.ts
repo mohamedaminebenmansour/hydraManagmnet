@@ -118,8 +118,27 @@ export class DocumentsComponent implements OnInit {
     this.loading.set(true);
     this.documentService.search(this.projectId, { folderId: this.folderId, size: 200 }).subscribe({
       next: page => { this.documents.set(page.items ?? []); this.loading.set(false); },
-      error: () => { this.documents.set([]); this.loading.set(false); }
+      error: err => {
+        // List failure (incl. 500): keep an empty list (never crash) but show
+        // the API's message when the body carries one.
+        this.documents.set([]);
+        this.loading.set(false);
+        this.msgs.add({ severity: 'error', summary: 'Erreur',
+          detail: this.apiErrMsg(err, 'Impossible de charger les documents') });
+      }
     });
+  }
+
+  /**
+   * Extract the human-readable message from an API error body.
+   * The backend always answers JSON (GlobalExceptionHandler):
+   * { code, message } — older paths may carry detail instead.
+   */
+  private apiErrMsg(err: any, fallback: string): string {
+    const b = err?.error;
+    if (typeof b === 'string' && b.trim()) { return b; }
+    const m = b?.message ?? b?.detail ?? b?.code ?? err?.message;
+    return (typeof m === 'string' && m.trim()) ? m : fallback;
   }
 
   private loadOptions(): void {
@@ -255,14 +274,10 @@ export class DocumentsComponent implements OnInit {
       error: err => {
         this.uploading.set(false);
         this.fileUpload?.clear();
-        if (err.status && err.status >= 500) {
-          this.msgs.add({ severity: 'error', summary: 'Erreur serveur', detail: 'Erreur serveur, réessayez' });
-        } else {
-          this.msgs.add({ severity: 'error', summary: 'Erreur',
-            detail: err.error?.message ?? err.error?.code ?? (err.status === 413
-              ? 'Fichier trop volumineux (max 50 Mo)'
-              : 'Téléversement impossible') });
-        }
+        this.msgs.add({ severity: 'error', summary: 'Erreur',
+          detail: this.apiErrMsg(err, err.status === 413
+            ? 'Fichier trop volumineux (max 50 Mo)'
+            : 'Téléversement impossible') });
       }
     });
   }
@@ -309,14 +324,10 @@ export class DocumentsComponent implements OnInit {
       error: err => {
         this.uploading.set(false);
         this.revFileUpload?.clear();
-        if (err.status && err.status >= 500) {
-          this.msgs.add({ severity: 'error', summary: 'Erreur serveur', detail: 'Erreur serveur, réessayez' });
-        } else {
-          this.msgs.add({ severity: 'error', summary: 'Erreur',
-            detail: err.error?.message ?? err.error?.code ?? (err.status === 413
-              ? 'Fichier trop volumineux (max 50 Mo)'
-              : 'Révision impossible') });
-        }
+        this.msgs.add({ severity: 'error', summary: 'Erreur',
+          detail: this.apiErrMsg(err, err.status === 413
+            ? 'Fichier trop volumineux (max 50 Mo)'
+            : 'Révision impossible') });
       }
     });
   }
@@ -336,7 +347,7 @@ export class DocumentsComponent implements OnInit {
         this.loadDocuments();
       },
       error: err => this.msgs.add({ severity: 'error', summary: 'Erreur',
-        detail: err.error?.message ?? 'Suppression impossible' })
+        detail: this.apiErrMsg(err, 'Suppression impossible') })
     });
   }
 }

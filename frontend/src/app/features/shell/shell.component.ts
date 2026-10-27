@@ -24,6 +24,9 @@ const NAV: NavItem[] = [
   { label: 'Trésorerie',     icon: 'pi-wallet',       path: '/tresorerie',  perm: PERM.CASH_READ, color: '#0d9488' },
   { label: 'Processus',      icon: 'pi-sitemap',      path: '/processus',   perm: '',           color: '#7c3aed' },
   { label: 'Chantiers',      icon: 'pi-briefcase',    path: '/projects',    perm: PERM.PROJECT_READ, color: '#0d9488' },
+  // Tickets = tâches / signalements simples (assignation, statut, photo) — PAS les validations
+  // de paiement, qui passent par Trésorerie → submit-payment → Mes tâches (process inbox).
+  { label: 'Tâches / Signalements', icon: 'pi-ticket', path: '/tickets',   perm: PERM.TICKET_READ, color: '#d97706' },
   { label: 'Utilisateurs',   icon: 'pi-users',        path: '/users',       perm: PERM.USER_CREATE, color: '#2563eb' },
   { label: 'Rôles',          icon: 'pi-id-card',      path: '/roles',       perm: PERM.ROLE_MANAGE, color: '#0891b2' },
   { label: 'Journal',        icon: 'pi-history',       path: '/audit',       perm: PERM.AUDIT_VIEW, color: '#64748b' },

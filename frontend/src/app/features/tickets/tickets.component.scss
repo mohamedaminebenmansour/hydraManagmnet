@@ -1,5 +1,7 @@
 .head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 18px; }
 .head h2 { margin: 0; display: flex; gap: 10px; align-items: center; }
+.head-title { display: flex; flex-direction: column; gap: 4px; }
+.head-sub { margin: 0; font-size: 13px; color: #64748b; }
 .filters { display: flex; flex-wrap: wrap; gap: 10px; align-items: center;
   background: #fff; border: 1px solid #e2e8f0; border-radius: 12px; padding: 12px; margin-bottom: 16px; }
 .f-item { min-width: 170px; }

@@ -1,4 +1,8 @@
-export type ProjectType = 'RESERVOIR' | 'RESEAU' | 'BRANCHEMENTS' | 'MIXTE' | 'AUTRE';
+/** Real natures of Tunisian water works (mirror of backend ProjectType enum). */
+export type ProjectType =
+  | 'RESERVOIR' | 'RESEAU' | 'BRANCHEMENTS' | 'MIXTE' | 'AUTRE'
+  | 'ADDUCTION' | 'IRRIGATION' | 'VANNE' | 'FORAGE' | 'POMPAGE'
+  | 'ASSAINISSEMENT' | 'REHABILITATION' | 'BASSIN';
 
 export type ProjectRole = 'ADMIN' | 'MANAGER' | 'ENGINEER' | 'VIEWER';
 
@@ -103,17 +107,33 @@ export function mapMyPermissions(raw: any): MyPermissions {
 }
 
 export const PROJECT_TYPE_OPTS: { label: string; value: ProjectType }[] = [
+  { label: 'Adduction', value: 'ADDUCTION' },
+  { label: 'Irrigation', value: 'IRRIGATION' },
   { label: 'Réservoir', value: 'RESERVOIR' },
   { label: 'Réseau', value: 'RESEAU' },
   { label: 'Branchements', value: 'BRANCHEMENTS' },
+  { label: 'Chambre de vanne', value: 'VANNE' },
+  { label: 'Forage', value: 'FORAGE' },
+  { label: 'Station de pompage', value: 'POMPAGE' },
+  { label: 'Assainissement', value: 'ASSAINISSEMENT' },
+  { label: 'Réhabilitation', value: 'REHABILITATION' },
+  { label: 'Bassin', value: 'BASSIN' },
   { label: 'Mixte', value: 'MIXTE' },
   { label: 'Autre', value: 'AUTRE' }
 ];
 
 export const PROJECT_TYPE_LABELS: Record<string, string> = {
+  ADDUCTION: 'Adduction',
+  IRRIGATION: 'Irrigation',
   RESERVOIR: 'Réservoir',
   RESEAU: 'Réseau',
   BRANCHEMENTS: 'Branchements',
+  VANNE: 'Chambre de vanne',
+  FORAGE: 'Forage',
+  POMPAGE: 'Station de pompage',
+  ASSAINISSEMENT: 'Assainissement',
+  REHABILITATION: 'Réhabilitation',
+  BASSIN: 'Bassin',
   MIXTE: 'Mixte',
   AUTRE: 'Autre'
 };

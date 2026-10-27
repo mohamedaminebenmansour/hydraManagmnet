@@ -126,7 +126,7 @@
     <div class="field">
       <label>Fichier *</label>
       <p-fileUpload #fileUpload mode="advanced" customUpload="true" [auto]="false" [multiple]="false"
-                    accept=".pdf,.doc,.docx,.xls,.xlsx,.png,.jpg,.jpeg,.gif,.webp,.dwg,.dxf,.zip,.txt,.csv"
+                    accept=".pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.rtf,.png,.jpg,.jpeg,.gif,.webp,.heic,.heif,.dwg,.dxf,.ifc,.zip,.txt,.csv,.msg,.eml"
                     [maxFileSize]="52428800" chooseLabel="Choisir un fichier"
                     uploadLabel="Téleverser" cancelLabel="Annuler"
                     (uploadHandler)="onUploadFile($event)"
@@ -134,7 +134,7 @@
       @if (uploading()) {
         <p-progressBar [value]="uploadProgress()" [showValue]="true"></p-progressBar>
       }
-      <small class="hint">PDF, Word, Excel, images, plans (DWG/DXF), ZIP — 50 Mo max.</small>
+      <small class="hint">PDF, Word, Excel, PowerPoint, photos (y compris HEIC), plans (DWG/DXF/IFC), ZIP, e-mails (.msg/.eml) — 50 Mo max.</small>
     </div>
   </div>
   <ng-template pTemplate="footer">
@@ -157,7 +157,7 @@
     <div class="field">
       <label>Fichier *</label>
       <p-fileUpload #revFileUpload mode="advanced" customUpload="true" [auto]="false" [multiple]="false"
-                    accept=".pdf,.doc,.docx,.xls,.xlsx,.png,.jpg,.jpeg,.gif,.webp,.dwg,.dxf,.zip,.txt,.csv"
+                    accept=".pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.rtf,.png,.jpg,.jpeg,.gif,.webp,.heic,.heif,.dwg,.dxf,.ifc,.zip,.txt,.csv,.msg,.eml"
                     [maxFileSize]="52428800" chooseLabel="Choisir un fichier"
                     uploadLabel="Téleverser" cancelLabel="Annuler"
                     (uploadHandler)="onRevFile($event)"
@@ -165,6 +165,7 @@
       @if (uploading()) {
         <p-progressBar [value]="uploadProgress()" [showValue]="true"></p-progressBar>
       }
+      <small class="hint">PDF, Word, Excel, PowerPoint, photos (y compris HEIC), plans (DWG/DXF/IFC), ZIP, e-mails (.msg/.eml) — 50 Mo max.</small>
     </div>
   </div>
   <ng-template pTemplate="footer">
