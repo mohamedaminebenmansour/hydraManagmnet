@@ -22,9 +22,11 @@ import java.util.UUID;
 public class CashController {
 
     private final CashService svc;
+    private final PaymentFacade paymentFacade;
 
-    public CashController(CashService svc) {
+    public CashController(CashService svc, PaymentFacade paymentFacade) {
         this.svc = svc;
+        this.paymentFacade = paymentFacade;
     }
 
     // ══════════════════════════════════════════════════════════════
@@ -112,8 +114,31 @@ public class CashController {
     /** POST /api/cash/movements/{id}/post — DRAFT → POSTED (immutable). */
     @PostMapping("/movements/{id}/post")
     public ResponseEntity<CashService.PostResponse> postMovement(
-            @PathVariable UUID id, Authentication auth) {
-        return ResponseEntity.ok(svc.postMovement(auth, id));
+            @PathVariable UUID id,
+            @RequestParam(required = false, defaultValue = "false") boolean force,
+            Authentication auth) {
+        return ResponseEntity.ok(svc.postMovement(auth, id, force));
+    }
+
+    /**
+     * POST /api/cash/movements/submit-payment — orchestrates the full payment flow:
+     *   (a) create DRAFT OUT movement
+     *   (b) start PAYMENT_APPROVAL workflow (subject = movement)
+     *   (c) link movement ← process_instance.id
+     *   (d) audit CASH_MOVEMENT_SUBMITTED
+     * Body: { fromPotId, amount, movementDate, projectId?, partyId?, label?, note? }
+     * Returns 201 with { movement, processInstanceId }
+     *
+     * On COMPLETED workflow, ProcessService calls CashService.onProcessCompletedPostMovement
+     * which flips the movement to POSTED (this is automatic — the frontend just needs
+     * to show the running process timeline and let the approver click Valider).
+     */
+    @PostMapping("/movements/submit-payment")
+    public ResponseEntity<PaymentFacade.SubmitPaymentResponse> submitPayment(
+            @RequestBody PaymentFacade.SubmitPaymentRequest req,
+            Authentication auth) {
+        PaymentFacade.SubmitPaymentResponse resp = paymentFacade.submitPayment(auth, req);
+        return ResponseEntity.status(HttpStatus.CREATED).body(resp);
     }
 
     /**

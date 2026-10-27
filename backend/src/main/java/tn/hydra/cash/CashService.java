@@ -549,9 +549,15 @@ public class CashService {
     /**
      * POST a DRAFT movement → IMMUTABLE POSTED. Sets posted_at/by.
      * For OUT/TRANSFER: enforces no-negative-balance guard on from_pot.
+     *
+     * OUT movements require either:
+     *   (a) a linked COMPLETED PAYMENT_APPROVAL process instance, OR
+     *   (b) caller is owner AND ?force=true is explicitly passed.
+     * This prevents "naked" OUT posting bypassing the approval workflow.
+     * IN/TRANSFER are not affected (no workflow required for v1).
      */
     @Transactional
-    public PostResponse postMovement(Authentication auth, UUID id) {
+    public PostResponse postMovement(Authentication auth, UUID id, boolean force) {
         AppUser me = currentUser(auth);
         requireCanPostOrVoid(me);
 
@@ -567,6 +573,27 @@ public class CashService {
         UUID toPotId = (UUID) row.get("to_pot_id");
         BigDecimal amount = (BigDecimal) row.get("amount");
         UUID projectId = (UUID) row.get("project_id");
+        UUID processInstanceId = (UUID) row.get("process_instance_id");
+
+        // Naked-OUT guard: OUT must come from a completed workflow (or owner force)
+        if ("OUT".equals(type)) {
+            boolean hasCompletedProcess = false;
+            if (processInstanceId != null) {
+                Integer cnt = jdbc.queryForObject(
+                        "select count(*) from process_instance where id = ? and status = 'COMPLETED'",
+                        Integer.class, processInstanceId);
+                hasCompletedProcess = cnt != null && cnt > 0;
+            }
+            if (!hasCompletedProcess && !force) {
+                throw new BusinessRuleException("PAYMENT_REQUIRES_APPROVAL",
+                        "Les sorties d'argent (OUT) doivent passer par le workflow PAYMENT_APPROVAL. " +
+                        "Utilisez POST /api/cash/movements/submit-payment pour soumettre un paiement.");
+            }
+            if (force && !Boolean.TRUE.equals(me.getIsOwner())) {
+                throw new BusinessRuleException("FORBIDDEN_FORCE",
+                        "Le mode force nécessite OWNER");
+            }
+        }
 
         // Negative balance guard for OUT / TRANSFER
         BigDecimal fromPotBalanceAfter = null;
@@ -590,9 +617,16 @@ public class CashService {
                 "{\"type\":\"" + type + "\",\"amount\":" + amount +
                 (fromPotId != null ? ",\"fromPot\":\"" + fromPotId + "\"" : "") +
                 (toPotId != null ? ",\"toPot\":\"" + toPotId + "\"" : "") +
+                (force ? ",\"force\":true" : "") +
                 "}");
 
         return new PostResponse(id, "POSTED", fromPotBalanceAfter);
+    }
+
+    /** Backward-compat overload — defaults force=false. */
+    @Transactional
+    public PostResponse postMovement(Authentication auth, UUID id) {
+        return postMovement(auth, id, false);
     }
 
     /**
@@ -636,31 +670,126 @@ public class CashService {
      * PHASE 2 entry point — called by ProcessService when a PAYMENT_APPROVAL
      * workflow reaches COMPLETED status. Flips the linked DRAFT movement to POSTED.
      *
-     * The movement must already exist (created by the frontend when the user
-     * initiated the payment request) and have process_instance_id set to the
-     * process instance that just completed.
+     * The movement must already exist (created via submitPayment facade) and have
+     * process_instance_id set to the process instance that just completed.
      *
-     * Phase 1: stub — does nothing (no auth context, no caller info yet).
-     * Phase 2 will call this from ProcessService.completeStep() when the
-     * last step is DONE.
+     * Idempotent: if the movement is already POSTED, returns "POSTED" without
+     * re-running the guards (so a retry after a partial failure is safe).
+     *
+     * If the movement is VOID (e.g. someone manually voided meanwhile), throws
+     * BusinessRuleException — the caller (ProcessService.completeStep) will
+     * see this and the @Transactional rollback will undo the step completion.
      *
      * @param movementId   the cash_movement.id to post
      * @param postedBy     the AppUser.id of the approver (typically the owner)
-     * @return  the new status ("POSTED" or unchanged "DRAFT" if guard failed)
+     * @return  "POSTED" on success
      */
     @Transactional
     public String onProcessCompletedPostMovement(UUID movementId, UUID postedBy) {
-        // TODO Phase 2: implement. Skeleton:
-        // 1. Fetch movement by id + postedBy's org_id (validate org)
-        // 2. If status != DRAFT → no-op (idempotent)
-        // 3. Run negative-balance guard (same as postMovement)
-        // 4. update cash_movement set status='POSTED', posted_by=?, posted_at=now()
-        // 5. audit.logAs(orgId, postedBy, "CASH_MOVEMENT_POSTED", ...)
-        // 6. return "POSTED"
-        //
-        // For Phase 1, leave as no-op to allow the code to compile and the
-        // cash module to ship without forcing a process dependency.
-        return "DRAFT";
+        // 1. Resolve poster's org (system call, no auth context)
+        AppUser poster = users.findById(postedBy)
+                .orElseThrow(() -> new IllegalStateException("Unknown poster: " + postedBy));
+        UUID orgId = poster.getOrgId();
+
+        // 2. Fetch movement with row lock
+        Map<String, Object> row = fetchMovementForUpdate(movementId, orgId);
+        String status = (String) row.get("status");
+
+        // 3. Idempotent: already POSTED → no-op
+        if ("POSTED".equals(status)) {
+            return "POSTED";
+        }
+
+        // 4. Must be DRAFT (VOID is a hard error — caller should not retry)
+        if (!"DRAFT".equals(status)) {
+            throw new BusinessRuleException("MOVEMENT_NOT_DRAFT",
+                    "Le mouvement ne peut pas être POSTED automatiquement (statut actuel: " + status + ")");
+        }
+
+        String type = (String) row.get("movement_type");
+        UUID fromPotId = (UUID) row.get("from_pot_id");
+        UUID toPotId = (UUID) row.get("to_pot_id");
+        BigDecimal amount = (BigDecimal) row.get("amount");
+        String currency = (String) row.get("currency");
+
+        // 5. Negative balance guard for OUT / TRANSFER (same as manual post)
+        if ("OUT".equals(type) || "TRANSFER".equals(type)) {
+            BigDecimal before = computeBalance(fromPotId);
+            BigDecimal after = before.subtract(amount);
+            if (after.signum() < 0) {
+                throw new BusinessRuleException("INSUFFICIENT_BALANCE",
+                        "Solde insuffisant sur la caisse source (" + before + " < " + amount + " " + currency + ")");
+            }
+        }
+
+        // 6. Flip status → POSTED
+        jdbc.update("""
+                update cash_movement set
+                  status = 'POSTED', posted_by = ?, posted_at = now()
+                where id = ? and org_id = ?
+                """, postedBy, movementId, orgId);
+
+        // 7. Audit (system-triggered, no auth context — use logAs)
+        audit.logAs(orgId, postedBy, "CASH_MOVEMENT_POSTED", "cash_movement", movementId,
+                "{\"type\":\"" + type + "\",\"amount\":" + amount +
+                (fromPotId != null ? ",\"fromPot\":\"" + fromPotId + "\"" : "") +
+                (toPotId != null ? ",\"toPot\":\"" + toPotId + "\"" : "") +
+                ",\"autoPostedViaProcess\":true}");
+
+        return "POSTED";
+    }
+
+    /**
+     * Link a movement to a process instance (called by PaymentFacade after
+     * starting a PAYMENT_APPROVAL workflow). Internal — no auth check, the
+     * caller has already validated access.
+     */
+    @Transactional
+    public void linkProcessInstance(UUID movementId, UUID processInstanceId, UUID orgId) {
+        int updated = jdbc.update("""
+                update cash_movement set process_instance_id = ?
+                where id = ? and org_id = ? and status = 'DRAFT'
+                """, processInstanceId, movementId, orgId);
+        if (updated == 0) {
+            // Movement vanished, isn't DRAFT, or wrong org — caller has a bug
+            throw new BusinessRuleException("MOVEMENT_NOT_LINKABLE",
+                    "Impossible de lier le mouvement au process (statut ou org mismatch)");
+        }
+    }
+
+    /**
+     * Handle the case where a PAYMENT_APPROVAL process was REJECTED.
+     * Per spec: leave movement DRAFT, clear process_instance_id (so the user
+     * can edit + resubmit), audit CASH_MOVEMENT_REJECTED. No status change.
+     */
+    @Transactional
+    public void handleProcessRejected(UUID movementId, UUID orgId, UUID rejectedBy) {
+        // Clear the link — movement goes back to "editable DRAFT, no workflow running"
+        jdbc.update("""
+                update cash_movement set process_instance_id = null
+                where id = ? and org_id = ?
+                """, movementId, orgId);
+
+        // Audit (system-triggered — rejectedBy may not be the auth user if this
+        // is called from ProcessService.rejectStep which has its own auth context,
+        // but the auth.log() inside ProcessService already emitted STEP_REJECTED
+        // and PROCESS_REJECTED. This is the cash-side audit trail.)
+        audit.logAs(orgId, rejectedBy, "CASH_MOVEMENT_REJECTED", "cash_movement", movementId,
+                "{\"reason\":\"process rejected\",\"rejectedBy\":\"" + rejectedBy + "\"}");
+    }
+
+    /**
+     * Public read for subject_id resolution — used by ProcessService when
+     * completing a step, to look up the movement tied to a process instance.
+     * Returns the movement id if subject is CASH_MOVEMENT, else null.
+     */
+    public UUID findMovementIdForProcess(UUID processInstanceId, UUID orgId) {
+        List<UUID> rows = jdbc.queryForList("""
+                select id from cash_movement
+                where process_instance_id = ? and org_id = ?
+                limit 1
+                """, UUID.class, processInstanceId, orgId);
+        return rows.isEmpty() ? null : rows.get(0);
     }
 
     // ══════════════════════════════════════════════════════════════

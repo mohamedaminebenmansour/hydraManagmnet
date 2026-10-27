@@ -2,6 +2,8 @@ package tn.hydra.config;
 
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.CommandLineRunner;
+import org.springframework.core.annotation.Order;
+import org.springframework.core.Ordered;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Component;
@@ -10,6 +12,7 @@ import tn.hydra.audit.EventLogService;
 import java.util.UUID;
 
 @Component
+@Order(Ordered.HIGHEST_PRECEDENCE)  // run before DemoDataRunner so the org + owner exist
 public class BootstrapRunner implements CommandLineRunner {
 
     private final JdbcTemplate jdbc;

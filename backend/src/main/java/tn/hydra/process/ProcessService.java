@@ -157,11 +157,16 @@ public class ProcessService {
     private final JdbcTemplate jdbc;
     private final AppUserRepository users;
     private final EventLogService audit;
+    private final tn.hydra.cash.CashService cashService;  // for auto-post on COMPLETED + handle on REJECTED
 
-    public ProcessService(JdbcTemplate jdbc, AppUserRepository users, EventLogService audit) {
+    public ProcessService(JdbcTemplate jdbc,
+                          AppUserRepository users,
+                          EventLogService audit,
+                          tn.hydra.cash.CashService cashService) {
         this.jdbc = jdbc;
         this.users = users;
         this.audit = audit;
+        this.cashService = cashService;
     }
 
     // ═══════════════════════════════════════════════════════════════
@@ -414,13 +419,14 @@ public class ProcessService {
                                    UUID stepInstanceId, CompleteStepRequest req) {
         AppUser me = currentUser(auth);
 
-        // Load step + instance in one join
+        // Load step + instance in one join (subject_type + subject_id needed for cash hook)
         List<Map<String, Object>> rows = jdbc.queryForList(
                 """
                 select psi.id, psi.instance_id, psi.status, psi.step_order,
                        psi.step_key, psi.assignee_user_id, psi.assignee_role,
                        psi.requires_attachment,
-                       pi.template_id, pi.project_id, pi.status as instance_status
+                       pi.template_id, pi.project_id, pi.status as instance_status,
+                       pi.subject_type, pi.subject_id, pi.org_id
                 from process_step_instance psi
                 join process_instance pi on pi.id = psi.instance_id
                 where psi.id = ? and psi.instance_id = ?
@@ -538,21 +544,22 @@ public class ProcessService {
             audit.log("PROCESS_COMPLETED", "process_instance", instanceId,
                     "{\"completedBy\":\"" + me.getId() + "\"}");
 
-            // Hook placeholder for future caisse integration
-            onPaymentProcessCompleted(instanceId);
+            // ──────────────────────────────────────────────────────────────
+            // Cash hook — if subject_type=CASH_MOVEMENT, auto-post the linked
+            // movement. Uses me.getId() as the postedBy (the user who clicked
+            // the last "Valider"). The cashService throws BusinessRuleException
+            // on negative-balance guard failure; this bubbles up and rolls back
+            // the entire @Transactional (step DONE + instance COMPLETED).
+            // ──────────────────────────────────────────────────────────────
+            String subjectType = (String) step.get("subject_type");
+            UUID subjectId = (UUID) step.get("subject_id");
+            UUID orgId = (UUID) step.get("org_id");
+            if ("CASH_MOVEMENT".equals(subjectType) && subjectId != null) {
+                cashService.onProcessCompletedPostMovement(subjectId, me.getId());
+            }
         }
 
         return new StepResult(stepInstanceId, "DONE");
-    }
-
-    /**
-     * Hook called when the last step of a process instance is completed.
-     * Placeholder for future caisse / payment posting integration.
-     * Do NOT call any external service here in v1; it is a no-op.
-     */
-    protected void onPaymentProcessCompleted(UUID instanceId) {
-        // Future: trigger caisse entry, notify finance, etc.
-        // No-op in v1.
     }
 
     // ═══════════════════════════════════════════════════════════════
@@ -573,7 +580,8 @@ public class ProcessService {
                 """
                 select psi.id, psi.status, psi.step_key,
                        psi.assignee_user_id, psi.assignee_role,
-                       pi.project_id, pi.status as instance_status
+                       pi.project_id, pi.status as instance_status,
+                       pi.subject_type, pi.subject_id, pi.org_id
                 from process_step_instance psi
                 join process_instance pi on pi.id = psi.instance_id
                 where psi.id = ? and psi.instance_id = ?
@@ -599,6 +607,9 @@ public class ProcessService {
         UUID assigneeUserId = (UUID) step.get("assignee_user_id");
         String assigneeRole = (String) step.get("assignee_role");
         String stepKey = (String) step.get("step_key");
+        String subjectType = (String) step.get("subject_type");
+        UUID subjectId = (UUID) step.get("subject_id");
+        UUID orgId = (UUID) step.get("org_id");
 
         requireStepAccess(me, stepInstanceId, assigneeUserId, assigneeRole, projectId);
 
@@ -622,6 +633,15 @@ public class ProcessService {
         audit.log("PROCESS_REJECTED", "process_instance", instanceId,
                 "{\"rejectedBy\":\"" + me.getId() +
                 "\",\"comment\":\"" + jsonEscape(req.comment()) + "\"}");
+
+        // ──────────────────────────────────────────────────────────────
+        // Cash hook — if subject_type=CASH_MOVEMENT, clear the link on the
+        // movement so the user can edit + resubmit. Movement stays DRAFT.
+        // Audit CASH_MOVEMENT_REJECTED is emitted by CashService.
+        // ──────────────────────────────────────────────────────────────
+        if ("CASH_MOVEMENT".equals(subjectType) && subjectId != null && orgId != null) {
+            cashService.handleProcessRejected(subjectId, orgId, me.getId());
+        }
 
         return new StepResult(stepInstanceId, "REJECTED");
     }
