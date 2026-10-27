@@ -38,3 +38,6 @@ backend/logs/
 nohup.out
 .env
 .pg/
+*.pid
+backend-run.log
+frontend-run.log
