@@ -1,0 +1,423 @@
+<!-- ==========================================================================
+     FICHE CHANTIER — héros couleur du type + statistiques + dossiers visuels
+     Le propriétaire comprend l'état du chantier sans lire : bande de couleur,
+     grande icône du type, feu tricolore du statut, cartes-dossiers à icônes.
+     ========================================================================== -->
+@if (notFound()) {
+  <app-empty-state icon="pi pi-exclamation-triangle" message="Chantier introuvable ou accès refusé."></app-empty-state>
+} @else if (loading()) {
+  <div class="loading"><i class="pi pi-spin pi-spinner"></i> Chargement…</div>
+} @else if (project()) {
+  @let proj = project();
+
+  <!-- HÉROS : dégradé du type + grande icône + identité -->
+  <section class="hero" [style.background]="tv(proj?.projectType).gradient">
+    <div class="hero-inner">
+      <p-button icon="pi pi-arrow-left" label="Retour" [text]="true"
+                styleClass="hero-back" (onClick)="back()" />
+      <div class="hero-main">
+        <span class="hero-disc"><i class="pi" [class]="tv(proj?.projectType).icon"></i></span>
+        <div class="hero-title">
+          <div class="hero-name-row">
+            <h2>{{ proj?.name }}</h2>
+            @if (proj?.code) { <span class="code-pill">{{ proj?.code }}</span> }
+          </div>
+          <div class="hero-tags">
+            <span class="htag light">
+              <i class="pi" [class]="tv(proj?.projectType).icon"></i> {{ tv(proj?.projectType).label }}
+            </span>
+            <span class="htag" [class.closed]="!isActive()">
+              <span class="hdot" [style.background]="sv(proj?.status).color"></span>
+              {{ sv(proj?.status).label }}
+            </span>
+            @if (proj?.clientName) {
+              <span class="htag light"><i class="pi pi-user"></i> {{ proj?.clientName }}</span>
+            }
+          </div>
+        </div>
+      </div>
+
+      <!-- Statistiques cliquables : dossier / équipe / processus -->
+      <div class="hero-stats">
+        <button type="button" class="hstat" (click)="activeTab.set('0')">
+          <i class="pi pi-folder"></i>
+          <span class="hs-n">{{ stats().folders }}</span>
+          <span class="hs-l">Dossiers</span>
+        </button>
+        <button type="button" class="hstat" (click)="activeTab.set('1')">
+          <i class="pi pi-users"></i>
+          <span class="hs-n">{{ stats().members }}</span>
+          <span class="hs-l">Équipe</span>
+        </button>
+        <button type="button" class="hstat" (click)="activeTab.set('2')">
+          <i class="pi pi-sitemap"></i>
+          <span class="hs-n">{{ stats().processes }}</span>
+          <span class="hs-l">Processus</span>
+        </button>
+      </div>
+
+      <div class="hero-meta">
+        @if (proj?.location || proj?.governorate) {
+          <span><i class="pi pi-map-marker"></i> {{ proj?.location }}@if (proj?.location && proj?.governorate) { · } {{ proj?.governorate }}</span>
+        }
+        @if (proj?.startDate || proj?.endDate) {
+          <span><i class="pi pi-calendar"></i> {{ fmtDate(proj?.startDate) }} → {{ fmtDate(proj?.endDate) }}</span>
+        }
+        @if (canWrite()) {
+          <button type="button" class="hero-edit" (click)="openEditFromDetail()">
+            <i class="pi pi-pencil"></i> Modifier
+          </button>
+        }
+      </div>
+    </div>
+  </section>
+
+  <!-- ARGENT DU CHANTIER — caisse + raccourcis paiement -->
+  <section class="cash-strip">
+    <div class="cash-strip-icon"><i class="pi pi-wallet"></i></div>
+    <div class="cash-strip-info">
+      <div class="cs-label">Argent du chantier</div>
+      @if (cashLoading()) {
+        <div class="cs-balance loading"><i class="pi pi-spin pi-spinner"></i> Chargement…</div>
+      } @else {
+        @if (projectPot()) {
+          <div class="cs-balance" [class.neg]="(projectPotBalance() ?? 0) < 0">
+            {{ fmtAmount(projectPotBalance()) }}
+          </div>
+        } @else {
+          <div class="cs-balance muted">Caisse non disponible</div>
+        }
+      }
+    </div>
+    <div class="cash-strip-actions">
+      <button pButton label="Encaisser" icon="pi pi-arrow-circle-down" severity="success" size="small"
+              (click)="receiveToProjectPot()"></button>
+      <button pButton label="Payer" icon="pi pi-arrow-circle-up" severity="danger" size="small"
+              [outlined]="true" (click)="payFromProjectPot()"></button>
+      @if (projectPot()) {
+        <button pButton icon="pi pi-angle-right" label="Voir la caisse" severity="info"
+                size="small" [text]="true" (click)="viewProjectPot()"></button>
+      }
+    </div>
+  </section>
+
+  <!-- ONGLETS : Dossiers (cœur) / Équipe / Processus -->
+  <p-tabs [value]="activeTab()" (valueChange)="activeTab.set($event)">
+    <p-tablist>
+      <p-tab value="0"><i class="pi pi-folder"></i> Dossiers</p-tab>
+      <p-tab value="1"><i class="pi pi-users"></i> Équipe</p-tab>
+      <p-tab value="2"><i class="pi pi-sitemap"></i> Processus</p-tab>
+    </p-tablist>
+    <p-tabpanels>
+      <!-- ==================== DOSSIERS ==================== -->
+      <p-tabpanel value="0">
+        <div class="panel">
+          @if (canConfigureProject()) {
+            <p class="note">
+              <i class="pi pi-lock"></i>
+              Chaque dossier a ses propres droits (voir / téléverser / approuver…).
+              Cliquez sur le badge d'accès pour les régler.
+            </p>
+          }
+          <div class="folder-grid">
+            @for (f of folders(); track f.id) {
+              <div class="fcard" (click)="openFolder(f)" role="button" tabindex="0"
+                   [attr.aria-label]="'Ouvrir le dossier ' + f.name" (keyup.enter)="openFolder(f)">
+                <div class="fcard-top">
+                  <span class="f-disc"><i class="pi" [class]="fi(f.name)"></i></span>
+                  @if (canConfigureProject()) {
+                    <button type="button" class="f-access"
+                            (click)="openAccess(f); $event.stopPropagation()"
+                            [attr.aria-label]="'Configurer les accès de ' + f.name"
+                            pTooltip="{{ badgeCount(f.id) }} règle(s) d'accès" tooltipPosition="top">
+                      <i class="pi pi-lock"></i>
+                      @if (badgeCount(f.id)) { <span class="fa-n">{{ badgeCount(f.id) }}</span> }
+                    </button>
+                  }
+                </div>
+                <div class="f-name" [title]="f.name">{{ f.name }}</div>
+                <div class="f-foot">
+                  <span class="f-code">{{ f.code }}</span>
+                  <span class="f-open">Ouvrir <i class="pi pi-angle-right"></i></span>
+                </div>
+              </div>
+            } @empty {
+              <app-empty-state icon="pi pi-folder" message="Aucun dossier pour le moment."></app-empty-state>
+            }
+          </div>
+          @if (canConfigureProject()) {
+            <div class="add-folder-row">
+              <p-button label="Ajouter un dossier" icon="pi pi-plus" [outlined]="true" (onClick)="addFolder()" />
+            </div>
+          }
+        </div>
+      </p-tabpanel>
+
+      <!-- ==================== ÉQUIPE ==================== -->
+      <p-tabpanel value="1">
+        <div class="panel">
+          <p class="note">
+            <i class="pi pi-info-circle"></i>
+            Seules ces personnes voient ce chantier (sauf propriétaire).
+          </p>
+          <div class="member-grid">
+            @for (m of members(); track m.userId) {
+              <div class="member-card">
+                <span class="m-avatar" [class]="'role-' + (m.projectRole ?? 'VIEWER').toLowerCase()">
+                  <i class="pi" [class]="m.projectRole === 'ADMIN' ? 'pi-shield'
+                                      : m.projectRole === 'MANAGER' ? 'pi-briefcase'
+                                      : m.projectRole === 'ENGINEER' ? 'pi-cog' : 'pi-eye'"></i>
+                </span>
+                <div class="member-info">
+                  <div class="member-name">{{ m.fullName }}</div>
+                  <div class="member-email">{{ m.email }}</div>
+                  <div class="member-tags">
+                    <span class="mrole" [class]="'r-' + (m.projectRole ?? 'VIEWER').toLowerCase()">
+                      {{ roleLabel(m.projectRole) }}
+                    </span>
+                    @if (m.canUpload) {
+                      <span class="mupload"><i class="pi pi-upload"></i> Téléverse</span>
+                    }
+                  </div>
+                </div>
+                <div class="member-actions">
+                  <p-button icon="pi pi-pencil" [text]="true" (onClick)="openEdit(m)"
+                            [attr.aria-label]="'Modifier ' + m.fullName" />
+                  <p-button icon="pi pi-trash" severity="danger" [text]="true" (onClick)="confirmRemove(m)"
+                            [attr.aria-label]="'Retirer ' + m.fullName" />
+                </div>
+              </div>
+            } @empty {
+              <div class="empty-state">Aucun membre</div>
+            }
+          </div>
+          @if (canManage()) {
+            <div class="add-folder-row">
+              <p-button label="Ajouter un membre" icon="pi pi-user-plus" (onClick)="openAdd()" />
+            </div>
+          }
+        </div>
+      </p-tabpanel>
+
+      <!-- ==================== PROCESSUS ==================== -->
+      <p-tabpanel value="2">
+        <div class="panel">
+          <!-- Owner hint: where blocks happen -->
+          @if (canManage()) {
+            <div class="proc-owner-hint">
+              <div class="hint-icon"><i class="pi pi-bolt"></i></div>
+              <div>
+                <strong>Vue owner</strong> — chaque processus montre son responsable
+                actuel + le statut en temps réel. Les processus bloqués
+                (REJECTED) sont mis en évidence en rouge.
+              </div>
+            </div>
+          }
+
+          <div class="proc-actions">
+            <p-button label="Lancer un processus" icon="pi pi-play" severity="success"
+                      (onClick)="startProcess()" [disabled]="processesLoading()" />
+          </div>
+
+          @if (processesLoading()) {
+            <div class="proc-loading"><i class="pi pi-spin pi-spinner"></i> Chargement…</div>
+          } @else if (processes().length === 0) {
+            <div class="proc-empty">
+              <i class="pi pi-sitemap"></i>
+              <p>Aucun processus pour ce chantier</p>
+              <small>Lancez votre premier processus métier (paiement, achat, réception).</small>
+            </div>
+          } @else {
+            <!-- Process cards (rich) -->
+            <div class="proc-cards">
+              @for (p of processes(); track p.instanceId) {
+                @let pct = progressPct(p.totalSteps, p.currentStepOrder);
+                @let isBlocked = p.status === 'REJECTED';
+                @let isRunning = p.status === 'RUNNING';
+                <a [routerLink]="['/processes', p.instanceId]"
+                   class="proc-card"
+                   [class.blocked]="isBlocked"
+                   [class.running]="isRunning"
+                   [style.--proc-color]="procTypeColor(p.templateKey)">
+                  <div class="proc-card-band"></div>
+                  <div class="proc-card-body">
+                    <header class="proc-head">
+                      <div class="proc-icon-wrap">
+                        <i class="pi {{ procTypeIcon(p.templateKey) }}"></i>
+                      </div>
+                      <div class="proc-id">
+                        <div class="proc-name">{{ p.templateName || p.templateKey }}</div>
+                        <div class="proc-subject">
+                          <i class="pi pi-tag"></i> {{ p.subjectType }}
+                          @if (p.createdAt) { · {{ p.createdAt | date:'short' }} }
+                        </div>
+                      </div>
+                      <span class="proc-status-pill" [class]="procStatusClass(p.status)">
+                        <i class="pi {{ procStatusIcon(p.status) }}"></i>
+                        {{ procStatusLabel(p.status) }}
+                      </span>
+                    </header>
+
+                    <!-- Progress bar -->
+                    <div class="proc-progress">
+                      <div class="proc-progress-track">
+                        <div class="proc-progress-fill"
+                             [style.width.%]="pct"
+                             [style.background]="procTypeGradient(p.templateKey)"></div>
+                      </div>
+                      <div class="proc-progress-meta">
+                        <span>Étape {{ p.currentStepOrder ?? '—' }} / {{ p.totalSteps ?? '—' }} ({{ pct }}%)</span>
+                        @if (isBlocked) {
+                          <span class="proc-blocked-tag">
+                            <i class="pi pi-exclamation-triangle"></i> Bloqué
+                          </span>
+                        }
+                      </div>
+                    </div>
+
+                    <!-- Current step + responsible person -->
+                    <div class="proc-current">
+                      @if (isRunning) {
+                        <div class="proc-cur-label">Étape en cours</div>
+                        <div class="proc-cur-name">{{ p.currentStepName || '—' }}</div>
+                        <div class="proc-responsible"
+                             [style.--role-color]="roleColor(p.currentAssigneeRole)">
+                          <i class="pi {{ roleIcon(p.currentAssigneeRole) }}"></i>
+                          <div>
+                            <div class="rr-label">Responsable</div>
+                            <div class="rr-name">{{ p.currentAssigneeName || '— non résolu —' }}</div>
+                            <div class="rr-role">{{ roleLabelFR(p.currentAssigneeRole) }}</div>
+                          </div>
+                        </div>
+                      } @else if (isBlocked) {
+                        <div class="proc-cur-label">Dernière étape (refusée)</div>
+                        <div class="proc-cur-name">{{ p.currentStepName || '—' }}</div>
+                        <div class="proc-responsible-no">
+                          <i class="pi pi-lock"></i> Aucun responsable actuel — processus rejeté
+                        </div>
+                      } @else {
+                        <div class="proc-cur-label">Statut</div>
+                        <div class="proc-cur-name">{{ procStatusLabel(p.status) }}</div>
+                      }
+                    </div>
+
+                    <div class="proc-cta">
+                      Voir la timeline <i class="pi pi-angle-right"></i>
+                    </div>
+                  </div>
+                </a>
+              }
+            </div>
+          }
+        </div>
+      </p-tabpanel>
+    </p-tabpanels>
+  </p-tabs>
+
+  <!-- ==================== DIALOGUES (membres) ==================== -->
+  <p-dialog [(visible)]="showAddDialog" [modal]="true" [style]="{ width: '500px' }" header="Ajouter un membre au chantier">
+    <div class="dlg-form">
+      <p class="dlg-subtitle">
+        <i class="pi pi-info-circle"></i>
+        Le rôle métier de chaque personne est visible — pour savoir à QUI vous donnez accès.
+      </p>
+      <div class="field">
+        <label>Utilisateur</label>
+        <div class="user-search">
+          <i class="pi pi-search user-search-icon"></i>
+          <input pInputText class="inp" placeholder="Rechercher nom ou email" [(ngModel)]="addFilter" />
+        </div>
+        <div class="user-list">
+          @for (u of filteredUsers(); track u.value) {
+            <div class="user-row" [class.selected]="addUserId === u.value"
+                 role="button" tabindex="0"
+                 [attr.aria-label]="'Sélectionner ' + u.name"
+                 (click)="addUserId = u.value" (keyup.enter)="addUserId = u.value"
+                 [style.--role-color]="userMainRoleColor(u.roleCodes)">
+              <span class="user-avatar" [style.background]="u.gradient">{{ u.initials }}</span>
+              <div class="user-info-body">
+                <div class="name">{{ u.name }}</div>
+                @if (u.email && u.email !== u.name) { <div class="email">{{ u.email }}</div> }
+                <div class="user-roles">
+                  @for (r of u.roleCodes; track r) {
+                    <span class="urole-chip" [style.--rc-color]="roleV(r).color" [style.--rc-soft]="roleV(r).soft">
+                      <i class="pi" [class]="roleV(r).icon"></i> {{ roleV(r).label }}
+                    </span>
+                  } @empty {
+                    <span class="urole-chip no-role"><i class="pi pi-info"></i> Aucun rôle</span>
+                  }
+                </div>
+              </div>
+              <span class="user-check" [class.selected]="addUserId === u.value">
+                <i class="pi" [class]="addUserId === u.value ? 'pi-check' : 'pi-plus'"></i>
+              </span>
+            </div>
+          } @empty {
+            <div class="user-empty">
+              <i class="pi pi-users"></i> Aucun utilisateur disponible
+            </div>
+          }
+        </div>
+      </div>
+      <div class="field">
+        <label>Rôle sur le chantier (permission)</label>
+        <div class="role-btns">
+          @for (b of addRoleBtns; track b.value) {
+            <p-button [icon]="b.icon" [label]="roleLabel(b.value)"
+                      [style]="{ 'background-color': isAddRoleSelected(b.value) ? b.color : 'transparent', 'border-color': isAddRoleSelected(b.value) ? b.color : '#cbd5e1', 'color': isAddRoleSelected(b.value) ? '#fff' : '#475569'}"
+                      [class.selected]="isAddRoleSelected(b.value)"
+                      (onClick)="setAddRole(b.value)" [disabled]="!addUserId" />
+          }
+        </div>
+        @if (!addUserId) {
+          <small class="hint">Sélectionnez un utilisateur ci-dessus</small>
+        }
+      </div>
+      <div class="switch-row">
+        <p-toggleswitch [(ngModel)]="addCanUpload" inputId="add-upload" />
+        <label for="add-upload"><i class="pi pi-upload"></i> Téléverser</label>
+      </div>
+    </div>
+    <ng-template pTemplate="footer">
+      <p-button label="Annuler" [text]="true" (onClick)="showAddDialog = false" />
+      <p-button label="Ajouter au chantier" icon="pi pi-check" (onClick)="saveAdd()"
+                [disabled]="!addUserId" severity="primary" />
+    </ng-template>
+  </p-dialog>
+
+  <p-dialog [(visible)]="showEditDialog" [modal]="true" [style]="{ width: '480px' }" header="Modifier le membre">
+    <div class="dlg-form">
+      <div class="dlg-who">{{ editTarget?.fullName }}</div>
+      <div class="field">
+        <label>Rôle sur le chantier</label>
+        <p-select [options]="roleOpts" [(ngModel)]="editRole" optionLabel="label"
+                  optionValue="value" styleClass="w100" />
+      </div>
+      <div class="switch-row">
+        <p-toggleswitch [(ngModel)]="editCanUpload" inputId="edit-upload" />
+        <label for="edit-upload"><i class="pi pi-upload"></i> Peut téléverser des documents</label>
+      </div>
+    </div>
+    <ng-template pTemplate="footer">
+      <p-button label="Annuler" [text]="true" (onClick)="showEditDialog = false" />
+      <p-button label="Enregistrer" icon="pi pi-check" (onClick)="saveEdit()" />
+    </ng-template>
+  </p-dialog>
+
+  <p-dialog [(visible)]="showRemoveDialog" [modal]="true" [style]="{ width: '440px' }" header="Retirer le membre">
+    <p>Retirer <strong>{{ removeTarget?.fullName }}</strong> de ce chantier ?</p>
+    <ng-template pTemplate="footer">
+      <p-button label="Annuler" [text]="true" (onClick)="showRemoveDialog = false" />
+      <p-button label="Retirer" icon="pi pi-trash" severity="danger" (onClick)="doRemove()" />
+    </ng-template>
+  </p-dialog>
+
+  @if (accessFolder; as f) {
+    <app-folder-access-dialog
+      [(visible)]="showAccessDialog"
+      [projectId]="projectId ?? ''"
+      [folder]="f"
+      (saved)="onAccessSaved()">
+    </app-folder-access-dialog>
+  }
+}

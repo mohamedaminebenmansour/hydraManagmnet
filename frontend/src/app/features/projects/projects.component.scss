@@ -1,0 +1,198 @@
+/* ==========================================================================
+   CHANTIERS — liste visuelle
+   --c = couleur du type, --s = fond doux du type (injectés par carte)
+   ========================================================================== */
+
+.head { display: flex; align-items: center; justify-content: space-between; gap: 1rem; margin-bottom: 1rem; }
+.head-left { min-width: 0; }
+
+.page-title {
+  display: flex; align-items: center; gap: .6rem; margin: 0;
+  font-size: 1.35rem; font-weight: 700; color: #0f172a;
+}
+.title-icon {
+  width: 2.4rem; height: 2.4rem; border-radius: .75rem;
+  display: grid; place-items: center; color: #fff;
+  background: linear-gradient(135deg, #64748b, #334155);
+  box-shadow: 0 4px 10px rgba(51, 65, 85, .25);
+  i { font-size: 1.1rem; }
+}
+.count-pill {
+  background: #e2e8f0; color: #475569; border-radius: 999px;
+  font-size: .8rem; font-weight: 700; padding: .15rem .6rem;
+}
+
+/* ---- Barre de filtres ---------------------------------------------------- */
+.filterbar {
+  display: flex; align-items: center; flex-wrap: wrap; gap: .75rem;
+  margin-bottom: 1.1rem; padding: .6rem .75rem;
+  background: #fff; border: 1px solid #e2e8f0; border-radius: .9rem;
+}
+.seg { display: flex; background: #f1f5f9; border-radius: .65rem; padding: .2rem; gap: .15rem; }
+.seg-btn {
+  display: inline-flex; align-items: center; gap: .4rem;
+  border: 0; background: transparent; color: #475569;
+  font-size: .85rem; font-weight: 600; padding: .35rem .7rem;
+  border-radius: .5rem; cursor: pointer; transition: all .15s ease;
+  &:hover { color: #0f172a; }
+  &.on { background: #fff; color: #0f172a; box-shadow: 0 1px 3px rgba(15, 23, 42, .12); }
+}
+.seg-dot { width: .55rem; height: .55rem; border-radius: 50%; display: inline-block;
+  &.all { background: #94a3b8; }
+  &.live { background: #16a34a; box-shadow: 0 0 0 3px rgba(22, 163, 74, .18); }
+  &.off { background: #64748b; }
+}
+.seg-n {
+  background: #16a34a; color: #fff; border-radius: 999px;
+  font-size: .7rem; font-weight: 700; padding: 0 .4rem; line-height: 1.3;
+}
+
+.type-filters { display: flex; gap: .35rem; flex-wrap: wrap; }
+.type-chip {
+  display: inline-flex; align-items: center; gap: .35rem;
+  border: 1.5px solid #e2e8f0; background: #fff; color: #64748b;
+  padding: .3rem .6rem; border-radius: 999px; cursor: pointer;
+  font-size: .8rem; font-weight: 600; transition: all .15s ease;
+  i { color: var(--c); }
+  .tf-label { max-width: 0; overflow: hidden; white-space: nowrap; transition: max-width .2s ease; }
+  &:hover { border-color: var(--c); background: var(--s); .tf-label { max-width: 7rem; } }
+  &.on { border-color: var(--c); background: var(--s); color: var(--c);
+         .tf-label { max-width: 7rem; } }
+}
+@media (max-width: 900px) { .type-chip .tf-label { max-width: 0; } }
+
+.spacer { flex: 1; }
+
+.searchbox { position: relative; display: flex; align-items: center;
+  i:first-child { position: absolute; left: .6rem; color: #94a3b8; font-size: .85rem; pointer-events: none; }
+  input { padding-left: 2rem; padding-right: 2rem; width: 12rem; border-radius: .65rem; font-size: .85rem; }
+}
+.clear-btn {
+  position: absolute; right: .3rem; border: 0; background: transparent;
+  color: #94a3b8; cursor: pointer; padding: .25rem; border-radius: .4rem;
+  &:hover { color: #dc2626; background: #fef2f2; }
+}
+
+/* ---- Grille de cartes ---------------------------------------------------- */
+.grid {
+  display: grid; gap: 1rem;
+  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+}
+
+.pcard {
+  position: relative; display: flex; overflow: hidden;
+  background: #fff; border: 1px solid #e2e8f0; border-radius: 1rem;
+  cursor: pointer; transition: box-shadow .18s ease, transform .18s ease, border-color .18s ease;
+  &:hover { box-shadow: 0 10px 24px rgba(15, 23, 42, .1); transform: translateY(-2px); border-color: var(--c); }
+  &:focus-visible { outline: 3px solid var(--c); outline-offset: 2px; }
+}
+.band { width: 6px; flex: none; background: var(--c); }
+.pcard-body { flex: 1; min-width: 0; padding: .9rem 1rem .75rem; display: flex; flex-direction: column; gap: .55rem; }
+
+.pcard-top { display: flex; align-items: flex-start; gap: .7rem; }
+.type-disc {
+  flex: none; width: 2.7rem; height: 2.7rem; border-radius: .8rem;
+  display: grid; place-items: center;
+  background: var(--s); color: var(--c);
+  i { font-size: 1.25rem; }
+}
+.pcard-title { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: .3rem; }
+.pname {
+  font-weight: 700; font-size: 1rem; color: #0f172a;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.ptags { display: flex; flex-wrap: wrap; gap: .35rem; }
+.type-tag {
+  display: inline-flex; align-items: center; gap: .3rem;
+  font-size: .72rem; font-weight: 700; padding: .12rem .5rem; border-radius: 999px;
+  i { font-size: .75rem; }
+}
+.status-chip {
+  display: inline-flex; align-items: center; gap: .35rem;
+  font-size: .72rem; font-weight: 700; padding: .12rem .5rem; border-radius: 999px;
+  .dot { width: .45rem; height: .45rem; border-radius: 50%; }
+}
+
+.pmeta { display: flex; flex-direction: column; gap: .25rem; min-height: .5rem; }
+.mitem {
+  display: inline-flex; align-items: center; gap: .45rem;
+  color: #475569; font-size: .84rem;
+  i { color: var(--c); font-size: .85rem; width: 1rem; text-align: center; }
+}
+
+.pcard-foot {
+  display: flex; align-items: center; justify-content: space-between;
+  border-top: 1px dashed #e2e8f0; padding-top: .5rem; margin-top: .1rem;
+}
+.open-hint {
+  display: inline-flex; align-items: center; gap: .2rem;
+  color: var(--c); font-size: .8rem; font-weight: 700; opacity: 0; transition: opacity .15s ease;
+}
+.pcard:hover .open-hint { opacity: 1; }
+::ng-deep .code-chip { background: #f1f5f9; color: #475569; font-size: .75rem; }
+
+/* ---- Wizard --------------------------------------------------------------- */
+.steps {
+  display: flex; align-items: center; justify-content: center; gap: .5rem;
+  margin: 0 0 1.1rem;
+}
+.stp { display: flex; align-items: center; gap: .45rem; color: #94a3b8;
+  .stp-n {
+    width: 1.7rem; height: 1.7rem; border-radius: 50%; display: grid; place-items: center;
+    background: #f1f5f9; font-size: .8rem; font-weight: 700; color: #64748b;
+    transition: all .2s ease;
+  }
+  .stp-l { font-size: .82rem; font-weight: 600; }
+  &.on {
+    color: #0f172a;
+    .stp-n { background: #0f172a; color: #fff; box-shadow: 0 0 0 4px rgba(15, 23, 42, .08); }
+  }
+  &.done {
+    color: #16a34a;
+    .stp-n { background: #dcfce7; color: #16a34a; }
+  }
+}
+.stp-line { width: 2.2rem; height: 2px; background: #e2e8f0; border-radius: 2px; }
+
+/* Choix visuel du type — grandes cartes icône */
+.type-grid {
+  display: grid; grid-template-columns: repeat(5, 1fr); gap: .6rem;
+  @media (max-width: 640px) { grid-template-columns: repeat(3, 1fr); }
+  @media (max-width: 420px) { grid-template-columns: repeat(2, 1fr); }
+}
+.type-card {
+  display: flex; flex-direction: column; align-items: center; gap: .45rem;
+  padding: .8rem .4rem .65rem; border-radius: .9rem;
+  border: 2px solid #e2e8f0; background: #fff; cursor: pointer;
+  transition: all .15s ease;
+  .tc-disc {
+    width: 2.6rem; height: 2.6rem; border-radius: .8rem;
+    display: grid; place-items: center; background: var(--s); color: var(--c);
+    i { font-size: 1.2rem; }
+  }
+  .tc-label { font-size: .78rem; font-weight: 700; color: #475569; }
+  &:hover { border-color: var(--c); transform: translateY(-2px); }
+  &.sel { border-color: var(--c); background: var(--s);
+          box-shadow: 0 0 0 3px color-mix(in srgb, var(--c) 18%, transparent);
+          .tc-label { color: var(--c); } }
+}
+
+.field { display: flex; flex-direction: column; gap: .35rem; margin-bottom: .9rem;
+  label { font-size: .85rem; font-weight: 600; color: #334155;
+    i { color: #64748b; margin-right: .2rem; }
+    small { color: #94a3b8; font-weight: 500; }
+  }
+  &.q label { font-size: .95rem; }
+}
+.two { display: grid; grid-template-columns: 1fr 1fr; gap: .8rem;
+  @media (max-width: 560px) { grid-template-columns: 1fr; } }
+.inp { width: 100%; }
+.hint { color: #64748b; }
+.wizard-note {
+  display: flex; align-items: center; gap: .45rem;
+  color: #64748b; font-size: .8rem; background: #f8fafc;
+  border: 1px dashed #e2e8f0; border-radius: .6rem; padding: .55rem .7rem;
+  i { color: #0891b2; }
+}
+.wizard-footer { display: flex; align-items: center; justify-content: space-between; width: 100%; }
+.wf-right { display: flex; gap: .5rem; }

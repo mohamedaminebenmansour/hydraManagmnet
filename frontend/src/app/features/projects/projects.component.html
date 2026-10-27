@@ -1,0 +1,261 @@
+<!-- ==========================================================================
+     CHANTIERS — liste visuelle
+     Couleur + icône = type de chantier. Point de couleur = statut.
+     ========================================================================== -->
+<div class="head">
+  <div class="head-left">
+    <h2 class="page-title">
+      <span class="title-icon"><i class="pi pi-briefcase"></i></span>
+      Chantiers
+      @if (projects().length) { <span class="count-pill">{{ projects().length }}</span> }
+    </h2>
+  </div>
+  @if (canWrite()) {
+    <p-button icon="pi pi-plus" label="Nouveau chantier" (onClick)="openCreate()" />
+  }
+</div>
+
+<!-- Barre de filtres visuels : statut (feu tricolore) + types (icônes couleur) -->
+<div class="filterbar">
+  <div class="seg" role="group" aria-label="Filtrer par statut">
+    <button type="button" class="seg-btn" [class.on]="statusFilter() === 'ALL'"
+            (click)="setStatusFilter('ALL')">
+      <span class="seg-dot all"></span> Tous
+    </button>
+    <button type="button" class="seg-btn" [class.on]="statusFilter() === 'ACTIF'"
+            (click)="setStatusFilter('ACTIF')">
+      <span class="seg-dot live"></span> En cours
+      @if (activeCount()) { <span class="seg-n">{{ activeCount() }}</span> }
+    </button>
+    <button type="button" class="seg-btn" [class.on]="statusFilter() === 'CLOTURE'"
+            (click)="setStatusFilter('CLOTURE')">
+      <span class="seg-dot off"></span> Clôturés
+    </button>
+  </div>
+
+  <div class="type-filters" role="group" aria-label="Filtrer par type">
+    @for (t of typeKeys; track t) {
+      <button type="button" class="type-chip"
+              [class.on]="typeFilter() === t"
+              [style.--c]="tv(t).color" [style.--s]="tv(t).soft"
+              (click)="toggleTypeFilter(t)"
+              [attr.aria-label]="'Filtrer : ' + tv(t).label"
+              pTooltip="{{ tv(t).label }}" tooltipPosition="bottom">
+        <i class="pi" [class]="tv(t).icon"></i>
+        <span class="tf-label">{{ tv(t).label }}</span>
+      </button>
+    }
+  </div>
+
+  <span class="spacer"></span>
+
+  <div class="searchbox">
+    <i class="pi pi-search"></i>
+    <input pInputText [ngModel]="searchTerm()" (ngModelChange)="searchTerm.set($event)"
+           placeholder="Rechercher…" aria-label="Rechercher un chantier" />
+    @if (searchTerm() || typeFilter() || statusFilter() !== 'ALL') {
+      <button type="button" class="clear-btn" (click)="resetFilters()" aria-label="Réinitialiser les filtres">
+        <i class="pi pi-times"></i>
+      </button>
+    }
+  </div>
+</div>
+
+<!-- Grille de cartes chantier -->
+<div class="grid">
+  @for (p of filteredProjects(); track p.id) {
+    <div class="pcard" [style.--c]="tv(p.projectType).color" [style.--s]="tv(p.projectType).soft"
+         (click)="open(p)" role="button" tabindex="0"
+         [attr.aria-label]="'Ouvrir ' + p.name" (keyup.enter)="open(p)">
+      <div class="band"></div>
+      <div class="pcard-body">
+        <div class="pcard-top">
+          <span class="type-disc"><i class="pi" [class]="tv(p.projectType).icon"></i></span>
+          <div class="pcard-title">
+            <span class="pname" [title]="p.name">{{ p.name }}</span>
+            <div class="ptags">
+              <span class="type-tag" [style]="{ background: tv(p.projectType).soft, color: tv(p.projectType).color }">
+                <i class="pi" [class]="tv(p.projectType).icon"></i> {{ tv(p.projectType).label }}
+              </span>
+              <span class="status-chip" [style]="{ background: sv(p.status).soft, color: sv(p.status).color }">
+                <span class="dot" [style.background]="sv(p.status).color"></span>
+                {{ sv(p.status).label }}
+              </span>
+            </div>
+          </div>
+          @if (canWrite()) {
+            <p-button icon="pi pi-pencil" [rounded]="true" [text]="true" severity="secondary"
+                      (onClick)="openEdit(p); $event.stopPropagation()"
+                      [attr.aria-label]="'Modifier ' + p.name" />
+          }
+        </div>
+
+        <div class="pmeta">
+          @if (p.clientName) {
+            <span class="mitem"><i class="pi pi-user"></i> {{ p.clientName }}</span>
+          }
+          @if (p.location || p.governorate) {
+            <span class="mitem">
+              <i class="pi pi-map-marker"></i>
+              {{ p.location }}@if (p.location && p.governorate) { · } {{ p.governorate }}
+            </span>
+          }
+          @if (p.startDate || p.endDate) {
+            <span class="mitem"><i class="pi pi-calendar"></i> {{ fmtDate(p.startDate) }} → {{ fmtDate(p.endDate) }}</span>
+          }
+        </div>
+
+        <div class="pcard-foot">
+          @if (p.code) { <p-chip [label]="p.code" styleClass="code-chip" /> }
+          <span class="open-hint">Ouvrir <i class="pi pi-angle-right"></i></span>
+        </div>
+      </div>
+    </div>
+  } @empty {
+    @if (projects().length) {
+      <app-empty-state icon="pi pi-briefcase"
+                       message="Aucun chantier ne correspond aux filtres.">
+      </app-empty-state>
+    } @else {
+      <app-empty-state icon="pi pi-briefcase"
+                       message="Aucun chantier pour le moment.">
+      </app-empty-state>
+    }
+  }
+</div>
+
+<!-- ==========================================================================
+     WIZARD — création / modification en 3 étapes (leçon Odoo : ne jamais
+     demander 11 champs d'un coup ; le type d'abord, le reste plus tard).
+     ========================================================================== -->
+<p-dialog [(visible)]="showDialog" [modal]="true" [style]="{ width: '680px' }"
+          [styleClass]="'full-dialog wizard-dialog'"
+          [draggable]="false"
+          [header]="mode === 'edit' ? 'Modifier le chantier' : 'Nouveau chantier'">
+
+  <!-- Fil d'Ariane de l'étape : 3 pastilles couleur -->
+  @if (mode === 'create') {
+    <div class="steps">
+      @for (s of WIZARD_STEPS; track s; let i = $index) {
+        <div class="stp" [class.on]="step() === i + 1" [class.done]="step() > i + 1">
+          <span class="stp-n">{{ step() > i + 1 ? '✓' : i + 1 }}</span>
+          <span class="stp-l">{{ s }}</span>
+        </div>
+        @if (i < WIZARD_STEPS.length - 1) { <span class="stp-line"></span> }
+      }
+    </div>
+  }
+
+  <div class="dlg-form">
+    <!-- ÉTAPE 1 — IDENTITÉ : le type d'abord (choix visuel), puis nom + lieu -->
+    @if (step() === 1) {
+      <div class="field">
+        <label class="q">Quel type de chantier ? <small>(définit sa couleur dans toute l'application)</small></label>
+        <div class="type-grid">
+          @for (t of typeKeys; track t) {
+            <button type="button" class="type-card"
+                    [class.sel]="formProjectType === t"
+                    [style.--c]="tv(t).color" [style.--s]="tv(t).soft"
+                    (click)="setType(t)">
+              <span class="tc-disc"><i class="pi" [class]="tv(t).icon"></i></span>
+              <span class="tc-label">{{ tv(t).label }}</span>
+            </button>
+          }
+        </div>
+      </div>
+      <div class="field">
+        <label>Nom du chantier *</label>
+        <input pInputText class="inp" placeholder="Ex. : Réservoir Sidi Bouzid 500 m³"
+               [(ngModel)]="formName" (keyup.enter)="wNext()" />
+      </div>
+      <div class="two">
+        <div class="field">
+          <label><i class="pi pi-map-marker"></i> Lieu</label>
+          <input pInputText class="inp" placeholder="Lieu / site" [(ngModel)]="formLocation" />
+        </div>
+        <div class="field">
+          <label><i class="pi pi-building"></i> Gouvernorat</label>
+          <input pInputText class="inp" placeholder="Gouvernorat" [(ngModel)]="formGovernorate" />
+        </div>
+      </div>
+    }
+
+    <!-- ÉTAPE 2 — CALENDRIER & ÉQUIPE -->
+    @if (step() === 2) {
+      <div class="two">
+        <div class="field">
+          <label><i class="pi pi-calendar"></i> Date de début</label>
+          <p-datepicker [(ngModel)]="formStartDate" dateFormat="dd/mm/yy" [showIcon]="true"
+                        styleClass="w100" placeholder="jj/mm/aa" />
+        </div>
+        <div class="field">
+          <label><i class="pi pi-calendar"></i> Date de fin</label>
+          <p-datepicker [(ngModel)]="formEndDate" dateFormat="dd/mm/yy" [showIcon]="true"
+                        styleClass="w100" placeholder="jj/mm/aa" />
+        </div>
+      </div>
+      @if (mode === 'create' && canWrite()) {
+        <div class="field">
+          <label><i class="pi pi-users"></i> Membres (optionnel)</label>
+          <p-multiSelect [options]="memberOpts()" [(ngModel)]="formMembers"
+                         placeholder="Ajouter des membres" optionLabel="label"
+                         optionValue="value" [showClear]="true" [filter]="true"
+                         display="chip" styleClass="w100 member-chip" />
+          @if (formMembers.length) {
+            <small class="hint">{{ formMembers.length }} membre{{ formMembers.length > 1 ? 's' : '' }} sélectionné{{ formMembers.length > 1 ? 's' : '' }}</small>
+          }
+        </div>
+      }
+      @if (mode === 'edit') {
+        <div class="field">
+          <label>Statut</label>
+          <p-select [options]="statusOpts" [(ngModel)]="formStatus" optionLabel="label"
+                    optionValue="value" styleClass="w100" />
+        </div>
+      }
+      <p class="wizard-note"><i class="pi pi-info-circle"></i> Vous pourrez ajouter d'autres membres depuis la fiche du chantier.</p>
+    }
+
+    <!-- ÉTAPE 3 — CONTRAT & DÉTAILS (tout optionnel) -->
+    @if (step() === 3) {
+      <div class="two">
+        <div class="field">
+          <label>Code (optionnel)</label>
+          <input pInputText class="inp" placeholder="Ex. : CHT-01" [(ngModel)]="formCode" />
+        </div>
+        <div class="field">
+          <label><i class="pi pi-user"></i> Client (optionnel)</label>
+          <input pInputText class="inp" placeholder="Maître d'ouvrage" [(ngModel)]="formClientName" />
+        </div>
+      </div>
+      <div class="field">
+        <label>Valeur du contrat (optionnel)</label>
+        <p-inputNumber [(ngModel)]="formContractValue" mode="decimal" [min]="0"
+                       placeholder="0.00" styleClass="w100" />
+      </div>
+      <div class="field">
+        <label>Description (optionnel)</label>
+        <textarea pTextarea rows="3" [(ngModel)]="formDescription"></textarea>
+      </div>
+    }
+  </div>
+
+  <ng-template pTemplate="footer">
+    <div class="wizard-footer">
+      @if (step() > 1) {
+        <p-button label="Retour" icon="pi pi-arrow-left" [text]="true" (onClick)="wBack()" />
+      } @else {
+        <span></span>
+      }
+      <div class="wf-right">
+        @if (step() < 3) {
+          <p-button label="Suivant" icon="pi pi-arrow-right" iconPos="right"
+                    (onClick)="wNext()" [disabled]="!formName.trim()" />
+        } @else {
+          <p-button [label]="mode === 'edit' ? 'Enregistrer' : 'Créer le chantier'"
+                    icon="pi pi-check" (onClick)="submit()" [disabled]="!formName.trim()" />
+        }
+      </div>
+    </div>
+  </ng-template>
+</p-dialog>

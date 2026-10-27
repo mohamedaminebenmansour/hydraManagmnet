@@ -1,0 +1,63 @@
+<h2>Mes tâches</h2>
+@if (loading()) {
+  <p class="skeleton">Chargement...</p>
+} @else {
+  @if (tasks().length) {
+    <div class="tasks-grid">
+      @for (task of tasks(); track task.stepInstanceId) {
+        <div class="task-card">
+          <div class="card-header">
+            <span class="card-project">{{ task.processName }}</span>
+            <span class="card-step">{{ task.stepName }}</span>
+          </div>
+          <div class="card-body">
+            <p class="card-subject">{{ task.subjectType }} • {{ task.subjectId }}</p>
+            <p class="card-assignee">Assigné à {{ task.assigneeName }}</p>
+          </div>
+          <div class="card-actions">
+            @if (canAct(task)) {
+              <button pButton
+                    label="Valider"
+                    icon="pi pi-check"
+                    severity="success"
+                    size="small"
+                    [outlined]="true"
+                    (onClick)="validate(task.stepInstanceId)"
+                    class="btn-validate"
+                />
+              <button pButton
+                    label="Rejeter"
+                    icon="pi pi-close"
+                    severity="danger"
+                    size="small"
+                    [outlined]="true"
+                    (onClick)="reject(task.stepInstanceId)"
+                    class="btn-reject"
+                />
+            } @else {
+              <span class="card-status-badge"
+                    [ngClass]="{
+                      'badge-done': task.status === 'DONE',
+                      'badge-current': task.status === 'PENDING',
+                      'badge-rejected': task.status === 'REJECTED'
+                    }">
+                {{ taskStatusFrench(task.status) }}
+              </span>
+            }
+          </div>
+        </div>
+      }
+    </div>
+    @empty {
+      <div class="empty-state">
+        <i class="pi pi-folder"></i>
+        <p>Rien à faire</p>
+      </div>
+    }
+  } @else {
+    <div class="empty-state">
+      <i class="pi pi-folder"></i>
+      <p>Rien à faire</p>
+    </div>
+  }
+}

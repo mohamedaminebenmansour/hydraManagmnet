@@ -1,0 +1,37 @@
+.loading { padding: 40px; text-align: center; color: #64748b; font-size: 16px; }
+
+.head { display: flex; justify-content: space-between; align-items: center; gap: 16px;
+  margin-bottom: 18px; flex-wrap: wrap; }
+.head-left { display: flex; align-items: center; gap: 12px; min-width: 0; flex-wrap: wrap; }
+.title { margin: 0; font-size: 22px; color: #0f172a; }
+.head-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.prio { font-size: 13px; font-weight: 600; padding: 3px 10px; border-radius: 999px; }
+.prio-low { background: #f1f5f9; color: #475569; }
+.prio-medium { background: #fef3c7; color: #92400e; }
+.prio-high { background: #fee2e2; color: #b91c1c; }
+
+.grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
+@media (max-width: 900px) { .grid2 { grid-template-columns: 1fr; } }
+
+.panel { background: #fff; border: 1px solid #e2e8f0; border-radius: 12px; padding: 18px; }
+.panel-title { font-size: 15px; font-weight: 700; color: #0f172a; margin-bottom: 14px;
+  display: flex; align-items: center; gap: 8px; }
+.badge { background: #e0f2fe; color: #0369a1; font-size: 12px; font-weight: 700;
+  border-radius: 999px; padding: 2px 10px; }
+
+.meta { display: grid; grid-template-columns: 1fr 1fr; gap: 14px 18px; }
+.m { display: flex; flex-direction: column; gap: 3px; }
+.m.full { grid-column: 1 / -1; }
+.k { font-size: 12px; font-weight: 600; color: #64748b; text-transform: uppercase; letter-spacing: .04em; }
+.v { font-size: 15px; color: #0f172a; }
+
+.dlist { display: flex; flex-direction: column; gap: 10px; }
+.drow { display: flex; justify-content: space-between; align-items: center; gap: 12px;
+  border: 1px solid #e2e8f0; border-radius: 10px; padding: 10px 12px; }
+.dleft { cursor: pointer; min-width: 0; }
+.dleft:hover .dtitle { color: #0284c7; text-decoration: underline; }
+.dref { font-family: monospace; font-size: 12px; color: #64748b; }
+.dtitle { font-size: 15px; font-weight: 600; color: #0f172a; }
+.dright { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
+.ver { font-family: monospace; font-size: 12px; font-weight: 700; background: #e0f2fe;
+  color: #0369a1; border-radius: 6px; padding: 2px 8px; }

@@ -1,0 +1,50 @@
+.head { display: flex; justify-content: space-between; align-items: center;
+  gap: 12px; margin-bottom: 18px; flex-wrap: wrap; }
+.head-left { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.title { margin: 0; font-size: 20px; color: #0f172a; }
+.ref { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 13px;
+  font-weight: 600; color: #0369a1; background: #f0f9ff; padding: 3px 9px; border-radius: 6px; }
+.loading { color: #64748b; padding: 40px; text-align: center; font-size: 16px; }
+.loading i { margin-right: 8px; }
+.grid2 { display: grid; grid-template-columns: 1fr 1.4fr; gap: 18px; align-items: start; }
+.panel { background: #fff; border: 1px solid #e2e8f0; border-radius: 12px; padding: 18px; }
+.panel-title { font-size: 13px; font-weight: 700; color: #94a3b8; text-transform: uppercase;
+  letter-spacing: 0.04em; margin-bottom: 14px; }
+.meta { display: grid; grid-template-columns: 1fr 1fr; gap: 12px 20px; }
+.m { display: flex; flex-direction: column; gap: 3px; }
+.m.full { grid-column: 1 / -1; }
+.k { font-size: 12px; font-weight: 700; color: #94a3b8; text-transform: uppercase; letter-spacing: 0.03em; }
+.v { font-size: 15px; color: #1e293b; font-weight: 500; }
+.v.mono, .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 13px; }
+.v.tags { display: flex; gap: 6px; flex-wrap: wrap; }
+.muted { color: #94a3b8; }
+.v .ticket-chip { display: inline-flex; align-items: center; gap: 6px; cursor: pointer;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 13px; font-weight: 600;
+  color: #0369a1; background: #f0f9ff; padding: 3px 9px; border-radius: 6px; border: 1px solid #bae6fd; }
+.v .ticket-chip:hover { background: #e0f2fe; }
+.rtable { display: flex; flex-direction: column; }
+.rrow { display: grid; grid-template-columns: 110px 1.6fr 90px 1.2fr 110px 44px;
+  align-items: center; gap: 10px; padding: 11px 4px; border-bottom: 1px solid #f1f5f9; }
+.rrow:last-child { border-bottom: none; }
+.rrow.current { background: #f8fafc; }
+.rthead { font-size: 12px; font-weight: 700; color: #94a3b8; text-transform: uppercase;
+  letter-spacing: 0.03em; border-bottom: 1px solid #e2e8f0; }
+.rev { display: inline-flex; align-items: center; gap: 6px; }
+.rev i { color: #f59e0b; font-size: 12px; }
+.ver { font-size: 12px; font-weight: 600; color: #0f172a; background: #e2e8f0;
+  padding: 1px 8px; border-radius: 6px; }
+.fname { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #334155; font-size: 14px; }
+.size, .date { font-size: 14px; color: #475569; }
+.note { font-size: 13px; color: #64748b; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.act { display: flex; justify-content: flex-end; }
+.dlg-form { display: flex; flex-direction: column; gap: 14px; }
+.field { display: flex; flex-direction: column; gap: 6px; }
+.field label { font-size: 13px; font-weight: 700; color: #475569;
+  text-transform: uppercase; letter-spacing: 0.03em; }
+.inp { font-size: 16px; padding: 10px 12px; width: 100%; box-sizing: border-box; }
+:host ::ng-deep .p-progressbar { height: 8px; margin-top: 10px; }
+@media (max-width: 900px) {
+  .grid2 { grid-template-columns: 1fr; }
+  .rrow { grid-template-columns: 100px 1fr 44px; }
+  .rrow .size, .rrow .note, .rrow .date { display: none; }
+}

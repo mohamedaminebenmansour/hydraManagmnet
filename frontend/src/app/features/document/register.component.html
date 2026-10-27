@@ -1,0 +1,64 @@
+<div class="head">
+  <div class="head-left">
+    <p-button icon="pi pi-arrow-left" label="Retour" [text]="true" (onClick)="back()" />
+    <h2>Registre des documents</h2>
+    <span class="badge">{{ total() }}</span>
+  </div>
+</div>
+
+<div class="filters">
+  <input pInputText class="inp search" placeholder="Rechercher réf. ou titre…"
+         [(ngModel)]="q" (keyup.enter)="applyFilters()" />
+  <p-dropdown [options]="typeOpts" [(ngModel)]="type" optionLabel="label" optionValue="value"
+              placeholder="Type" styleClass="w" (onChange)="applyFilters()" [showClear]="true" />
+  <p-dropdown [options]="statusOpts" [(ngModel)]="status" optionLabel="label" optionValue="value"
+              placeholder="Statut" styleClass="w" (onChange)="applyFilters()" [showClear]="true" />
+  <p-button icon="pi pi-search" label="Filtrer" (onClick)="applyFilters()" />
+  <p-button icon="pi pi-filter-slash" label="Réinitialiser" [text]="true" (onClick)="clearFilters()" />
+</div>
+
+<div class="panel">
+  @if (loading()) {
+    <div class="loading"><i class="pi pi-spin pi-spinner"></i> Chargement…</div>
+  } @else if (documents().length) {
+    <div class="rtable">
+      <div class="rthead rrow">
+        <span class="c-ref">Référence</span>
+        <span class="c-name">Titre</span>
+        <span class="c-type">Type</span>
+        <span class="c-rev">Rév.</span>
+        <span class="c-status">Statut</span>
+        <span class="c-tags">Tags</span>
+        <span class="c-date">Date</span>
+      </div>
+      @for (d of documents(); track d.id) {
+        <div class="rrow" (click)="view(d)">
+          <span class="c-ref"><span class="ref">{{ d.reference }}</span></span>
+          <span class="c-name">
+            <i class="pi pi-file"></i>
+            <span class="dname">{{ d.title }}</span>
+          </span>
+          <span class="c-type">{{ typeLabel(d.docType) }}</span>
+          <span class="c-rev">
+            @if (d.currentRev) { <span class="ver">{{ d.currentRev }}</span> } @else { <span class="muted">—</span> }
+          </span>
+          <span class="c-status"><p-tag [value]="statusLabel(d.status)" [severity]="statusSeverity(d.status)" /></span>
+          <span class="c-tags">
+            @for (t of d.tags.slice(0, 2); track t) { <p-chip [label]="t" /> }
+            @if (d.tags.length > 2) { <span class="muted">+{{ d.tags.length - 2 }}</span> }
+          </span>
+          <span class="c-date">{{ fmtDate(d.createdAt) }}</span>
+        </div>
+      }
+    </div>
+
+    <div class="pager">
+      <p-button icon="pi pi-chevron-left" [text]="true" (onClick)="prev()" [disabled]="page() === 0" />
+      <span class="pinfo">Page {{ page() + 1 }} / {{ pageCount }}</span>
+      <p-button icon="pi pi-chevron-right" [text]="true" (onClick)="next()"
+                [disabled]="(page() + 1) * size >= total()" />
+    </div>
+  } @else {
+    <app-empty-state icon="pi pi-files" message="Aucun document ne correspond aux filtres."></app-empty-state>
+  }
+</div>

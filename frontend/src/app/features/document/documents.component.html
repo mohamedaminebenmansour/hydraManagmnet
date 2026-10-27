@@ -1,0 +1,183 @@
+@if (notFound()) {
+  <app-empty-state icon="pi pi-exclamation-triangle" message="Dossier introuvable ou accès refusé."></app-empty-state>
+} @else {
+  <div class="head">
+    <div class="head-left">
+      <p-button icon="pi pi-arrow-left" label="Retour" [text]="true" (onClick)="back()" />
+      <div class="crumbs">
+        <span class="crumb-link" (click)="back()">Chantier</span>
+        <i class="pi pi-angle-right"></i>
+        <span class="crumb-current">{{ folder()?.name ?? 'Dossier' }}</span>
+      </div>
+    </div>
+    @if (canUpload()) {
+      <p-button icon="pi pi-upload" label="Téléverser un document" (onClick)="openUpload()" [loading]="uploading()" />
+    }
+  </div>
+
+  @if (loading()) {
+    <div class="loading"><i class="pi pi-spin pi-spinner"></i> Chargement…</div>
+  } @else {
+    <div class="panel">
+      @if (documents().length) {
+        <div class="dtable">
+          <div class="dthead drow">
+            <span class="c-ref">Référence</span>
+            <span class="c-name">Titre</span>
+            <span class="c-type">Type</span>
+            <span class="c-rev">Rév.</span>
+            <span class="c-status">Statut</span>
+            <span class="c-tags">Tags</span>
+            <span class="c-date">Date</span>
+            <span class="c-actions"></span>
+          </div>
+          @for (d of documents(); track d.id) {
+            <div class="drow">
+              <span class="c-ref"><span class="ref">{{ d.reference }}</span></span>
+              <span class="c-name">
+                <span class="doc-disc" [style.background]="dv(d.docType).soft" [style.color]="dv(d.docType).color">
+                  <i class="pi" [class]="dv(d.docType).icon"></i>
+                </span>
+                <span class="dname" (click)="view(d)">{{ d.title }}</span>
+              </span>
+              <span class="c-type">
+                <span class="type-tag" [style.background]="dv(d.docType).soft" [style.color]="dv(d.docType).color">
+                  {{ typeLabel(d.docType) }}
+                </span>
+              </span>
+              <span class="c-rev">
+                @if (d.currentRev) {
+                  <span class="ver-pill" title="Dernière version">
+                    <i class="pi pi-check-circle"></i> {{ d.currentRev }}
+                  </span>
+                } @else { <span class="muted">—</span> }
+                @if (d.revisionCount > 1) { <span class="count">×{{ d.revisionCount }}</span> }
+              </span>
+              <span class="c-status">
+                <span class="st-pill" [style.background]="dsv(d.status).soft" [style.color]="dsv(d.status).color">
+                  <i class="pi" [class]="dsv(d.status).icon"></i> {{ statusLabel(d.status) }}
+                </span>
+              </span>
+              <span class="c-tags">
+                @for (t of d.tags.slice(0, 2); track t) { <p-chip [label]="t" /> }
+                @if (d.tags.length > 2) { <span class="muted">+{{ d.tags.length - 2}}</span> }
+              </span>
+              <span class="c-date">{{ fmtDate(d.createdAt) }}</span>
+              <span class="c-actions">
+                <p-button icon="pi pi-eye" [rounded]="true" [text]="true"
+                          (onClick)="view(d)" [attr.aria-label]="'Voir ' + d.reference" />
+                <p-button icon="pi pi-download" [rounded]="true" [text]="true"
+                          (onClick)="download(d)" [attr.aria-label]="'Télécharger ' + d.reference" />
+                @if (canUpload()) {
+                  <p-button icon="pi pi-refresh" [rounded]="true" [text]="true"
+                            (onClick)="openRev(d)" [attr.aria-label]="'Nouvelle révision ' + d.reference" />
+                }
+                @if (canDelete()) {
+                  <p-button icon="pi pi-trash" [rounded]="true" [text]="true" severity="danger"
+                            (onClick)="confirmRemove(d)" [attr.aria-label]="'Supprimer ' + d.reference" />
+                }
+              </span>
+            </div>
+          }
+        </div>
+      } @else {
+        <app-empty-state icon="pi pi-file" message="Aucun document dans ce dossier."></app-empty-state>
+      }
+    </div>
+  }
+}
+
+<!-- Upload document (create + first revision) -->
+<p-dialog [(visible)]="showUploadDialog" [modal]="true" [style]="{ width: '560px' }"
+          header="Téléverser un document" [draggable]="false">
+  <div class="dlg-form">
+    <div class="two">
+      <div class="field">
+        <label>Titre *</label>
+        <input pInputText class="inp" placeholder="Titre du document" [(ngModel)]="uploadTitle" [disabled]="uploading()" />
+      </div>
+      <div class="field">
+        <label>Type *</label>
+        <p-dropdown [options]="docTypeOpts" [(ngModel)]="uploadDocType" optionLabel="label"
+                    optionValue="value" placeholder="Choisir un type" styleClass="w100" [disabled]="uploading()" />
+      </div>
+    </div>
+    <div class="two">
+      <div class="field">
+        <label>Révision (optionnel)</label>
+        <input pInputText class="inp" placeholder="auto : Rev.0, Rev.A…" [(ngModel)]="uploadRevision" [disabled]="uploading()" />
+      </div>
+      <div class="field">
+        <label>Ticket (optionnel)</label>
+        <p-dropdown [options]="ticketOptions()" [(ngModel)]="uploadTicketId" optionLabel="title"
+                    optionValue="id" placeholder="Aucun ticket" styleClass="w100" [disabled]="uploading()"
+                    [showClear]="true" />
+      </div>
+    </div>
+    <div class="field">
+      <label>Tags (optionnel)</label>
+      <p-multiselect [options]="tagOptions()" [(ngModel)]="uploadTags" placeholder="Sélectionner des tags"
+                     styleClass="w100" [disabled]="uploading()" />
+    </div>
+    <div class="field">
+      <label>Description (optionnel)</label>
+      <textarea pTextarea rows="2" [(ngModel)]="uploadDescription" [disabled]="uploading()"></textarea>
+    </div>
+    <div class="field">
+      <label>Fichier *</label>
+      <p-fileUpload #fileUpload mode="advanced" customUpload="true" [auto]="false" [multiple]="false"
+                    accept=".pdf,.doc,.docx,.xls,.xlsx,.png,.jpg,.jpeg,.gif,.webp,.dwg,.dxf,.zip,.txt,.csv"
+                    [maxFileSize]="52428800" chooseLabel="Choisir un fichier"
+                    uploadLabel="Téleverser" cancelLabel="Annuler"
+                    (uploadHandler)="onUploadFile($event)"
+                    [showUploadButton]="!uploading()" [showCancelButton]="!uploading()"></p-fileUpload>
+      @if (uploading()) {
+        <p-progressBar [value]="uploadProgress()" [showValue]="true"></p-progressBar>
+      }
+      <small class="hint">PDF, Word, Excel, images, plans (DWG/DXF), ZIP — 50 Mo max.</small>
+    </div>
+  </div>
+  <ng-template pTemplate="footer">
+    <p-button label="Fermer" [text]="true" (onClick)="showUploadDialog = false" [disabled]="uploading()" />
+  </ng-template>
+</p-dialog>
+
+<!-- New revision -->
+<p-dialog [(visible)]="showRevDialog" [modal]="true" [style]="{ width: '480px' }"
+          [header]="'Nouvelle révision — ' + (revTarget?.reference ?? '')" [draggable]="false">
+  <div class="dlg-form">
+    <div class="field">
+      <label>Révision (optionnel)</label>
+      <input pInputText class="inp" placeholder="auto : bump suivant" [(ngModel)]="revLabel" [disabled]="uploading()" />
+    </div>
+    <div class="field">
+      <label>Note de changement (optionnel)</label>
+      <textarea pTextarea rows="2" [(ngModel)]="revNote" [disabled]="uploading()"></textarea>
+    </div>
+    <div class="field">
+      <label>Fichier *</label>
+      <p-fileUpload #revFileUpload mode="advanced" customUpload="true" [auto]="false" [multiple]="false"
+                    accept=".pdf,.doc,.docx,.xls,.xlsx,.png,.jpg,.jpeg,.gif,.webp,.dwg,.dxf,.zip,.txt,.csv"
+                    [maxFileSize]="52428800" chooseLabel="Choisir un fichier"
+                    uploadLabel="Téleverser" cancelLabel="Annuler"
+                    (uploadHandler)="onRevFile($event)"
+                    [showUploadButton]="!uploading()" [showCancelButton]="!uploading()"></p-fileUpload>
+      @if (uploading()) {
+        <p-progressBar [value]="uploadProgress()" [showValue]="true"></p-progressBar>
+      }
+    </div>
+  </div>
+  <ng-template pTemplate="footer">
+    <p-button label="Fermer" [text]="true" (onClick)="showRevDialog = false" [disabled]="uploading()" />
+  </ng-template>
+</p-dialog>
+
+<!-- Delete -->
+<p-dialog [(visible)]="showRemoveDialog" [modal]="true" [style]="{ width: '440px' }"
+          header="Supprimer le document">
+  <p>Supprimer <strong>{{ removeTarget?.reference }}</strong> — {{ removeTarget?.title }} ?</p>
+  <ng-template pTemplate="footer">
+    <p-button label="Annuler" [text]="true" (onClick)="showRemoveDialog = false" />
+    <p-button label="Supprimer" icon="pi pi-trash" severity="danger" (onClick)="doRemove()" />
+  </ng-template>
+</p-dialog>

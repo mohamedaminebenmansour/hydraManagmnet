@@ -1,0 +1,90 @@
+:host { display: block; }
+
+.pot-list {
+  max-width: 1180px;
+  margin: 0 auto;
+  padding: 4px;
+  font-family: 'Inter', system-ui, sans-serif;
+  color: #0f172a;
+}
+
+.pl-head {
+  display: flex; justify-content: space-between; align-items: flex-start;
+  margin-bottom: 20px; gap: 16px;
+  h1 {
+    margin: 0 0 4px; font-size: 24px; font-weight: 800;
+    display: flex; align-items: center; gap: 10px;
+    i { color: #b45309; }
+  }
+  p { margin: 0; color: #64748b; font-size: 14px; }
+}
+
+.pl-loading, .pl-empty {
+  text-align: center; padding: 50px 24px;
+  background: #fff; border: 1px dashed #cbd5e1;
+  border-radius: 14px;
+  i { font-size: 36px; color: #94a3b8; }
+  h3 { margin: 8px 0 4px; font-size: 17px; }
+  p { margin: 0 0 14px; color: #64748b; }
+}
+
+.pl-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  gap: 14px;
+}
+
+.pot-card {
+  display: block;
+  background: #fff;
+  border: 1px solid #e2e8f0;
+  border-radius: 14px;
+  overflow: hidden;
+  text-decoration: none; color: inherit;
+  transition: all .15s ease;
+  &:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 10px 26px -10px rgba(15, 23, 42, 0.2);
+  }
+  &.company {
+    border-color: #fcd34d;
+    box-shadow: 0 0 0 2px rgba(245, 158, 11, 0.12);
+  }
+}
+
+.pc-band { height: 6px; background: var(--pot-color, #b45309); }
+
+.pc-body {
+  display: grid;
+  grid-template-columns: 44px 1fr auto;
+  gap: 14px; align-items: center;
+  padding: 16px;
+}
+.pc-icon {
+  width: 44px; height: 44px;
+  border-radius: 12px;
+  background: var(--pot-soft, #fffbeb);
+  color: var(--pot-color, #b45309);
+  display: grid; place-items: center;
+  font-size: 20px;
+}
+.pc-name { font-weight: 700; font-size: 15px; color: #0f172a; }
+.pc-type {
+  display: flex; align-items: center; gap: 6px;
+  margin-top: 3px;
+}
+.pc-type-chip {
+  font-size: 10px; font-weight: 700;
+  padding: 2px 8px; border-radius: 999px;
+  background: var(--pot-soft, #f1f5f9);
+  color: var(--pot-color, #b45309);
+}
+.pc-cur { font-size: 11px; color: #94a3b8; font-family: 'JetBrains Mono', monospace; }
+
+.pc-balance {
+  font-size: 17px; font-weight: 800; color: #0d9488;
+  margin-top: 4px;
+  &.neg { color: #dc2626; }
+}
+
+.pc-arrow { color: #cbd5e1; font-size: 18px; }

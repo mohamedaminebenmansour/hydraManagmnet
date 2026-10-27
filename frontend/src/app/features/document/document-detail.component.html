@@ -1,0 +1,149 @@
+@if (notFound()) {
+  <app-empty-state icon="pi pi-exclamation-triangle" message="Document introuvable ou accès refusé."></app-empty-state>
+} @else if (loading()) {
+  <div class="loading"><i class="pi pi-spin pi-spinner"></i> Chargement…</div>
+} @else {
+  @if (doc(); as d) {
+  <div class="head">
+    <div class="head-left">
+      <p-button icon="pi pi-arrow-left" label="Retour" [text]="true" (onClick)="back()" />
+      <span class="ref">{{ d.reference }}</span>
+      <h2 class="title">{{ d.title }}</h2>
+      <p-tag [value]="statusLabel(d.status)" [severity]="statusSeverity(d.status)" />
+    </div>
+    @if (canUpload()) {
+      <p-button icon="pi pi-refresh" label="Nouvelle révision" (onClick)="openRev()" />
+    }
+    @if (canLink()) {
+      <p-button icon="pi pi-link" label="Lier à un ticket" [outlined]="true" (onClick)="openLink()" />
+    }
+  </div>
+
+  <div class="grid2">
+    <div class="panel">
+      <div class="panel-title">Métadonnées</div>
+      <div class="meta">
+        <div class="m"><span class="k">Référence</span><span class="v mono">{{ d.reference }}</span></div>
+        <div class="m"><span class="k">Type</span><span class="v">{{ typeLabel(d.docType) }}</span></div>
+        <div class="m"><span class="k">Révision courante</span><span class="v">{{ d.currentRev ?? '—' }}</span></div>
+        <div class="m"><span class="k">Révisions</span><span class="v">{{ d.revisionCount }}</span></div>
+        <div class="m"><span class="k">Créé le</span><span class="v">{{ fmtDate(d.createdAt) }}</span></div>
+        <div class="m"><span class="k">Modifié le</span><span class="v">{{ fmtDate(d.updatedAt) }}</span></div>
+        @if (d.ticketId) {
+          <div class="m">
+            <span class="k">Ticket lié</span>
+            <span class="v">
+              <span class="ticket-chip" (click)="openTicket()" title="Ouvrir le ticket">
+                <i class="pi pi-ticket"></i> {{ d.ticketId }}
+              </span>
+              @if (canLink()) {
+                <p-button icon="pi pi-unlink" [rounded]="true" [text]="true" severity="danger"
+                          (onClick)="unlinkTicket()" [attr.aria-label]="'Délier le ticket'"
+                          [loading]="linking()" />
+              }
+            </span>
+          </div>
+        } @else {
+          <div class="m">
+            <span class="k">Ticket lié</span>
+            <span class="v muted">Aucun</span>
+          </div>
+        }
+        <div class="m full"><span class="k">Description</span>
+          <span class="v">{{ d.description ?? '—' }}</span></div>
+        <div class="m full"><span class="k">Tags</span>
+          <span class="v tags">
+            @if (d.tags.length) {
+              @for (t of d.tags; track t) { <p-chip [label]="t" /> }
+            } @else { <span class="muted">—</span> }
+          </span></div>
+      </div>
+    </div>
+
+    <div class="panel">
+      <div class="panel-title">Historique des révisions</div>
+      @if (revisions().length) {
+        <div class="rtable">
+          <div class="rthead rrow">
+            <span>Révision</span><span>Fichier</span><span>Taille</span><span>Note</span><span>Date</span><span></span>
+          </div>
+          @for (r of revisions(); track r.id) {
+            <div class="rrow" [class.current]="r.revLabel === d.currentRev">
+              <span class="rev">
+                <span class="ver">{{ r.revLabel }}</span>
+                @if (r.revLabel === d.currentRev) { <i class="pi pi-star-fill" title="Courante"></i> }
+              </span>
+              <span class="fname">{{ r.fileName ?? '—' }}</span>
+              <span class="size">{{ fmtSize(r.sizeBytes) }}</span>
+              <span class="note">{{ r.changeNote ?? '—' }}</span>
+              <span class="date">{{ fmtDate(r.uploadedAt) }}</span>
+              <span class="act">
+                <p-button icon="pi pi-download" [rounded]="true" [text]="true"
+                          (onClick)="download(r)" [attr.aria-label]="'Télécharger ' + r.revLabel" />
+              </span>
+            </div>
+          }
+        </div>
+      } @else {
+        <app-empty-state icon="pi pi-history" message="Aucune révision."></app-empty-state>
+      }
+    </div>
+  </div>
+  }
+}
+
+<p-dialog [(visible)]="showRevDialog" [modal]="true" [style]="{ width: '480px' }"
+          header="Nouvelle révision" [draggable]="false">
+  <div class="dlg-form">
+    <div class="field">
+      <label>Révision (optionnel)</label>
+      <input pInputText class="inp" placeholder="auto : bump suivant" [(ngModel)]="revLabel" [disabled]="uploading()" />
+    </div>
+    <div class="field">
+      <label>Note de changement (optionnel)</label>
+      <textarea pTextarea rows="2" [(ngModel)]="revNote" [disabled]="uploading()"></textarea>
+    </div>
+    <div class="field">
+      <label>Fichier *</label>
+      <p-fileUpload #revFileUpload mode="advanced" customUpload="true" [auto]="false" [multiple]="false"
+                    [maxFileSize]="52428800" chooseLabel="Choisir un fichier"
+                    uploadLabel="Téléverser" cancelLabel="Annuler"
+                    (uploadHandler)="onRevFile($event)"
+                    [showUploadButton]="!uploading()" [showCancelButton]="!uploading()"></p-fileUpload>
+      @if (uploading()) {
+        <p-progressBar [value]="uploadProgress()" [showValue]="true"></p-progressBar>
+      }
+    </div>
+  </div>
+  <ng-template pTemplate="footer">
+    <p-button label="Fermer" [text]="true" (onClick)="showRevDialog = false" [disabled]="uploading()" />
+  </ng-template>
+</p-dialog>
+
+<p-dialog [(visible)]="showLinkDialog" [modal]="true" [style]="{ width: '480px' }"
+          header="Lier à un ticket" [draggable]="false">
+  <div class="dlg-form">
+    @if (ticketOptions().length) {
+      <div class="field">
+        <label>Ticket</label>
+        <p-select [options]="ticketOptions()" [(ngModel)]="selectedTicketId"
+                  [filter]="true" filterBy="title" [showClear]="true"
+                  placeholder="Choisir un ticket (vide = détacher)"
+                  optionLabel="title" optionValue="id" styleClass="w100">
+          <ng-template let-t pTemplate="item">
+            <span>{{ ticketLabel(t) }}</span>
+          </ng-template>
+        </p-select>
+      </div>
+    } @else {
+      <div class="field">
+        <div class="muted">Aucun ticket disponible pour ce chantier.</div>
+      </div>
+    }
+  </div>
+  <ng-template pTemplate="footer">
+    <p-button label="Annuler" [text]="true" (onClick)="showLinkDialog = false" [disabled]="linking()" />
+    <p-button label="Enregistrer" icon="pi pi-check" (onClick)="saveLink()"
+              [loading]="linking()" />
+  </ng-template>
+</p-dialog>

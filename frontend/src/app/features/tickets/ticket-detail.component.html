@@ -1,0 +1,70 @@
+@if (notFound()) {
+  <app-empty-state icon="pi pi-exclamation-triangle" message="Ticket introuvable ou accès refusé."></app-empty-state>
+} @else if (loading()) {
+  <div class="loading"><i class="pi pi-spin pi-spinner"></i> Chargement…</div>
+} @else {
+  @if (ticket(); as t) {
+  <div class="head">
+    <div class="head-left">
+      <p-button icon="pi pi-arrow-left" label="Retour" [text]="true" (onClick)="back()" />
+      <h2 class="title">{{ t.title }}</h2>
+      <p-tag [value]="statusLabel(t.status)" [severity]="statusSeverity(t.status)" />
+      <span class="prio prio-{{ (t.priority ?? 'MEDIUM').toLowerCase() }}">
+        {{ priorityLabel(t.priority) }}
+      </span>
+    </div>
+    <div class="head-actions">
+      @for (next of transitions(); track next) {
+        <p-button [label]="statusLabel(next)" icon="pi pi-arrow-right" size="small"
+                  [severity]="next === 'AS_BUILT' ? 'success' : 'info'"
+                  (onClick)="advance(next)" [disabled]="!canWrite()" />
+      }
+    </div>
+  </div>
+
+  <div class="grid2">
+    <div class="panel">
+      <div class="panel-title">Détails</div>
+      <div class="meta">
+        <div class="m"><span class="k">Chantier</span><span class="v">{{ t.projectName ?? '—' }}</span></div>
+        <div class="m"><span class="k">Assigné à</span><span class="v">{{ t.assignedToName ?? 'Non assigné' }}</span></div>
+        <div class="m"><span class="k">Début</span><span class="v">{{ fmtDate(t.startAt) }}</span></div>
+        <div class="m"><span class="k">Échéance</span><span class="v">{{ fmtDate(t.dueAt) }}</span></div>
+        <div class="m"><span class="k">Créé le</span><span class="v">{{ fmtDate(t.createdAt) }}</span></div>
+        <div class="m full"><span class="k">Description</span>
+          <span class="v">{{ t.description ?? '—' }}</span></div>
+      </div>
+    </div>
+
+    <div class="panel">
+      <div class="panel-title">
+        Documents liés
+        <span class="badge">{{ docs().length }}</span>
+      </div>
+      @if (docs().length) {
+        <div class="dlist">
+          @for (d of docs(); track d.id) {
+            <div class="drow">
+              <div class="dleft" (click)="openDoc(d)">
+                <div class="dref">{{ d.reference }}</div>
+                <div class="dtitle">{{ d.title }}</div>
+              </div>
+              <div class="dright">
+                @if (d.currentRev) { <span class="ver">{{ d.currentRev }}</span> }
+                @if (d.status) { <p-tag [value]="d.status" severity="secondary" /> }
+                @if (canWrite()) {
+                  <p-button icon="pi pi-unlink" [rounded]="true" [text]="true" severity="danger"
+                            (onClick)="unlink(d)" [loading]="unlinking() === d.id"
+                            [attr.aria-label]="'Dissocier ' + d.reference" />
+                }
+              </div>
+            </div>
+          }
+        </div>
+      } @else {
+        <app-empty-state icon="pi pi-file" message="Aucun document lié à ce ticket."></app-empty-state>
+      }
+    </div>
+  </div>
+  }
+}

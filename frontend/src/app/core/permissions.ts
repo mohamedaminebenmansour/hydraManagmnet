@@ -1,0 +1,54 @@
+export const PERM = {
+  TICKET_READ: 'TICKET_READ',
+  TICKET_WRITE: 'TICKET_WRITE',
+  TICKET_ASSIGN: 'TICKET_ASSIGN',
+  USER_CREATE: 'USER_CREATE',
+  USER_UPDATE: 'USER_UPDATE',
+  USER_DEACTIVATE: 'USER_DEACTIVATE',
+  ROLE_ASSIGN: 'ROLE_ASSIGN',
+  ROLE_MANAGE: 'ROLE_MANAGE',
+  PROJECT_READ: 'PROJECT_READ',
+  PROJECT_WRITE: 'PROJECT_WRITE',
+  PROJECT_ASSIGN: 'PROJECT_ASSIGN',
+  PROJECT_MANAGE: 'PROJECT_MANAGE',
+  DOCUMENT_READ: 'DOCUMENT_READ',
+  DOCUMENT_UPLOAD: 'DOCUMENT_UPLOAD',
+  DOCUMENT_DOWNLOAD: 'DOCUMENT_DOWNLOAD',
+  DOCUMENT_DELETE: 'DOCUMENT_DELETE',
+  AUDIT_VIEW: 'AUDIT_VIEW',
+  FOLDER_MANAGE: 'FOLDER_MANAGE'
+} as const;
+
+export const PERM_LABELS: Record<string, string> = {
+  USER_CREATE: 'Ajouter des utilisateurs',
+  USER_UPDATE: 'Modifier des utilisateurs',
+  USER_DEACTIVATE: 'Désactiver des utilisateurs',
+  ROLE_ASSIGN: 'Attribuer les rôles',
+  ROLE_MANAGE: 'Créer des rôles',
+  PROJECT_READ: 'Voir les projets',
+  PROJECT_WRITE: 'Créer et modifier les projets',
+  PROJECT_ASSIGN: 'Affecter des utilisateurs aux projets',
+  PROJECT_MANAGE: 'Gérer les projets',
+  DOCUMENT_READ: 'Voir les documents',
+  DOCUMENT_UPLOAD: 'Ajouter des documents',
+  DOCUMENT_DOWNLOAD: 'Télécharger les documents',
+  DOCUMENT_DELETE: 'Supprimer des documents',
+  AUDIT_VIEW: "Voir le rapport d'activité",
+  TICKET_READ: 'Voir les tickets',
+  TICKET_WRITE: 'Créer et fermer les tickets',
+  TICKET_ASSIGN: 'Assigner les tickets',
+  FOLDER_MANAGE: 'Configurer les accès aux dossiers'
+};
+
+export const PERM_GROUPS: { key: string; icon: string; title: string; ids: string[] }[] = [
+  { key: 'users',    icon: 'pi pi-users',     title: 'Utilisateurs',
+    ids: ['USER_CREATE','USER_UPDATE','USER_DEACTIVATE','ROLE_ASSIGN','ROLE_MANAGE'] },
+  { key: 'docs',     icon: 'pi pi-file',      title: 'Documents',
+    ids: ['DOCUMENT_READ','DOCUMENT_UPLOAD','DOCUMENT_DOWNLOAD','DOCUMENT_DELETE'] },
+  { key: 'projects', icon: 'pi pi-briefcase', title: 'Projets',
+    ids: ['PROJECT_READ','PROJECT_WRITE','PROJECT_ASSIGN','PROJECT_MANAGE'] },
+  { key: 'tickets',  icon: 'pi pi-ticket',    title: 'Tickets',
+    ids: ['TICKET_READ','TICKET_WRITE','TICKET_ASSIGN'] },
+  { key: 'other',    icon: 'pi pi-cog',       title: 'Autres',
+    ids: ['AUDIT_VIEW'] },
+];

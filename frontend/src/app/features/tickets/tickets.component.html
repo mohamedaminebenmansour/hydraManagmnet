@@ -1,0 +1,129 @@
+<div class="head">
+  <h2><i class="pi pi-ticket"></i> Tickets</h2>
+  @if (canWrite()) {
+    <p-button icon="pi pi-plus" label="Nouveau" (onClick)="openCreate()" />
+  }
+</div>
+
+<div class="filters">
+  <p-select [options]="projectOpts()" [(ngModel)]="fProject" placeholder="Tous les chantiers"
+            [showClear]="true" optionLabel="label" optionValue="value" styleClass="f-item" />
+  <p-select [options]="statusOpts" [(ngModel)]="fStatus" optionLabel="label" optionValue="value"
+            styleClass="f-item" />
+  <p-select [options]="priorityOpts" [(ngModel)]="fPriority" placeholder="Toutes priorités"
+            [showClear]="true" optionLabel="label" optionValue="value" styleClass="f-item" />
+  <div class="mine" [class.on]="fMine">
+    <p-toggleswitch [(ngModel)]="fMine" inputId="mine-toggle" />
+    <label for="mine-toggle">Mes tickets</label>
+  </div>
+  <div class="f-btns">
+    <p-button label="Appliquer" icon="pi pi-filter" (onClick)="apply()" />
+    <p-button label="Réinitialiser" icon="pi pi-times" [text]="true" (onClick)="reset()" />
+  </div>
+</div>
+
+<div class="list">
+  @for (t of tickets(); track t.id) {
+    <div class="card">
+      <div class="status">
+        <p-tag [value]="statusLabel(t.status)" [severity]="statusSeverity(t.status)" />
+      </div>
+      <div class="left">
+        <div class="title" (click)="openTicket(t)">
+          {{ t.title }}
+          @if (isOverdue(t)) { <span class="retard">En retard</span> }
+        </div>
+        @if (t.description) { <div class="sub">{{ t.description }}</div> }
+        <div class="meta">
+          <span class="prio prio-{{ (t.priority ?? 'MEDIUM').toLowerCase() }}">
+            {{ priorityLabel(t.priority ?? 'MEDIUM') }}
+          </span>
+          @if (t.projectName) { <p-chip [label]="t.projectName" /> }
+          <span class="assignee">
+            <i class="pi pi-user"></i> {{ t.assignedToName ?? 'Non assigné' }}
+          </span>
+          @if (t.dueAt) {
+            <span class="due" [class.overdue]="isOverdue(t)">
+              <i class="pi pi-calendar"></i> Échéance : {{ fmtDate(t.dueAt) }}
+            </span>
+          }
+        </div>
+      </div>
+      <div class="right">
+        @for (next of nextStatuses(t); track next) {
+          <p-button [label]="statusLabel(next)" icon="pi pi-arrow-right" size="large"
+                    [severity]="next === 'AS_BUILT' ? 'success' : 'info'"
+                    (onClick)="advance(t, next)" [disabled]="!canWrite()" />
+        }
+        <p-button icon="pi pi-eye" [rounded]="true" [text]="true"
+                  (onClick)="openTicket(t)" [attr.aria-label]="'Voir ' + t.title" />
+        @if (canWrite()) {
+          <p-button icon="pi pi-pencil" [rounded]="true" [text]="true"
+                    (onClick)="openEdit(t)" [attr.aria-label]="'Modifier ' + t.title" />
+        }
+      </div>
+    </div>
+  } @empty {
+    @if (loaded()) {
+      <app-empty-state icon="pi pi-inbox" message="Aucun ticket. Tout va bien."></app-empty-state>
+    }
+  }
+</div>
+
+<p-dialog [visible]="showDialog()" (visibleChange)="showDialog.set($event)" [modal]="true"
+          [styleClass]="'ticket-dialog'" [style]="{ width: '560px' }"
+          [header]="mode === 'edit' ? 'Modifier le ticket' : 'Nouveau ticket'">
+  <div class="dlg-form">
+    <div class="field">
+      <label>Titre</label>
+      <input pInputText class="inp" placeholder="Titre du problème"
+             [(ngModel)]="formTitle" />
+    </div>
+    <div class="field">
+      <label>Détails (optionnel)</label>
+      <textarea pTextarea rows="3" [(ngModel)]="formDescription"></textarea>
+    </div>
+    <div class="field">
+      <label>Chantier</label>
+      <p-select [options]="activeProjectOpts()" [(ngModel)]="formProject"
+                placeholder="Choisir un chantier" optionLabel="label" optionValue="value"
+                styleClass="w100" />
+    </div>
+    @if (canWrite()) {
+      <div class="field">
+        <label>Assigné à (optionnel)</label>
+        <p-select [options]="assigneeOpts()" [(ngModel)]="formAssignee"
+                  placeholder="Non assigné" [showClear]="true" optionLabel="label"
+                  optionValue="value" styleClass="w100" />
+      </div>
+    }
+    <div class="field">
+      <label>Priorité</label>
+      <p-select [options]="priorityOpts" [(ngModel)]="formPriority" optionLabel="label"
+                optionValue="value" styleClass="w100" />
+    </div>
+    <div class="two">
+      <div class="field">
+        <label>Début</label>
+        <p-datepicker [(ngModel)]="formStart" dateFormat="dd/mm/yy" [showIcon]="true"
+                      styleClass="w100" placeholder="jj/mm/aa" />
+      </div>
+      <div class="field">
+        <label>Échéance</label>
+        <p-datepicker [(ngModel)]="formDue" dateFormat="dd/mm/yy" [showIcon]="true"
+                      styleClass="w100" placeholder="jj/mm/aa" />
+      </div>
+    </div>
+    <div class="field secondary">
+      <label>Document (optionnel)</label>
+      <input pInputText class="doc-inp" placeholder="Identifiant du document"
+             [(ngModel)]="formDocumentId" />
+    </div>
+  </div>
+  <ng-template pTemplate="footer">
+    <p-button label="Annuler" [text]="true" (onClick)="showDialog.set(false)" />
+    <p-button [label]="mode === 'edit' ? 'Enregistrer' : 'Créer'" icon="pi pi-check"
+              size="large" severity="success"
+              (onClick)="submit()" [disabled]="!formTitle.trim()" />
+  </ng-template>
+</p-dialog>

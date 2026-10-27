@@ -1,0 +1,39 @@
+# === Sandbox runtime artifacts (NOT part of the Hydra project) ===
+skills/
+.jdk/
+.pgdata/
+scripts/
+
+# === Java / Spring Boot ===
+backend/target/
+*.class
+*.jar
+*.war
+hs_err_pid*
+
+# === Angular / Node ===
+frontend/node_modules/
+frontend/dist/
+frontend/.angular/
+frontend/.cache/
+npm-debug.log*
+yarn-error.log*
+
+# === IDE / OS ===
+.idea/
+.vscode/
+*.iml
+.DS_Store
+Thumbs.db
+
+# === Secrets / local config ===
+*.env.local
+*.env.*.local
+application-local.yml
+application-secret.yml
+
+# === Logs / runtime ===
+*.log
+backend/logs/
+nohup.out
+.env

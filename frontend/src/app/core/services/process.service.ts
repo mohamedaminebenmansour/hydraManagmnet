@@ -1,0 +1,309 @@
+﻿import { Injectable, inject } from '@angular/core';
+import { HttpClient } from '@angular/common/http';
+import { Observable, map, catchError, of } from 'rxjs';
+
+import {
+  ProcessTimeline,
+  ProcessTemplate,
+  PROCESS_TEMPLATES,
+  mapProcessTimeline,
+  StartProcessBody,
+  MyTask,
+  mapMyTask,
+  TemplateDetail,
+  TemplateStep,
+  CreateTemplateBody,
+  UpdateTemplateBody,
+  CreateStepBody,
+  UpdateStepBody,
+} from '@app/core/models/process.model';
+
+import { MessageService } from 'primeng/api';
+
+type AnyRaw = Record<string, any>;
+
+@Injectable({ providedIn: 'root' })
+export class ProcessService {
+  private http = inject(HttpClient);
+  private msgs = inject(MessageService);
+
+  // ══════════════════════════════════════════════════════════════
+  //  TEMPLATE MANAGEMENT (owner only — for the Process Builder)
+  // ══════════════════════════════════════════════════════════════
+
+  /** GET /api/processes/templates — list active templates visible to caller org. */
+  listTemplatesAdmin(): Observable<TemplateDetail[]> {
+    return this.http.get<AnyRaw>('/api/processes/templates/admin').pipe(
+      map(raw => {
+        const list = Array.isArray(raw) ? raw : [];
+        return list.map((r: any) => this.normalizeTemplateDetail(r));
+      }),
+      catchError(() => of([]))
+    );
+  }
+
+  /** GET /api/processes/templates/{id} — full template detail with steps. */
+  getTemplate(id: string): Observable<TemplateDetail | null> {
+    return this.http.get<AnyRaw>(`/api/processes/templates/${id}`).pipe(
+      map(raw => this.normalizeTemplateDetail(raw)),
+      catchError(err => {
+        this.msgs.add({
+          severity: 'error',
+          summary: 'Erreur',
+          detail: err?.error?.message ?? 'Modèle introuvable',
+        });
+        return of(null);
+      })
+    );
+  }
+
+  /** POST /api/processes/templates — create a new template (owner only). */
+  createTemplate(body: CreateTemplateBody): Observable<TemplateDetail | null> {
+    return this.http.post<AnyRaw>('/api/processes/templates', body).pipe(
+      map(raw => this.normalizeTemplateDetail(raw)),
+      catchError(err => {
+        this.msgs.add({
+          severity: 'error',
+          summary: 'Erreur',
+          detail: err?.error?.message ?? 'Impossible de créer le processus',
+        });
+        return of(null);
+      })
+    );
+  }
+
+  /** PUT /api/processes/templates/{id} — update name / active. */
+  updateTemplate(id: string, body: UpdateTemplateBody): Observable<TemplateDetail | null> {
+    return this.http.put<AnyRaw>(`/api/processes/templates/${id}`, body).pipe(
+      map(raw => this.normalizeTemplateDetail(raw)),
+      catchError(err => {
+        this.msgs.add({
+          severity: 'error',
+          summary: 'Erreur',
+          detail: err?.error?.message ?? 'Impossible de mettre à jour le processus',
+        });
+        return of(null);
+      })
+    );
+  }
+
+  /** POST /api/processes/templates/{id}/steps — add a step. */
+  addStep(templateId: string, body: CreateStepBody): Observable<TemplateDetail | null> {
+    return this.http.post<AnyRaw>(`/api/processes/templates/${templateId}/steps`, body).pipe(
+      map(raw => this.normalizeTemplateDetail(raw)),
+      catchError(err => {
+        this.msgs.add({
+          severity: 'error',
+          summary: 'Erreur',
+          detail: err?.error?.message ?? 'Impossible d\'ajouter l\'étape',
+        });
+        return of(null);
+      })
+    );
+  }
+
+  /** PUT /api/processes/templates/{id}/steps/{stepId} — update a step. */
+  updateStep(templateId: string, stepId: string, body: UpdateStepBody): Observable<TemplateDetail | null> {
+    return this.http.put<AnyRaw>(`/api/processes/templates/${templateId}/steps/${stepId}`, body).pipe(
+      map(raw => this.normalizeTemplateDetail(raw)),
+      catchError(err => {
+        this.msgs.add({
+          severity: 'error',
+          summary: 'Erreur',
+          detail: err?.error?.message ?? 'Impossible de modifier l\'étape',
+        });
+        return of(null);
+      })
+    );
+  }
+
+  /** DELETE /api/processes/templates/{id}/steps/{stepId} — remove a step. */
+  deleteStep(templateId: string, stepId: string): Observable<boolean> {
+    return this.http.delete<void>(`/api/processes/templates/${templateId}/steps/${stepId}`).pipe(
+      map(() => true),
+      catchError(err => {
+        this.msgs.add({
+          severity: 'error',
+          summary: 'Erreur',
+          detail: err?.error?.message ?? 'Impossible de supprimer l\'étape',
+        });
+        return of(false);
+      })
+    );
+  }
+
+  /** Normalize any backend response shape into a TemplateDetail. */
+  private normalizeTemplateDetail(raw: any): TemplateDetail {
+    if (!raw || typeof raw !== 'object') {
+      return { id: '', key: '', name: '', active: false, steps: [] };
+    }
+    const stepsRaw = Array.isArray(raw['steps']) ? raw['steps'] : [];
+    const steps: TemplateStep[] = stepsRaw.map((s: any) => ({
+      id: String(s?.['id'] ?? s?.['stepId'] ?? ''),
+      stepOrder: Number(s?.['stepOrder'] ?? s?.['step_order'] ?? 0),
+      stepKey: String(s?.['stepKey'] ?? s?.['step_key'] ?? ''),
+      name: String(s?.['name'] ?? s?.['stepName'] ?? ''),
+      assigneeRole: String(s?.['assigneeRole'] ?? s?.['assignee_role'] ?? ''),
+      requiresAttachment: Boolean(s?.['requiresAttachment'] ?? s?.['requires_attachment'] ?? false),
+    }));
+    return {
+      id: String(raw['id'] ?? raw['templateId'] ?? ''),
+      key: String(raw['key'] ?? raw['templateKey'] ?? ''),
+      name: String(raw['name'] ?? raw['templateName'] ?? ''),
+      active: Boolean(raw['active'] ?? true),
+      steps: steps.sort((a, b) => a.stepOrder - b.stepOrder),
+    };
+  }
+
+  /** POST /api/processes/start */
+  start(body: StartProcessBody): Observable<{ instanceId: string; status: string }> {
+    return this.http.post<AnyRaw | string>('/api/processes/start', body).pipe(
+      map((raw: AnyRaw | string) => {
+        if (typeof raw === 'string') {
+          return { instanceId: raw, status: 'RUNNING' };
+        }
+        return {
+          instanceId: String(raw?.['id'] ?? raw?.['instanceId'] ?? raw?.['processId'] ?? ''),
+          status: String(raw?.['status'] ?? raw?.['processStatus'] ?? 'RUNNING'),
+        };
+      }),
+      catchError(err => {
+        this.msgs.add({
+          severity: 'error',
+          summary: 'Erreur',
+          detail: err?.error?.message ?? 'Impossible de lancer le processus',
+        });
+        return of({ instanceId: '', status: 'ERROR' });
+      })
+    );
+  }
+
+  /** GET /api/processes/my-tasks */
+  myTasks(): Observable<MyTask[]> {
+    return this.http.get<AnyRaw>('/api/processes/my-tasks').pipe(
+      map(raw => {
+        const list = Array.isArray(raw) ? raw : (raw?.['tasks'] ?? []);
+        return (Array.isArray(list) ? list : []).map(mapMyTask);
+      }),
+      catchError(() => of([]))
+    );
+  }
+
+  /** GET /api/processes/{instanceId}/timeline */
+  getTimeline(instanceId: string): Observable<ProcessTimeline> {
+    return this.http.get<AnyRaw>(`/api/processes/${instanceId}/timeline`).pipe(
+      map(raw => mapProcessTimeline(raw)),
+      catchError(err => {
+        this.msgs.add({
+          severity: 'error',
+          summary: 'Erreur',
+          detail: err?.error?.message ?? 'Impossible de charger la timeline',
+        });
+        return of({
+          instanceId,
+          status: 'RUNNING',
+          steps: [],
+        } as ProcessTimeline);
+      })
+    );
+  }
+
+  /** GET /api/projects/{projectId}/processes?status= */
+  listByProject(projectId: string, status?: string): Observable<MyTask[]> {
+    const url = status
+      ? `/api/projects/${projectId}/processes?status=${encodeURIComponent(status)}`
+      : `/api/projects/${projectId}/processes`;
+    return this.http.get<AnyRaw>(url).pipe(
+      map(raw => {
+        const list = Array.isArray(raw) ? raw : (raw?.['processes'] ?? []);
+        return (Array.isArray(list) ? list : []).map(mapMyTask);
+      }),
+      catchError(() => of([]))
+    );
+  }
+
+  /** GET /api/processes/templates (fallback to hardcoded on 404) */
+  listTemplates(): Observable<ProcessTemplate[]> {
+    return this.http.get<ProcessTemplate[]>('/api/processes/templates').pipe(
+      catchError(() => of(PROCESS_TEMPLATES))
+    );
+  }
+
+  /** GET /api/projects/{projectId}/process-templates */
+  getProjectTemplates(projectId: string): Observable<ProcessTemplate[]> {
+    return this.http.get<ProcessTemplate[]>(`/api/projects/${projectId}/process-templates`).pipe(
+      catchError(() => of(PROCESS_TEMPLATES))
+    );
+  }
+
+  /** PUT /api/projects/{projectId}/process-templates */
+  updateProjectTemplates(projectId: string, templates: ProcessTemplate[]): Observable<ProcessTemplate[]> {
+    return this.http.put<ProcessTemplate[]>(`/api/projects/${projectId}/process-templates`, templates).pipe(
+      catchError(err => {
+        this.msgs.add({
+          severity: 'error',
+          summary: 'Erreur',
+          detail: err?.error?.message ?? 'Impossible de mettre \u00e0 jour les mod\u00e8les',
+        });
+        return of(templates);
+      })
+    );
+  }
+
+  /** POST /api/processes/{instanceId}/steps/{stepInstanceId}/complete */
+  complete(instanceId: string, stepInstanceId: string, body: { comment?: string; documentIds?: string[] } = {}): Observable<{ stepInstanceId: string; newStatus: string }> {
+    return this.http
+      .post<AnyRaw>(`/api/processes/${instanceId}/steps/${stepInstanceId}/complete`, body)
+      .pipe(
+        map(raw => ({
+          stepInstanceId,
+          newStatus: String(raw?.['newStatus'] ?? raw?.['status'] ?? 'DONE'),
+        })),
+        catchError(err => {
+          this.msgs.add({
+            severity: 'error',
+            summary: 'Erreur',
+            detail: err?.error?.message ?? 'Impossible de valider l\u2019\u00e9tape',
+          });
+          return of({ stepInstanceId, newStatus: 'ERROR' });
+        })
+      );
+  }
+
+  /** POST /api/processes/{instanceId}/steps/{stepInstanceId}/reject (comment required) */
+  reject(instanceId: string, stepInstanceId: string, comment: string): Observable<{ stepInstanceId: string; newStatus: string }> {
+    return this.http
+      .post<AnyRaw>(`/api/processes/${instanceId}/steps/${stepInstanceId}/reject`, { comment })
+      .pipe(
+        map(raw => ({
+          stepInstanceId,
+          newStatus: String(raw?.['newStatus'] ?? raw?.['status'] ?? 'REJECTED'),
+        })),
+        catchError(err => {
+          this.msgs.add({
+            severity: 'error',
+            summary: 'Erreur',
+            detail: err?.error?.message ?? 'Impossible de rejeter l\u2019\u00e9tape',
+          });
+          return of({ stepInstanceId, newStatus: 'ERROR' });
+        })
+      );
+  }
+
+  /** POST /api/processes/{instanceId}/cancel */
+  cancel(instanceId: string, reason?: string): Observable<{ instanceId: string }> {
+    return this.http
+      .post<AnyRaw>(`/api/processes/${instanceId}/cancel`, { reason })
+      .pipe(
+        map(raw => ({ instanceId })),
+        catchError(err => {
+          this.msgs.add({
+            severity: 'error',
+            summary: 'Erreur',
+            detail: err?.error?.message ?? 'Impossible d\u2019annuler le processus',
+          });
+          return of({ instanceId });
+        })
+      );
+  }
+}

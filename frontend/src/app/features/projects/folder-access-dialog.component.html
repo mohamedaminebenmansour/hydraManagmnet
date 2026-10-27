@@ -1,0 +1,148 @@
+<p-dialog
+  [(visible)]="visible"
+  [modal]="true"
+  [style]="{ width: '92vw', 'max-width': '720px' }"
+  [header]="folder ? ('Accès au dossier ' + folder.name) : ''"
+  [draggable]="false"
+  [closable]="true"
+  (onHide)="visible = false"
+>
+  <ng-template pTemplate="content">
+    <div class="fa-panel">
+      @if (loading() && !saveError()) {
+        <div class="fa-loading"><i class="pi pi-spin pi-spinner"></i> Chargement des accès…</div>
+      }
+      @if (saveError()) {
+        <div class="fa-error">{{ saveError() }}</div>
+      }
+
+      @if (!loading()) {
+        @if (isFinanceFolder() && financeWarning()) {
+          <div class="fa-warn"><i class="pi pi-exclamation-triangle"></i> {{ financeWarning() }}</div>
+        }
+
+        <!-- Section: accès par rôle (entreprise-wide) -->
+        <div class="fa-section">
+          <div class="fa-section-head">
+            <h3 class="fa-section-title"><i class="pi pi-building"></i> Accès par rôle métier</h3>
+            <p class="fa-section-sub">Activez les permissions pour chaque rôle d'entreprise.</p>
+          </div>
+          <div class="fa-role-list">
+            @for (code of roleOpts; track code) {
+              <div class="fa-role-row" [class.blocked]="roleBlocked(code)"
+                   [style.--role-color]="roleColor(code)"
+                   [style.--role-soft]="roleSoft(code)">
+                <div class="fa-role-info">
+                  <span class="fa-role-icon-disc" [style.background]="roleColor(code)">
+                    <i class="pi" [class]="roleIcon(code)"></i>
+                  </span>
+                  <div class="fa-role-meta">
+                    <span class="fa-role-label">{{ roleLabel(code) }}</span>
+                    <span class="fa-role-chip" [class.active]="roleIsActive(code)" [class.blocked]="roleBlocked(code)">
+                      <i class="pi" [class]="roleIsActive(code) ? 'pi-check-circle' : (roleBlocked(code) ? 'pi-lock' : 'pi-circle')"></i>
+                      {{ roleIsActive(code) ? 'Activé' : roleBlocked(code) ? 'Bloqué' : 'Désactivé' }}
+                    </span>
+                  </div>
+                </div>
+                <div class="fa-perms">
+                  @for (perm of permIcons; track perm; let i = $index) {
+                    <button
+                      type="button"
+                      class="fa-perm-btn"
+                      [class.on]="rolePermsFor(code)[i]"
+                      [class.off]="!rolePermsFor(code)[i]"
+                      [disabled]="roleBlocked(code) || i === 0"
+                      (click)="setRolePerm(code, i, !rolePermsFor(code)[i])"
+                      [pTooltip]="permLabels[i]" tooltipPosition="top"
+                      [attr.aria-label]="permLabels[i]"
+                    >
+                      <i class="pi" [class]="perm"></i>
+                    </button>
+                  }
+                </div>
+              </div>
+            }
+          </div>
+          <p class="fa-hint"><i class="pi pi-info-circle"></i> La lecture est toujours accordée. Les rôles bloqués ne peuvent pas recevoir d'accès sur le dossier Finance.</p>
+        </div>
+
+        <!-- Section: accès par personne (avec rôle visible) -->
+        <div class="fa-section">
+          <div class="fa-section-head">
+            <h3 class="fa-section-title"><i class="pi pi-user-plus"></i> Personnes individuelles</h3>
+            <p class="fa-section-sub">Le rôle métier de chaque personne est visible — pour savoir à QUI vous donnez accès.</p>
+          </div>
+          <div class="fa-field">
+            <div class="fa-search-wrap">
+              <i class="pi pi-search fa-search-icon"></i>
+              <input pInputText class="fa-input" placeholder="Rechercher par nom ou email"
+                     [ngModel]="searchText()" (ngModelChange)="searchText.set($event ?? '')"
+                     (input)="searchUsers()" />
+            </div>
+          </div>
+
+          @if (selectedUserChips().length > 0) {
+            <div class="fa-selected-chips">
+              <span class="fa-chips-label">
+                <i class="pi pi-check-circle"></i> {{ selectedUserChips().length }} sélectionné(s) :
+              </span>
+              <div class="fa-chips-list">
+                @for (u of selectedUserChips(); track u.id) {
+                  <span class="fa-chip" [style.--role-color]="roleColor(userMainRole(u))">
+                    <span class="fa-chip-avatar" [style.background]="userGradient(u)">{{ userInitials(u) }}</span>
+                    <span class="fa-chip-name">{{ u.fullName }}</span>
+                    <button type="button" class="fa-chip-remove" (click)="toggleUser(u.id)" [attr.aria-label]="'Retirer ' + u.fullName">
+                      <i class="pi pi-times"></i>
+                    </button>
+                  </span>
+                }
+              </div>
+            </div>
+          }
+
+          <div class="fa-user-list">
+            @for (u of userResults(); track u.id) {
+              @let mainRole = userMainRole(u);
+              @let sel = isSelected(u.id);
+              <div class="fa-user-row" [class.selected]="sel"
+                   [style.--role-color]="roleColor(mainRole)"
+                   (click)="toggleUser(u.id)" role="button" tabindex="0"
+                   (keyup.enter)="toggleUser(u.id)">
+                <span class="fa-user-avatar" [style.background]="userGradient(u)">
+                  {{ userInitials(u) }}
+                </span>
+                <div class="fa-user-info">
+                  <div class="fa-user-name">{{ u.fullName }}</div>
+                  @if (u.email && u.email !== u.fullName) {
+                    <div class="fa-user-email">{{ u.email }}</div>
+                  }
+                  <div class="fa-user-roles">
+                    @for (r of u.roleCodes; track r) {
+                      <span class="fa-user-role-chip" [style.--rc-color]="roleColor(r)" [style.--rc-soft]="roleSoft(r)">
+                        <i class="pi" [class]="roleIcon(r)"></i> {{ roleLabel(r) }}
+                      </span>
+                    } @empty {
+                      <span class="fa-user-role-chip no-role"><i class="pi pi-info"></i> Aucun rôle</span>
+                    }
+                  </div>
+                </div>
+                <span class="fa-user-check" [class.selected]="sel">
+                  <i class="pi" [class]="sel ? 'pi-check' : 'pi-plus'"></i>
+                </span>
+              </div>
+            } @empty {
+              <div class="fa-user-empty">
+                <i class="pi pi-users"></i> Aucun utilisateur disponible
+              </div>
+            }
+          </div>
+        </div>
+      }
+    </div>
+  </ng-template>
+
+  <ng-template pTemplate="footer">
+    <p-button label="Annuler" [text]="true" (onClick)="visible = false" [disabled]="loading()" />
+    <p-button label="Enregistrer les accès" icon="pi pi-save" (onClick)="save()" [disabled]="loading()" severity="primary" />
+  </ng-template>
+</p-dialog>
