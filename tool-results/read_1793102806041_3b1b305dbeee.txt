@@ -1,0 +1,831 @@
+     1→package tn.hydra.cash;
+     2→
+     3→import org.springframework.jdbc.core.JdbcTemplate;
+     4→import org.springframework.security.core.Authentication;
+     5→import org.springframework.stereotype.Service;
+     6→import org.springframework.transaction.annotation.Transactional;
+     7→import tn.hydra.audit.EventLogService;
+     8→import tn.hydra.common.BusinessRuleException;
+     9→import tn.hydra.exception.BadRequestException;
+    10→import tn.hydra.exception.ResourceNotFoundException;
+    11→import tn.hydra.user.AppUser;
+    12→import tn.hydra.user.AppUserRepository;
+    13→
+    14→import java.math.BigDecimal;
+    15→import java.sql.Date;
+    16→import java.time.Instant;
+    17→import java.time.LocalDate;
+    18→import java.util.ArrayList;
+    19→import java.util.List;
+    20→import java.util.Map;
+    21→import java.util.UUID;
+    22→
+    23→/**
+    24→ * ============================================================================
+    25→ *  CashService — single source of truth for money in Hydra.
+    26→ * ============================================================================
+    27→ *
+    28→ *  DESIGN (Tunisian BTP reality, IntegraSys ERP pattern):
+    29→ *
+    30→ *   - cash_pot (caisse) = either COMPANY-wide ("Caisse centrale") or PROJECT-scoped
+    31→ *     ("Caisse chantier"). Default currency: TND.
+    32→ *
+    33→ *   - cash_movement = every money event. Lifecycle: DRAFT → POSTED → VOID.
+    34→ *     - DRAFT can be edited (PUT) — used when a payment is being prepared but
+    35→ *       not yet executed.
+    36→ *     - POSTED is IMMUTABLE. To correct a mistake, VOID it and create a new
+    37→ *       movement. This is the SYSCOHADA / accrual accounting pattern: the
+    38→ *       audit trail is never rewritten.
+    39→ *     - VOID is excluded from balance computation but the row is preserved
+    40→ *       for traceability.
+    41→ *
+    42→ *   - balance(pot) is ALWAYS computed as SUM(POSTED movements affecting the pot):
+    43→ *       IN: +amount to to_pot
+    44→ *       OUT: -amount from from_pot
+    45→ *       TRANSFER: -amount from from_pot, +amount to to_pot
+    46→ *     Never stored as a mutable field.
+    47→ *
+    48→ *   - Negative balance guard: when posting an OUT or TRANSFER, if the resulting
+    49→ *     from_pot balance would go negative, the post is rejected. This is the
+    50→ *     "no overdraft" safety default (Phase 1: ON).
+    51→ *
+    52→ *  SECURITY:
+    53→ *   - Anyone in the org can list pots + movements (read-only visibility for owner).
+    54→ *   - Create/update/post/void require: is_owner OR FINANCE business role OR
+    55→ *     project membership (for project-scoped pots/movements).
+    56→ *   - All org-isolated: queries always filter by caller's org_id.
+    57→ *
+    58→ * ============================================================================
+    59→ *  PHASE 2 — wiring the Process engine to auto-post:
+    60→ * ============================================================================
+    61→ *
+    62→ *  When a PAYMENT_APPROVAL process completes (the gérant clicks "Valider" on
+    63→ *  the APPROVE step), ProcessService.completeStep() should call:
+    64→ *
+    65→ *      cashService.onProcessCompletedPostMovement(movementId);
+    66→ *
+    67→ *  The movement must already exist as DRAFT with process_instance_id set to
+    68→ *  the running instance. To wire this:
+    69→ *
+    70→ *  1. In ProcessService.start(): after creating the instance, look up the
+    71→ *     pending cash_movement by `subject_id` (= the movement id) and set its
+    72→ *     process_instance_id. OR have the frontend create the movement DRAFT
+    73→ *     first, then start the process with subjectId = movementId.
+    74→ *
+    75→ *  2. In ProcessService.completeStep(): when the LAST step is completed
+    76→ *     (process → COMPLETED), call:
+    77→ *
+    78→ *         cashService.onProcessCompletedPostMovement(movementId);
+    79→ *
+    80→ *     This flips the movement DRAFT → POSTED, sets posted_at/by, and the
+    81→ *     balance is now affected. If the negative-balance guard fails, the
+    82→ *     movement stays DRAFT and the caller gets a BusinessRuleException
+    83→ *     (process completion should be rolled back).
+    84→ *
+    85→ *  3. Phase 2 might also add a `cash_movement.process_status` field to show
+    86→ *     "En cours d'approbation" badge in the UI.
+    87→ *
+    88→ *  The stub method below is the entry point — currently a no-op, marked
+    89→ *  @Transactional so Phase 2 can call it from inside ProcessService without
+    90→ *  an extra DB roundtrip wrapper.
+    91→ *
+    92→ * ============================================================================
+    93→ */
+    94→@Service
+    95→public class CashService {
+    96→
+    97→    private final JdbcTemplate jdbc;
+    98→    private final AppUserRepository users;
+    99→    private final EventLogService audit;
+   100→
+   101→    public CashService(JdbcTemplate jdbc, AppUserRepository users, EventLogService audit) {
+   102→        this.jdbc = jdbc;
+   103→        this.users = users;
+   104→        this.audit = audit;
+   105→    }
+   106→
+   107→    // ══════════════════════════════════════════════════════════════
+   108→    //  RESPONSE / REQUEST RECORDS
+   109→    // ══════════════════════════════════════════════════════════════
+   110→
+   111→    public record PotResponse(UUID id, UUID orgId, String type, UUID projectId,
+   112→                              String name, String currency, boolean active,
+   113→                              Instant createdAt) {}
+   114→
+   115→    public record BalanceResponse(UUID potId, BigDecimal balance, String currency) {}
+   116→
+   117→    public record MovementResponse(UUID id, UUID orgId, String movementType,
+   118→                                    BigDecimal amount, String currency, LocalDate movementDate,
+   119→                                    UUID fromPotId, UUID toPotId, UUID projectId, UUID partyId,
+   120→                                    String label, String note, String status,
+   121→                                    UUID processInstanceId, UUID createdBy, Instant createdAt,
+   122→                                    UUID postedBy, Instant postedAt,
+   123→                                    UUID voidedBy, Instant voidedAt, String voidReason) {}
+   124→
+   125→    public record CreateMovementRequest(String movementType, BigDecimal amount,
+   126→                                         LocalDate movementDate, UUID fromPotId, UUID toPotId,
+   127→                                         UUID projectId, UUID partyId,
+   128→                                         String label, String note,
+   129→                                         UUID processInstanceId) {}
+   130→
+   131→    public record UpdateMovementRequest(String movementType, BigDecimal amount,
+   132→                                         LocalDate movementDate, UUID fromPotId, UUID toPotId,
+   133→                                         UUID projectId, UUID partyId,
+   134→                                         String label, String note) {}
+   135→
+   136→    public record PostResponse(UUID id, String status, BigDecimal fromPotBalanceAfter) {}
+   137→
+   138→    public record VoidRequest(String reason) {}
+   139→
+   140→    // ══════════════════════════════════════════════════════════════
+   141→    //  AUTH HELPERS
+   142→    // ══════════════════════════════════════════════════════════════
+   143→
+   144→    private AppUser currentUser(Authentication auth) {
+   145→        return users.findByEmail(auth.getName())
+   146→                .orElseThrow(() -> new IllegalStateException("Unknown user: " + auth.getName()));
+   147→    }
+   148→
+   149→    /**
+   150→     * Require: is_owner OR FINANCE business role OR project member (for project-scoped actions).
+   151→     * The "action" param is just for the error message.
+   152→     */
+   153→    private void requireCanWrite(AppUser me, UUID projectId, String action) {
+   154→        if (Boolean.TRUE.equals(me.getIsOwner())) return;
+   155→        // Check business role: FINANCE, ACHAT, CHEF_PROJET, DIRECTION
+   156→        Integer cnt = jdbc.queryForObject("""
+   157→                select count(*) from user_role ur
+   158→                join role r on r.id = ur.role_id
+   159→                where ur.user_id = ? and r.code in ('FINANCE','OWNER','DIRECTION','ACHAT','CHEF_PROJET')
+   160→                """, Integer.class, me.getId());
+   161→        if (cnt != null && cnt > 0) return;
+   162→        // Project member fallback for project-scoped actions
+   163→        if (projectId != null) {
+   164→            Integer pm = jdbc.queryForObject(
+   165→                    "select count(*) from project_member where project_id = ? and user_id = ?",
+   166→                    Integer.class, projectId, me.getId());
+   167→            if (pm != null && pm > 0) return;
+   168→        }
+   169→        throw new BusinessRuleException("FORBIDDEN",
+   170→                "Action non autorisée : " + action + " nécessite OWNER/FINANCE/CHEF_PROJET ou appartenance au chantier");
+   171→    }
+   172→
+   173→    /** Stricter check for POST and VOID: is_owner OR FINANCE business role. */
+   174→    private void requireCanPostOrVoid(AppUser me) {
+   175→        if (Boolean.TRUE.equals(me.getIsOwner())) return;
+   176→        Integer cnt = jdbc.queryForObject("""
+   177→                select count(*) from user_role ur
+   178→                join role r on r.id = ur.role_id
+   179→                where ur.user_id = ? and r.code in ('FINANCE','OWNER','DIRECTION')
+   180→                """, Integer.class, me.getId());
+   181→        if (cnt == null || cnt == 0) {
+   182→            throw new BusinessRuleException("FORBIDDEN",
+   183→                    "Comptabilisation (POST/VOID) nécessite OWNER/FINANCE/DIRECTION");
+   184→        }
+   185→    }
+   186→
+   187→    private void requireProjectAccess(AppUser me, UUID projectId) {
+   188→        if (Boolean.TRUE.equals(me.getIsOwner())) return;
+   189→        if (projectId == null) return;
+   190→        Integer cnt = jdbc.queryForObject(
+   191→                "select count(*) from project_member where project_id = ? and user_id = ?",
+   192→                Integer.class, projectId, me.getId());
+   193→        if (cnt == null || cnt == 0) {
+   194→            throw new ResourceNotFoundException("PROJECT_NOT_FOUND",
+   195→                    "Projet introuvable ou accès refusé");
+   196→        }
+   197→    }
+   198→
+   199→    // ══════════════════════════════════════════════════════════════
+   200→    //  POTS — list / ensure-company / ensure-project / balance
+   201→    // ══════════════════════════════════════════════════════════════
+   202→
+   203→    /** List pots visible to caller: COMPANY pots + PROJECT pots for projects they can access. */
+   204→    public List<PotResponse> listPots(Authentication auth) {
+   205→        AppUser me = currentUser(auth);
+   206→
+   207→        // COMPANY pots — visible to anyone in the org
+   208→        List<PotResponse> result = new ArrayList<>(jdbc.queryForList("""
+   209→                select id, org_id, type, project_id, name, currency, active, created_at
+   210→                from cash_pot
+   211→                where org_id = ? and type = 'COMPANY'
+   212→                order by active desc, name asc
+   213→                """, me.getOrgId())
+   214→                .stream().map(CashService::toPotResponse).toList());
+   215→
+   216→        // PROJECT pots — only for projects the caller is a member of (or owner)
+   217→        if (Boolean.TRUE.equals(me.getIsOwner())) {
+   218→            result.addAll(jdbc.queryForList("""
+   219→                    select id, org_id, type, project_id, name, currency, active, created_at
+   220→                    from cash_pot
+   221→                    where org_id = ? and type = 'PROJECT'
+   222→                    order by active desc, name asc
+   223→                    """, me.getOrgId())
+   224→                    .stream().map(CashService::toPotResponse).toList());
+   225→        } else {
+   226→            result.addAll(jdbc.queryForList("""
+   227→                    select cp.id, cp.org_id, cp.type, cp.project_id, cp.name, cp.currency, cp.active, cp.created_at
+   228→                    from cash_pot cp
+   229→                    where cp.org_id = ? and cp.type = 'PROJECT'
+   230→                      and exists (
+   231→                        select 1 from project_member pm where pm.project_id = cp.project_id and pm.user_id = ?
+   232→                      )
+   233→                    order by cp.active desc, cp.name asc
+   234→                    """, me.getOrgId(), me.getId())
+   235→                    .stream().map(CashService::toPotResponse).toList());
+   236→        }
+   237→
+   238→        return result;
+   239→    }
+   240→
+   241→    /**
+   242→     * Ensure the org has its "Caisse centrale" (COMPANY pot). Idempotent —
+   243→     * if it already exists (and is active), returns it.
+   244→     */
+   245→    @Transactional
+   246→    public PotResponse ensureCompanyPot(Authentication auth) {
+   247→        AppUser me = currentUser(auth);
+   248→        requireCanWrite(me, null, "ensure-company-pot");
+   249→
+   250→        // Try to fetch existing active company pot
+   251→        List<Map<String, Object>> rows = jdbc.queryForList("""
+   252→                select id, org_id, type, project_id, name, currency, active, created_at
+   253→                from cash_pot
+   254→                where org_id = ? and type = 'COMPANY' and active = true
+   255→                limit 1
+   256→                """, me.getOrgId());
+   257→        if (!rows.isEmpty()) {
+   258→            return toPotResponse(rows.get(0));
+   259→        }
+   260→
+   261→        // Also check for an INACTIVE one to reactivate
+   262→        List<Map<String, Object>> inactive = jdbc.queryForList(
+   263→                "select id from cash_pot where org_id = ? and type = 'COMPANY' and active = false limit 1",
+   264→                me.getOrgId());
+   265→        if (!inactive.isEmpty()) {
+   266→            UUID id = (UUID) inactive.get(0).get("id");
+   267→            jdbc.update("update cash_pot set active = true where id = ?", id);
+   268→            return getPot(auth, id);
+   269→        }
+   270→
+   271→        // Create a fresh one
+   272→        UUID id = UUID.randomUUID();
+   273→        jdbc.update("""
+   274→                insert into cash_pot (id, org_id, type, project_id, name, currency, active, created_at)
+   275→                values (?, ?, 'COMPANY', null, 'Caisse centrale', 'TND', true, now())
+   276→                """, id, me.getOrgId());
+   277→
+   278→        audit.log("CASH_POT_CREATED", "cash_pot", id,
+   279→                "{\"type\":\"COMPANY\",\"name\":\"Caisse centrale\"}");
+   280→
+   281→        return getPot(auth, id);
+   282→    }
+   283→
+   284→    /**
+   285→     * Ensure a PROJECT pot exists for the given project. Idempotent.
+   286→     * Name defaults to "Caisse <project name>".
+   287→     */
+   288→    @Transactional
+   289→    public PotResponse ensureProjectPot(Authentication auth, UUID projectId) {
+   290→        AppUser me = currentUser(auth);
+   291→        requireProjectAccess(me, projectId);
+   292→
+   293→        // Check existing
+   294→        List<Map<String, Object>> rows = jdbc.queryForList("""
+   295→                select id, org_id, type, project_id, name, currency, active, created_at
+   296→                from cash_pot
+   297→                where org_id = ? and project_id = ? and type = 'PROJECT'
+   298→                limit 1
+   299→                """, me.getOrgId(), projectId);
+   300→        if (!rows.isEmpty()) {
+   301→            // Reactivate if needed
+   302→            Map<String, Object> row = rows.get(0);
+   303→            if (!Boolean.TRUE.equals(row.get("active"))) {
+   304→                jdbc.update("update cash_pot set active = true where id = ?", row.get("id"));
+   305→            }
+   306→            return toPotResponse(row);
+   307→        }
+   308→
+   309→        // Get project name for the pot name
+   310→        String projectName = jdbc.queryForObject(
+   311→                "select name from project where id = ? and org_id = ?",
+   312→                String.class, projectId, me.getOrgId());
+   313→        if (projectName == null) {
+   314→            throw new ResourceNotFoundException("PROJECT_NOT_FOUND", "Projet introuvable");
+   315→        }
+   316→        String potName = "Caisse " + projectName;
+   317→
+   318→        UUID id = UUID.randomUUID();
+   319→        jdbc.update("""
+   320→                insert into cash_pot (id, org_id, type, project_id, name, currency, active, created_at)
+   321→                values (?, ?, 'PROJECT', ?, ?, 'TND', true, now())
+   322→                """, id, me.getOrgId(), projectId, potName);
+   323→
+   324→        audit.log("CASH_POT_CREATED", "cash_pot", id,
+   325→                "{\"type\":\"PROJECT\",\"projectId\":\"" + projectId + "\",\"name\":\"" + jsonEscape(potName) + "\"}");
+   326→
+   327→        return getPot(auth, id);
+   328→    }
+   329→
+   330→    /** Get one pot — must belong to caller's org. PROJECT pots also require project access. */
+   331→    public PotResponse getPot(Authentication auth, UUID id) {
+   332→        AppUser me = currentUser(auth);
+   333→        List<Map<String, Object>> rows = jdbc.queryForList("""
+   334→                select id, org_id, type, project_id, name, currency, active, created_at
+   335→                from cash_pot
+   336→                where id = ? and org_id = ?
+   337→                """, id, me.getOrgId());
+   338→        if (rows.isEmpty()) {
+   339→            throw new ResourceNotFoundException("POT_NOT_FOUND", "Caisse introuvable");
+   340→        }
+   341→        PotResponse pot = toPotResponse(rows.get(0));
+   342→        if ("PROJECT".equals(pot.type()) && pot.projectId() != null) {
+   343→            requireProjectAccess(me, pot.projectId());
+   344→        }
+   345→        return pot;
+   346→    }
+   347→
+   348→    /** Balance for a pot — SUM of POSTED movements. */
+   349→    public BalanceResponse balance(Authentication auth, UUID potId) {
+   350→        AppUser me = currentUser(auth);
+   351→        PotResponse pot = getPot(auth, potId); // validates access
+   352→
+   353→        BigDecimal bal = computeBalance(pot.id());
+   354→        return new BalanceResponse(pot.id(), bal, pot.currency());
+   355→    }
+   356→
+   357→    /**
+   358→     * Pure balance computation: SUM(POSTED IN to pot) - SUM(POSTED OUT from pot)
+   359→     * + SUM(POSTED TRANSFER to pot) - SUM(POSTED TRANSFER from pot).
+   360→     * Visible to the service only — used by post() to enforce the no-overdraft rule.
+   361→     */
+   362→    private BigDecimal computeBalance(UUID potId) {
+   363→        BigDecimal bal = jdbc.queryForObject("""
+   364→                select coalesce(sum(amount), 0) from cash_movement
+   365→                where status = 'POSTED' and to_pot_id = ? and movement_type in ('IN','TRANSFER')
+   366→                """, BigDecimal.class, potId);
+   367→        BigDecimal out = jdbc.queryForObject("""
+   368→                select coalesce(sum(amount), 0) from cash_movement
+   369→                where status = 'POSTED' and from_pot_id = ? and movement_type in ('OUT','TRANSFER')
+   370→                """, BigDecimal.class, potId);
+   371→        if (bal == null) bal = BigDecimal.ZERO;
+   372→        if (out == null) out = BigDecimal.ZERO;
+   373→        return bal.subtract(out);
+   374→    }
+   375→
+   376→    // ══════════════════════════════════════════════════════════════
+   377→    //  MOVEMENTS — create DRAFT / update DRAFT only / get / list
+   378→    // ══════════════════════════════════════════════════════════════
+   379→
+   380→    /**
+   381→     * Create a DRAFT movement. Validates type/pots/amount/date + caller has write access.
+   382→     * processInstanceId may be set later (Phase 2) when a workflow starts.
+   383→     */
+   384→    @Transactional
+   385→    public MovementResponse createMovement(Authentication auth, CreateMovementRequest req) {
+   386→        AppUser me = currentUser(auth);
+   387→        validateMovementInput(req.movementType(), req.amount(), req.movementDate(),
+   388→                req.fromPotId(), req.toPotId());
+   389→
+   390→        // Resolve project_id: from request, or from PROJECT pot (when from/to is project pot)
+   391→        UUID resolvedProjectId = req.projectId();
+   392→        if (resolvedProjectId == null) {
+   393→            resolvedProjectId = lookupProjectFromPot(req.fromPotId(), me.getOrgId());
+   394→            if (resolvedProjectId == null) {
+   395→                resolvedProjectId = lookupProjectFromPot(req.toPotId(), me.getOrgId());
+   396→            }
+   397→        }
+   398→
+   399→        requireCanWrite(me, resolvedProjectId, "create-movement");
+   400→
+   401→        // Validate pot ownership (must be in caller's org)
+   402→        validatePotInOrg(req.fromPotId(), me.getOrgId());
+   403→        validatePotInOrg(req.toPotId(), me.getOrgId());
+   404→        if (resolvedProjectId != null) {
+   405→            requireProjectAccess(me, resolvedProjectId);
+   406→        }
+   407→
+   408→        UUID id = UUID.randomUUID();
+   409→        jdbc.update("""
+   410→                insert into cash_movement
+   411→                  (id, org_id, movement_type, amount, currency, movement_date,
+   412→                   from_pot_id, to_pot_id, project_id, party_id, label, note,
+   413→                   status, process_instance_id, created_by, created_at)
+   414→                values (?, ?, ?, ?, 'TND', ?, ?, ?, ?, ?, ?, ?, 'DRAFT', ?, ?, now())
+   415→                """, id, me.getOrgId(), normalizeType(req.movementType()), req.amount(),
+   416→                Date.valueOf(req.movementDate()),
+   417→                req.fromPotId(), req.toPotId(), resolvedProjectId, req.partyId(),
+   418→                blankToNull(req.label()), blankToNull(req.note()),
+   419→                req.processInstanceId(),
+   420→                me.getId());
+   421→
+   422→        audit.log("CASH_MOVEMENT_CREATED", "cash_movement", id,
+   423→                "{\"type\":\"" + normalizeType(req.movementType()) +
+   424→                "\",\"amount\":" + req.amount() +
+   425→                ",\"status\":\"DRAFT\"}");
+   426→
+   427→        return getMovement(auth, id);
+   428→    }
+   429→
+   430→    /** Update a DRAFT movement only. POSTED/VOID → BusinessRuleException. */
+   431→    @Transactional
+   432→    public MovementResponse updateMovement(Authentication auth, UUID id, UpdateMovementRequest req) {
+   433→        AppUser me = currentUser(auth);
+   434→        Map<String, Object> row = fetchMovementForUpdate(id, me.getOrgId());
+   435→        String currentStatus = (String) row.get("status");
+   436→        if (!"DRAFT".equals(currentStatus)) {
+   437→            throw new BusinessRuleException("MOVEMENT_NOT_DRAFT",
+   438→                    "Seul un mouvement DRAFT peut être modifié (statut actuel: " + currentStatus + ")");
+   439→        }
+   440→
+   441→        UUID projectId = (UUID) row.get("project_id");
+   442→        requireCanWrite(me, projectId, "update-movement");
+   443→
+   444→        validateMovementInput(req.movementType(), req.amount(), req.movementDate(),
+   445→                req.fromPotId(), req.toPotId());
+   446→        validatePotInOrg(req.fromPotId(), me.getOrgId());
+   447→        validatePotInOrg(req.toPotId(), me.getOrgId());
+   448→
+   449→        UUID resolvedProjectId = req.projectId() != null ? req.projectId() : projectId;
+   450→        if (resolvedProjectId != null) requireProjectAccess(me, resolvedProjectId);
+   451→
+   452→        jdbc.update("""
+   453→                update cash_movement set
+   454→                  movement_type = ?, amount = ?, movement_date = ?,
+   455→                  from_pot_id = ?, to_pot_id = ?, project_id = ?, party_id = ?,
+   456→                  label = ?, note = ?
+   457→                where id = ? and org_id = ?
+   458→                """,
+   459→                normalizeType(req.movementType()), req.amount(), Date.valueOf(req.movementDate()),
+   460→                req.fromPotId(), req.toPotId(), resolvedProjectId, req.partyId(),
+   461→                blankToNull(req.label()), blankToNull(req.note()),
+   462→                id, me.getOrgId());
+   463→
+   464→        return getMovement(auth, id);
+   465→    }
+   466→
+   467→    /** Single movement by id — must be in caller's org + caller must have project access. */
+   468→    public MovementResponse getMovement(Authentication auth, UUID id) {
+   469→        AppUser me = currentUser(auth);
+   470→        Map<String, Object> row = fetchMovementForRead(id, me.getOrgId());
+   471→        UUID projectId = (UUID) row.get("project_id");
+   472→        if (projectId != null) requireProjectAccess(me, projectId);
+   473→        return toMovementResponse(row);
+   474→    }
+   475→
+   476→    /**
+   477→     * List movements with optional filters:
+   478→     *   potId      — from_pot_id OR to_pot_id = ?
+   479→     *   partyId    — party_id = ?
+   480→     *   projectId  — project_id = ?
+   481→     *   status     — DRAFT | POSTED | VOID
+   482→     *   from / to  — movement_date range (ISO yyyy-MM-dd)
+   483→     */
+   484→    public List<MovementResponse> listMovements(
+   485→            Authentication auth, UUID potId, UUID partyId, UUID projectId,
+   486→            String status, LocalDate from, LocalDate to) {
+   487→
+   488→        AppUser me = currentUser(auth);
+   489→        // If projectId filter, enforce project access
+   490→        if (projectId != null) requireProjectAccess(me, projectId);
+   491→
+   492→        StringBuilder sql = new StringBuilder("""
+   493→                select id, org_id, movement_type, amount, currency, movement_date,
+   494→                       from_pot_id, to_pot_id, project_id, party_id, label, note, status,
+   495→                       process_instance_id, created_by, created_at, posted_by, posted_at,
+   496→                       voided_by, voided_at, void_reason
+   497→                from cash_movement
+   498→                where org_id = ?
+   499→                """);
+   500→        List<Object> args = new ArrayList<>();
+   501→        args.add(me.getOrgId());
+   502→
+   503→        if (potId != null) {
+   504→            sql.append(" and (from_pot_id = ? or to_pot_id = ?)");
+   505→            args.add(potId); args.add(potId);
+   506→        }
+   507→        if (partyId != null) {
+   508→            sql.append(" and party_id = ?");
+   509→            args.add(partyId);
+   510→        }
+   511→        if (projectId != null) {
+   512→            sql.append(" and project_id = ?");
+   513→            args.add(projectId);
+   514→        }
+   515→        if (status != null && !status.isBlank()) {
+   516→            sql.append(" and status = ?");
+   517→            args.add(status.trim().toUpperCase());
+   518→        }
+   519→        if (from != null) {
+   520→            sql.append(" and movement_date >= ?");
+   521→            args.add(Date.valueOf(from));
+   522→        }
+   523→        if (to != null) {
+   524→            sql.append(" and movement_date <= ?");
+   525→            args.add(Date.valueOf(to));
+   526→        }
+   527→        sql.append(" order by movement_date desc, created_at desc");
+   528→
+   529→        // Filter out movements on PROJECT pots the caller can't access
+   530→        // (for non-owner). Done in Java to keep SQL simple.
+   531→        return jdbc.queryForList(sql.toString(), args.toArray())
+   532→                .stream()
+   533→                .map(CashService::toMovementResponse)
+   534→                .filter(m -> {
+   535→                    if (Boolean.TRUE.equals(me.getIsOwner())) return true;
+   536→                    if (m.projectId() == null) return true;
+   537→                    Integer cnt = jdbc.queryForObject(
+   538→                            "select count(*) from project_member where project_id = ? and user_id = ?",
+   539→                            Integer.class, m.projectId(), me.getId());
+   540→                    return cnt != null && cnt > 0;
+   541→                })
+   542→                .toList();
+   543→    }
+   544→
+   545→    // ══════════════════════════════════════════════════════════════
+   546→    //  POST / VOID — the immutable accounting core
+   547→    // ══════════════════════════════════════════════════════════════
+   548→
+   549→    /**
+   550→     * POST a DRAFT movement → IMMUTABLE POSTED. Sets posted_at/by.
+   551→     * For OUT/TRANSFER: enforces no-negative-balance guard on from_pot.
+   552→     */
+   553→    @Transactional
+   554→    public PostResponse postMovement(Authentication auth, UUID id) {
+   555→        AppUser me = currentUser(auth);
+   556→        requireCanPostOrVoid(me);
+   557→
+   558→        Map<String, Object> row = fetchMovementForUpdate(id, me.getOrgId());
+   559→        String status = (String) row.get("status");
+   560→        if (!"DRAFT".equals(status)) {
+   561→            throw new BusinessRuleException("MOVEMENT_NOT_DRAFT",
+   562→                    "Seul un mouvement DRAFT peut être comptabilisé (POST). Statut actuel: " + status);
+   563→        }
+   564→
+   565→        String type = (String) row.get("movement_type");
+   566→        UUID fromPotId = (UUID) row.get("from_pot_id");
+   567→        UUID toPotId = (UUID) row.get("to_pot_id");
+   568→        BigDecimal amount = (BigDecimal) row.get("amount");
+   569→        UUID projectId = (UUID) row.get("project_id");
+   570→
+   571→        // Negative balance guard for OUT / TRANSFER
+   572→        BigDecimal fromPotBalanceAfter = null;
+   573→        if ("OUT".equals(type) || "TRANSFER".equals(type)) {
+   574→            BigDecimal before = computeBalance(fromPotId);
+   575→            BigDecimal after = before.subtract(amount);
+   576→            fromPotBalanceAfter = after;
+   577→            if (after.signum() < 0) {
+   578→                throw new BusinessRuleException("INSUFFICIENT_BALANCE",
+   579→                        "Solde insuffisant sur la caisse source (" + before + " < " + amount + " " + row.get("currency") + ")");
+   580→            }
+   581→        }
+   582→
+   583→        jdbc.update("""
+   584→                update cash_movement set
+   585→                  status = 'POSTED', posted_by = ?, posted_at = now()
+   586→                where id = ? and org_id = ?
+   587→                """, me.getId(), id, me.getOrgId());
+   588→
+   589→        audit.log("CASH_MOVEMENT_POSTED", "cash_movement", id,
+   590→                "{\"type\":\"" + type + "\",\"amount\":" + amount +
+   591→                (fromPotId != null ? ",\"fromPot\":\"" + fromPotId + "\"" : "") +
+   592→                (toPotId != null ? ",\"toPot\":\"" + toPotId + "\"" : "") +
+   593→                "}");
+   594→
+   595→        return new PostResponse(id, "POSTED", fromPotBalanceAfter);
+   596→    }
+   597→
+   598→    /**
+   599→     * VOID a POSTED movement → VOID (immutable, ignored in balance).
+   600→     * Reason is required. Caller must be OWNER/FINANCE/DIRECTION.
+   601→     */
+   602→    @Transactional
+   603→    public MovementResponse voidMovement(Authentication auth, UUID id, VoidRequest req) {
+   604→        AppUser me = currentUser(auth);
+   605→        requireCanPostOrVoid(me);
+   606→
+   607→        if (req == null || req.reason() == null || req.reason().isBlank()) {
+   608→            throw new BadRequestException("REASON_REQUIRED",
+   609→                    "Un motif d'annulation est obligatoire");
+   610→        }
+   611→
+   612→        Map<String, Object> row = fetchMovementForUpdate(id, me.getOrgId());
+   613→        String status = (String) row.get("status");
+   614→        if (!"POSTED".equals(status)) {
+   615→            throw new BusinessRuleException("MOVEMENT_NOT_POSTED",
+   616→                    "Seul un mouvement POSTED peut être annulé (VOID). Statut actuel: " + status);
+   617→        }
+   618→
+   619→        jdbc.update("""
+   620→                update cash_movement set
+   621→                  status = 'VOID', voided_by = ?, voided_at = now(), void_reason = ?
+   622→                where id = ? and org_id = ?
+   623→                """, me.getId(), req.reason().trim(), id, me.getOrgId());
+   624→
+   625→        audit.log("CASH_MOVEMENT_VOIDED", "cash_movement", id,
+   626→                "{\"reason\":\"" + jsonEscape(req.reason().trim()) + "\"}");
+   627→
+   628→        return getMovement(auth, id);
+   629→    }
+   630→
+   631→    // ══════════════════════════════════════════════════════════════
+   632→    //  PHASE 2 HOOK — auto-post a movement when a process completes
+   633→    // ══════════════════════════════════════════════════════════════
+   634→
+   635→    /**
+   636→     * PHASE 2 entry point — called by ProcessService when a PAYMENT_APPROVAL
+   637→     * workflow reaches COMPLETED status. Flips the linked DRAFT movement to POSTED.
+   638→     *
+   639→     * The movement must already exist (created by the frontend when the user
+   640→     * initiated the payment request) and have process_instance_id set to the
+   641→     * process instance that just completed.
+   642→     *
+   643→     * Phase 1: stub — does nothing (no auth context, no caller info yet).
+   644→     * Phase 2 will call this from ProcessService.completeStep() when the
+   645→     * last step is DONE.
+   646→     *
+   647→     * @param movementId   the cash_movement.id to post
+   648→     * @param postedBy     the AppUser.id of the approver (typically the owner)
+   649→     * @return  the new status ("POSTED" or unchanged "DRAFT" if guard failed)
+   650→     */
+   651→    @Transactional
+   652→    public String onProcessCompletedPostMovement(UUID movementId, UUID postedBy) {
+   653→        // TODO Phase 2: implement. Skeleton:
+   654→        // 1. Fetch movement by id + postedBy's org_id (validate org)
+   655→        // 2. If status != DRAFT → no-op (idempotent)
+   656→        // 3. Run negative-balance guard (same as postMovement)
+   657→        // 4. update cash_movement set status='POSTED', posted_by=?, posted_at=now()
+   658→        // 5. audit.logAs(orgId, postedBy, "CASH_MOVEMENT_POSTED", ...)
+   659→        // 6. return "POSTED"
+   660→        //
+   661→        // For Phase 1, leave as no-op to allow the code to compile and the
+   662→        // cash module to ship without forcing a process dependency.
+   663→        return "DRAFT";
+   664→    }
+   665→
+   666→    // ══════════════════════════════════════════════════════════════
+   667→    //  VALIDATION HELPERS
+   668→    // ══════════════════════════════════════════════════════════════
+   669→
+   670→    private void validateMovementInput(String type, BigDecimal amount, LocalDate date,
+   671→                                        UUID fromPotId, UUID toPotId) {
+   672→        String t = normalizeType(type);
+   673→        if (amount == null || amount.signum() <= 0) {
+   674→            throw new BadRequestException("INVALID_AMOUNT",
+   675→                    "Le montant doit être positif");
+   676→        }
+   677→        if (date == null) {
+   678→            throw new BadRequestException("DATE_REQUIRED",
+   679→                    "La date du mouvement est obligatoire");
+   680→        }
+   681→        switch (t) {
+   682→            case "IN" -> {
+   683→                if (toPotId == null || fromPotId != null) {
+   684→                    throw new BadRequestException("INVALID_POTS_FOR_IN",
+   685→                            "IN: to_pot_id requis, from_pot_id doit être null");
+   686→                }
+   687→            }
+   688→            case "OUT" -> {
+   689→                if (fromPotId == null || toPotId != null) {
+   690→                    throw new BadRequestException("INVALID_POTS_FOR_OUT",
+   691→                            "OUT: from_pot_id requis, to_pot_id doit être null");
+   692→                }
+   693→            }
+   694→            case "TRANSFER" -> {
+   695→                if (fromPotId == null || toPotId == null) {
+   696→                    throw new BadRequestException("INVALID_POTS_FOR_TRANSFER",
+   697→                            "TRANSFER: from_pot_id et to_pot_id requis");
+   698→                }
+   699→                if (fromPotId.equals(toPotId)) {
+   700→                    throw new BadRequestException("SAME_POT_TRANSFER",
+   701→                            "TRANSFER: la caisse source et destination doivent être différentes");
+   702→                }
+   703→            }
+   704→            default -> throw new BadRequestException("INVALID_MOVEMENT_TYPE",
+   705→                    "Type invalide: " + type + " (IN/OUT/TRANSFER)");
+   706→        }
+   707→    }
+   708→
+   709→    private void validatePotInOrg(UUID potId, UUID orgId) {
+   710→        if (potId == null) return;
+   711→        Integer cnt = jdbc.queryForObject(
+   712→                "select count(*) from cash_pot where id = ? and org_id = ?",
+   713→                Integer.class, potId, orgId);
+   714→        if (cnt == null || cnt == 0) {
+   715→            throw new BadRequestException("POT_NOT_IN_ORG",
+   716→                    "La caisse spécifiée n'appartient pas à votre organisation");
+   717→        }
+   718→    }
+   719→
+   720→    private UUID lookupProjectFromPot(UUID potId, UUID orgId) {
+   721→        if (potId == null) return null;
+   722→        List<UUID> rows = jdbc.queryForList(
+   723→                "select project_id from cash_pot where id = ? and org_id = ? and project_id is not null",
+   724→                UUID.class, potId, orgId);
+   725→        return rows.isEmpty() ? null : rows.get(0);
+   726→    }
+   727→
+   728→    // ══════════════════════════════════════════════════════════════
+   729→    //  ROW FETCHERS + MAPPERS
+   730→    // ══════════════════════════════════════════════════════════════
+   731→
+   732→    /** Fetch one movement row with lock (FOR UPDATE) — for post/void. */
+   733→    private Map<String, Object> fetchMovementForUpdate(UUID id, UUID orgId) {
+   734→        List<Map<String, Object>> rows = jdbc.queryForList("""
+   735→                select id, org_id, movement_type, amount, currency, movement_date,
+   736→                       from_pot_id, to_pot_id, project_id, party_id, label, note, status,
+   737→                       process_instance_id, created_by, created_at, posted_by, posted_at,
+   738→                       voided_by, voided_at, void_reason
+   739→                from cash_movement
+   740→                where id = ? and org_id = ?
+   741→                for update
+   742→                """, id, orgId);
+   743→        if (rows.isEmpty()) {
+   744→            throw new ResourceNotFoundException("MOVEMENT_NOT_FOUND",
+   745→                    "Mouvement introuvable");
+   746→        }
+   747→        return rows.get(0);
+   748→    }
+   749→
+   750→    /** Fetch one movement row without lock (for reads). */
+   751→    private Map<String, Object> fetchMovementForRead(UUID id, UUID orgId) {
+   752→        List<Map<String, Object>> rows = jdbc.queryForList("""
+   753→                select id, org_id, movement_type, amount, currency, movement_date,
+   754→                       from_pot_id, to_pot_id, project_id, party_id, label, note, status,
+   755→                       process_instance_id, created_by, created_at, posted_by, posted_at,
+   756→                       voided_by, voided_at, void_reason
+   757→                from cash_movement
+   758→                where id = ? and org_id = ?
+   759→                """, id, orgId);
+   760→        if (rows.isEmpty()) {
+   761→            throw new ResourceNotFoundException("MOVEMENT_NOT_FOUND",
+   762→                    "Mouvement introuvable");
+   763→        }
+   764→        return rows.get(0);
+   765→    }
+   766→
+   767→    private static PotResponse toPotResponse(Map<String, Object> row) {
+   768→        return new PotResponse(
+   769→                (UUID) row.get("id"),
+   770→                (UUID) row.get("org_id"),
+   771→                (String) row.get("type"),
+   772→                (UUID) row.get("project_id"),
+   773→                (String) row.get("name"),
+   774→                (String) row.get("currency"),
+   775→                Boolean.TRUE.equals(row.get("active")),
+   776→                toInstant(row.get("created_at"))
+   777→        );
+   778→    }
+   779→
+   780→    private static MovementResponse toMovementResponse(Map<String, Object> row) {
+   781→        return new MovementResponse(
+   782→                (UUID) row.get("id"),
+   783→                (UUID) row.get("org_id"),
+   784→                (String) row.get("movement_type"),
+   785→                (BigDecimal) row.get("amount"),
+   786→                (String) row.get("currency"),
+   787→                ((Date) row.get("movement_date")).toLocalDate(),
+   788→                (UUID) row.get("from_pot_id"),
+   789→                (UUID) row.get("to_pot_id"),
+   790→                (UUID) row.get("project_id"),
+   791→                (UUID) row.get("party_id"),
+   792→                (String) row.get("label"),
+   793→                (String) row.get("note"),
+   794→                (String) row.get("status"),
+   795→                (UUID) row.get("process_instance_id"),
+   796→                (UUID) row.get("created_by"),
+   797→                toInstant(row.get("created_at")),
+   798→                (UUID) row.get("posted_by"),
+   799→                toInstant(row.get("posted_at")),
+   800→                (UUID) row.get("voided_by"),
+   801→                toInstant(row.get("voided_at")),
+   802→                (String) row.get("void_reason")
+   803→        );
+   804→    }
+   805→
+   806→    // ══════════════════════════════════════════════════════════════
+   807→    //  UTIL
+   808→    // ══════════════════════════════════════════════════════════════
+   809→
+   810→    private static String normalizeType(String type) {
+   811→        if (type == null) return "";
+   812→        return type.trim().toUpperCase();
+   813→    }
+   814→
+   815→    private static String blankToNull(String s) {
+   816→        return (s == null || s.isBlank()) ? null : s.trim();
+   817→    }
+   818→
+   819→    private static String jsonEscape(String s) {
+   820→        if (s == null) return "";
+   821→        return s.replace("\\", "\\\\").replace("\"", "\\\"");
+   822→    }
+   823→
+   824→    private static Instant toInstant(Object value) {
+   825→        if (value == null) return null;
+   826→        if (value instanceof Instant i) return i;
+   827→        if (value instanceof java.sql.Timestamp ts) return ts.toInstant();
+   828→        return java.time.Instant.parse(value.toString());
+   829→    }
+   830→}
+   831→
