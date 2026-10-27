@@ -3,6 +3,8 @@ import { RouterLink } from '@angular/router';
 import { ButtonModule } from 'primeng/button';
 import { CashService } from '@app/core/services/cash.service';
 import { PartyService } from '@app/core/services/party.service';
+import { AuthService } from '@app/core/auth.service';
+import { PERM } from '@app/core/permissions';
 import { CashPot, formatAmount, potTypeVisual } from '@app/core/models/cash.model';
 
 /**
@@ -62,17 +64,19 @@ import { CashPot, formatAmount, potTypeVisual } from '@app/core/models/cash.mode
           </div>
         </a>
 
-        <a routerLink="/tresorerie/operations/new" class="hcard new-op">
-          <div class="hc-band"></div>
-          <div class="hc-body">
-            <div class="hc-icon"><i class="pi pi-plus-circle"></i></div>
-            <div class="hc-text">
-              <div class="hc-title">Nouvelle opération</div>
-              <div class="hc-desc">Paiement, encaissement ou transfert entre caisses</div>
+        @if (canDraft) {
+          <a routerLink="/tresorerie/operations/new" class="hcard new-op">
+            <div class="hc-band"></div>
+            <div class="hc-body">
+              <div class="hc-icon"><i class="pi pi-plus-circle"></i></div>
+              <div class="hc-text">
+                <div class="hc-title">Nouvelle opération</div>
+                <div class="hc-desc">Paiement, encaissement ou transfert entre caisses</div>
+              </div>
+              <i class="pi pi-angle-right hc-arrow"></i>
             </div>
-            <i class="pi pi-angle-right hc-arrow"></i>
-          </div>
-        </a>
+          </a>
+        }
 
         <a routerLink="/tresorerie/parties" class="hcard parties">
           <div class="hc-band"></div>
@@ -147,6 +151,10 @@ import { CashPot, formatAmount, potTypeVisual } from '@app/core/models/cash.mode
 export class CashHubComponent implements OnInit {
   private cashService = inject(CashService);
   private partyService = inject(PartyService);
+  private auth = inject(AuthService);
+
+  // Hide creation CTAs from read-only users (route guard only checks CASH_READ)
+  canDraft = this.auth.can(PERM.CASH_DRAFT);
 
   pots = this.cashService.pots;
   balances = this.cashService.balances;

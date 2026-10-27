@@ -4,9 +4,11 @@ import { ActivatedRoute, RouterLink } from '@angular/router';
 import { ButtonModule } from 'primeng/button';
 import { CashService } from '@app/core/services/cash.service';
 import { PartyService } from '@app/core/services/party.service';
+import { AuthService } from '@app/core/auth.service';
+import { PERM } from '@app/core/permissions';
 import {
   CashMovement, CashPot, formatAmount, formatDate,
-  movementTypeVisual, movementStatusVisual, potTypeVisual,
+  movementTypeVisual, movementStatusVisual, movementPending, potTypeVisual,
 } from '@app/core/models/cash.model';
 
 /**
@@ -55,19 +57,21 @@ import {
         </header>
 
         <!-- CTAs -->
-        <div class="pd-actions">
-          <button pButton label="Encaisser" icon="pi pi-arrow-circle-down" severity="success"
-                  [routerLink]="['/tresorerie/operations/new']"
-                  [queryParams]="{ toPotId: p.id, type: 'IN' }"></button>
-          <button pButton label="Payer" icon="pi pi-arrow-circle-up" severity="danger"
-                  [outlined]="true"
-                  [routerLink]="['/tresorerie/operations/new']"
-                  [queryParams]="{ fromPotId: p.id, type: 'OUT' }"></button>
-          <button pButton label="Transférer" icon="pi pi-arrows-h" severity="info"
-                  [outlined]="true"
-                  [routerLink]="['/tresorerie/operations/new']"
-                  [queryParams]="{ fromPotId: p.id, type: 'TRANSFER' }"></button>
-        </div>
+        @if (canDraft) {
+          <div class="pd-actions">
+            <button pButton label="Encaisser" icon="pi pi-arrow-circle-down" severity="success"
+                    [routerLink]="['/tresorerie/operations/new']"
+                    [queryParams]="{ toPotId: p.id, type: 'IN' }"></button>
+            <button pButton label="Payer" icon="pi pi-arrow-circle-up" severity="danger"
+                    [outlined]="true"
+                    [routerLink]="['/tresorerie/operations/new']"
+                    [queryParams]="{ fromPotId: p.id, type: 'OUT' }"></button>
+            <button pButton label="Transférer" icon="pi pi-arrows-h" severity="info"
+                    [outlined]="true"
+                    [routerLink]="['/tresorerie/operations/new']"
+                    [queryParams]="{ fromPotId: p.id, type: 'TRANSFER' }"></button>
+          </div>
+        }
 
         <!-- Movement history -->
         <section class="pd-movements">
@@ -113,8 +117,8 @@ import {
                     <div class="mv-amount" [class.in]="m.movementType === 'IN'" [class.out]="m.movementType === 'OUT'">
                       {{ mvSign(m) }}{{ fmt(m.amount) }}
                     </div>
-                    <span class="mv-status" [style.--st-color]="sv(m.status).color" [style.--st-soft]="sv(m.status).soft">
-                      <i class="pi" [class]="sv(m.status).icon"></i> {{ sv(m.status).label }}
+                    <span class="mv-status" [style.--st-color]="sv(m.status, pd(m)).color" [style.--st-soft]="sv(m.status, pd(m)).soft">
+                      <i class="pi" [class]="sv(m.status, pd(m)).icon"></i> {{ sv(m.status, pd(m)).label }}
                     </span>
                   </div>
                 </a>
@@ -131,6 +135,10 @@ export class PotDetailComponent implements OnInit {
   private route = inject(ActivatedRoute);
   private cashService = inject(CashService);
   private partyService = inject(PartyService);
+  private auth = inject(AuthService);
+
+  // Route only requires CASH_READ — creating operations needs CASH_DRAFT
+  canDraft = this.auth.can(PERM.CASH_DRAFT);
 
   pot = signal<CashPot | null>(null);
   loading = signal(true);
@@ -145,6 +153,7 @@ export class PotDetailComponent implements OnInit {
   pv = potTypeVisual;
   tv = movementTypeVisual;
   sv = movementStatusVisual;
+  pd = movementPending;
   fmt = (a: number) => formatAmount(a);
   formatDate = formatDate;
 

@@ -16,7 +16,14 @@ export const PERM = {
   DOCUMENT_DOWNLOAD: 'DOCUMENT_DOWNLOAD',
   DOCUMENT_DELETE: 'DOCUMENT_DELETE',
   AUDIT_VIEW: 'AUDIT_VIEW',
-  FOLDER_MANAGE: 'FOLDER_MANAGE'
+  FOLDER_MANAGE: 'FOLDER_MANAGE',
+  // Trésorerie (backend: V22__cash_permissions.sql)
+  CASH_READ: 'CASH_READ',
+  CASH_DRAFT: 'CASH_DRAFT',
+  CASH_SUBMIT: 'CASH_SUBMIT',
+  CASH_POST: 'CASH_POST',
+  CASH_VOID: 'CASH_VOID',
+  PARTY_MANAGE: 'PARTY_MANAGE'
 } as const;
 
 export const PERM_LABELS: Record<string, string> = {
@@ -37,7 +44,13 @@ export const PERM_LABELS: Record<string, string> = {
   TICKET_READ: 'Voir les tickets',
   TICKET_WRITE: 'Créer et fermer les tickets',
   TICKET_ASSIGN: 'Assigner les tickets',
-  FOLDER_MANAGE: 'Configurer les accès aux dossiers'
+  FOLDER_MANAGE: 'Configurer les accès aux dossiers',
+  CASH_READ: 'Consulter la trésorerie',
+  CASH_DRAFT: 'Créer et modifier les brouillons',
+  CASH_SUBMIT: 'Soumettre pour approbation',
+  CASH_POST: 'Comptabiliser les opérations',
+  CASH_VOID: 'Annuler les opérations',
+  PARTY_MANAGE: 'Gérer les sous-traitants'
 };
 
 export const PERM_GROUPS: { key: string; icon: string; title: string; ids: string[] }[] = [
@@ -47,6 +60,8 @@ export const PERM_GROUPS: { key: string; icon: string; title: string; ids: strin
     ids: ['DOCUMENT_READ','DOCUMENT_UPLOAD','DOCUMENT_DOWNLOAD','DOCUMENT_DELETE'] },
   { key: 'projects', icon: 'pi pi-briefcase', title: 'Projets',
     ids: ['PROJECT_READ','PROJECT_WRITE','PROJECT_ASSIGN','PROJECT_MANAGE'] },
+  { key: 'cash',     icon: 'pi pi-wallet',    title: 'Trésorerie',
+    ids: ['CASH_READ','CASH_DRAFT','CASH_SUBMIT','CASH_POST','CASH_VOID','PARTY_MANAGE'] },
   { key: 'tickets',  icon: 'pi pi-ticket',    title: 'Tickets',
     ids: ['TICKET_READ','TICKET_WRITE','TICKET_ASSIGN'] },
   { key: 'other',    icon: 'pi pi-cog',       title: 'Autres',

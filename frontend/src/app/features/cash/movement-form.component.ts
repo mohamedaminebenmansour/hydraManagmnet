@@ -11,6 +11,8 @@ import { TextareaModule } from 'primeng/textarea';
 import { MessageService } from 'primeng/api';
 import { CashService } from '@app/core/services/cash.service';
 import { PartyService } from '@app/core/services/party.service';
+import { AuthService } from '@app/core/auth.service';
+import { PERM } from '@app/core/permissions';
 import {
   CashMovement, MovementBody, MovementType,
   formatAmount, movementTypeVisual, MOVEMENT_TYPE_VISUAL,
@@ -22,7 +24,7 @@ import {
  *
  * Visual type selector (3 big cards IN/OUT/TRANSFER with icons+colors),
  * simple fields, prefilled from query params when coming from a pot detail.
- * Buttons: "Enregistrer brouillon" + "Enregistrer et valider".
+ * Buttons: "Enregistrer brouillon" (CASH_DRAFT) + "Enregistrer et valider" (CASH_POST).
  */
 @Component({
   selector: 'app-movement-form',
@@ -147,22 +149,29 @@ import {
 
       <!-- Actions -->
       <div class="mf-actions">
-        <button pButton label="Annuler" severity="secondary" [text]="true"
-                routerLink="/tresorerie"></button>
-        <div class="mf-actions-right">
-          <button pButton label="Enregistrer brouillon" icon="pi pi-save"
-                         severity="info" [outlined]="true"
-                         [loading]="saving()"
-                         [disabled]="!isValid()"
-                         (click)="save(false)"></button>
-          @if (!isEdit()) {
-            <button pButton label="Enregistrer et valider" icon="pi pi-check"
-                           severity="success"
+        @if (!canDraft) {
+          <div class="mf-warn" style="width: 100%">
+            <i class="pi pi-lock"></i>
+            Lecture seule — vous n'avez pas le droit de créer ou modifier des opérations.
+          </div>
+        } @else {
+          <button pButton label="Annuler" severity="secondary" [text]="true"
+                  routerLink="/tresorerie"></button>
+          <div class="mf-actions-right">
+            <button pButton label="Enregistrer brouillon" icon="pi pi-save"
+                           severity="info" [outlined]="true"
                            [loading]="saving()"
                            [disabled]="!isValid()"
-                           (click)="save(true)"></button>
-          }
-        </div>
+                           (click)="save(false)"></button>
+            @if (!isEdit() && canPost) {
+              <button pButton label="Enregistrer et valider" icon="pi pi-check"
+                             severity="success"
+                             [loading]="saving()"
+                             [disabled]="!isValid()"
+                             (click)="save(true)"></button>
+            }
+          </div>
+        }
       </div>
     </section>
   `,
@@ -173,6 +182,11 @@ export class MovementFormComponent implements OnInit {
   private cashService = inject(CashService);
   private partyService = inject(PartyService);
   private msgs = inject(MessageService);
+  private auth = inject(AuthService);
+
+  // Permission gates (route only requires CASH_READ — write actions re-checked here)
+  canDraft = this.auth.can(PERM.CASH_DRAFT);
+  canPost = this.auth.can(PERM.CASH_POST);
 
   // Edit mode
   editId = '';
@@ -330,7 +344,7 @@ export class MovementFormComponent implements OnInit {
     this.cashService.postMovement(id).subscribe(res => {
       if (res) {
         this.msgs.add({
-          severity: 'success', summary: 'Opération validée',
+          severity: 'success', summary: 'Opération comptabilisée',
           detail: 'Le solde de la caisse est à jour.',
         });
         this.cashService.invalidatePots();

@@ -1,8 +1,9 @@
-import { Component, OnInit, computed, inject, signal } from '@angular/core';
+import { Component, OnInit, inject, signal } from '@angular/core';
 import { Router, RouterLink } from '@angular/router';
 import { ButtonModule } from 'primeng/button';
 import { MessageService } from 'primeng/api';
 import { ProcessService } from '@app/core/services/process.service';
+import { AuthService } from '@app/core/auth.service';
 import { TemplateDetail } from '@app/core/models/process.model';
 import { processTypeVisual, roleVisual } from '@app/shared/process-visual';
 
@@ -19,11 +20,13 @@ import { processTypeVisual, roleVisual } from '@app/shared/process-visual';
           <h1>Processus</h1>
           <p>Créez et suivez vos workflows métier : paiement, sous-traitance, achat, réception chantier…</p>
         </div>
-        <div class="hero-cta">
-          <button pButton label="Créer un processus" icon="pi pi-plus"
-                  severity="success" size="large"
-                  routerLink="/processes/builder"></button>
-        </div>
+        @if (isOwner) {
+          <div class="hero-cta">
+            <button pButton label="Créer un processus" icon="pi pi-plus"
+                    severity="success" size="large"
+                    routerLink="/processes/builder"></button>
+          </div>
+        }
       </header>
 
       <nav class="hub-quicknav">
@@ -41,21 +44,25 @@ import { processTypeVisual, roleVisual } from '@app/shared/process-visual';
             <div class="qn-desc">Démarrer un processus sur un chantier</div>
           </div>
         </a>
-        <a routerLink="/processes/builder" class="quicknav-card">
-          <i class="pi pi-sitemap"></i>
-          <div>
-            <div class="qn-title">Constructeur</div>
-            <div class="qn-desc">Créer / modifier un modèle</div>
-          </div>
-        </a>
+        @if (isOwner) {
+          <a routerLink="/processes/builder" class="quicknav-card">
+            <i class="pi pi-sitemap"></i>
+            <div>
+              <div class="qn-title">Constructeur</div>
+              <div class="qn-desc">Créer / modifier un modèle</div>
+            </div>
+          </a>
+        }
       </nav>
 
       <section class="hub-templates">
         <div class="section-head">
           <h2><i class="pi pi-objects-column"></i> Modèles de processus</h2>
-          <button pButton label="Nouveau" icon="pi pi-plus" size="small"
-                  severity="success" [outlined]="true"
-                  routerLink="/processes/builder"></button>
+          @if (isOwner) {
+            <button pButton label="Nouveau" icon="pi pi-plus" size="small"
+                    severity="success" [outlined]="true"
+                    routerLink="/processes/builder"></button>
+          }
         </div>
 
         @if (loading()) {
@@ -65,8 +72,10 @@ import { processTypeVisual, roleVisual } from '@app/shared/process-visual';
             <i class="pi pi-sitemap"></i>
             <h3>Aucun processus défini</h3>
             <p>Créez votre premier modèle de processus métier en quelques clics.</p>
-            <button pButton label="Créer mon premier processus" icon="pi pi-plus"
-                    severity="success" routerLink="/processes/builder"></button>
+            @if (isOwner) {
+              <button pButton label="Créer mon premier processus" icon="pi pi-plus"
+                      severity="success" routerLink="/processes/builder"></button>
+            }
           </div>
         } @else {
           <div class="template-grid">
@@ -122,9 +131,11 @@ import { processTypeVisual, roleVisual } from '@app/shared/process-visual';
                       <i class="pi pi-list"></i> {{ tpl.steps.length }} étape(s)
                     </span>
                     <div class="card-actions">
-                      <button pButton icon="pi pi-pencil" label="Modifier" size="small"
-                              severity="info" [text]="true"
-                              [routerLink]="['/processes/builder', tpl.id]"></button>
+                      @if (isOwner) {
+                        <button pButton icon="pi pi-pencil" label="Modifier" size="small"
+                                severity="info" [text]="true"
+                                [routerLink]="['/processes/builder', tpl.id]"></button>
+                      }
                       <button pButton icon="pi pi-play" label="Lancer" size="small"
                               severity="success" [text]="true"
                               [routerLink]="['/processes/start']"
@@ -144,6 +155,10 @@ export class ProcessHubComponent implements OnInit {
   private processService = inject(ProcessService);
   private msgs = inject(MessageService);
   private router = inject(Router);
+  private auth = inject(AuthService);
+
+  // Builder routes are ownerGuard-protected — hide all builder CTAs for non-owners
+  isOwner = this.auth.me()?.isOwner === true;
 
   templates = signal<TemplateDetail[]>([]);
   loading = signal(true);

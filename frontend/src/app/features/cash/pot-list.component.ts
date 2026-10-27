@@ -2,6 +2,8 @@ import { Component, OnInit, computed, inject, signal } from '@angular/core';
 import { RouterLink } from '@angular/router';
 import { ButtonModule } from 'primeng/button';
 import { CashService } from '@app/core/services/cash.service';
+import { AuthService } from '@app/core/auth.service';
+import { PERM } from '@app/core/permissions';
 import { CashPot, formatAmount, potTypeVisual } from '@app/core/models/cash.model';
 
 /**
@@ -20,8 +22,10 @@ import { CashPot, formatAmount, potTypeVisual } from '@app/core/models/cash.mode
           <h1><i class="pi pi-building"></i> Caisses</h1>
           <p>Caisse centrale + caisses chantier. Cliquez pour voir l'historique.</p>
         </div>
-        <button pButton label="Nouvelle opération" icon="pi pi-plus" severity="success"
-                routerLink="/tresorerie/operations/new"></button>
+        @if (canDraft) {
+          <button pButton label="Nouvelle opération" icon="pi pi-plus" severity="success"
+                  routerLink="/tresorerie/operations/new"></button>
+        }
       </header>
 
       @if (loading()) {
@@ -65,6 +69,10 @@ import { CashPot, formatAmount, potTypeVisual } from '@app/core/models/cash.mode
 })
 export class PotListComponent implements OnInit {
   private cashService = inject(CashService);
+  private auth = inject(AuthService);
+
+  // Route only requires CASH_READ — creating operations needs CASH_DRAFT
+  canDraft = this.auth.can(PERM.CASH_DRAFT);
 
   pots = this.cashService.pots;
   balances = this.cashService.balances;

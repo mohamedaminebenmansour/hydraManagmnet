@@ -1,6 +1,6 @@
 import { Routes } from '@angular/router';
 import { authGuard } from '@app/core/auth.guard';
-import { permGuard } from '@app/core/perm.guard';
+import { permGuard, ownerGuard } from '@app/core/perm.guard';
 import { PERM } from '@app/core/permissions';
 
 export const routes: Routes = [
@@ -39,29 +39,29 @@ export const routes: Routes = [
         loadComponent: () => import('./features/process/my-tasks.component').then(m => m.MyTasksComponent) },
       { path: 'processes/start',
         loadComponent: () => import('./features/process/start-process.component').then(m => m.StartProcessComponent) },
-      { path: 'processes/builder',
+      { path: 'processes/builder', canActivate: [ownerGuard],
         loadComponent: () => import('./features/process/process-builder.component').then(m => m.ProcessBuilderComponent) },
-      { path: 'processes/builder/:id',
+      { path: 'processes/builder/:id', canActivate: [ownerGuard],
         loadComponent: () => import('./features/process/process-builder.component').then(m => m.ProcessBuilderComponent) },
       { path: 'processes/:id',
         loadComponent: () => import('./features/process/process-timeline.component').then(m => m.ProcessTimelineComponent) },
-      { path: 'process-test',
-        loadComponent: () => import('./features/process/start-process.component').then(m => m.StartProcessComponent) },
-      { path: 'tresorerie',
+      // Trésorerie — read access required (write actions re-checked in components:
+      // CASH_DRAFT to save drafts, CASH_POST to post, CASH_VOID to void, PARTY_MANAGE for parties)
+      { path: 'tresorerie', canActivate: [permGuard(PERM.CASH_READ)],
         loadComponent: () => import('./features/cash/cash-hub.component').then(m => m.CashHubComponent) },
-      { path: 'tresorerie/caisses',
+      { path: 'tresorerie/caisses', canActivate: [permGuard(PERM.CASH_READ)],
         loadComponent: () => import('./features/cash/pot-list.component').then(m => m.PotListComponent) },
-      { path: 'tresorerie/caisses/:potId',
+      { path: 'tresorerie/caisses/:potId', canActivate: [permGuard(PERM.CASH_READ)],
         loadComponent: () => import('./features/cash/pot-detail.component').then(m => m.PotDetailComponent) },
-      { path: 'tresorerie/operations/new',
+      { path: 'tresorerie/operations/new', canActivate: [permGuard(PERM.CASH_READ)],
         loadComponent: () => import('./features/cash/movement-form.component').then(m => m.MovementFormComponent) },
-      { path: 'tresorerie/operations/:id',
+      { path: 'tresorerie/operations/:id', canActivate: [permGuard(PERM.CASH_READ)],
         loadComponent: () => import('./features/cash/movement-detail.component').then(m => m.MovementDetailComponent) },
-      { path: 'tresorerie/operations/:id/edit',
+      { path: 'tresorerie/operations/:id/edit', canActivate: [permGuard(PERM.CASH_READ)],
         loadComponent: () => import('./features/cash/movement-form.component').then(m => m.MovementFormComponent) },
-      { path: 'tresorerie/parties',
+      { path: 'tresorerie/parties', canActivate: [permGuard(PERM.CASH_READ)],
         loadComponent: () => import('./features/cash/party-list.component').then(m => m.PartyListComponent) },
-      { path: 'tresorerie/parties/:id',
+      { path: 'tresorerie/parties/:id', canActivate: [permGuard(PERM.CASH_READ)],
         loadComponent: () => import('./features/cash/party-detail.component').then(m => m.PartyDetailComponent) },
     ]
   },

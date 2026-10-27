@@ -120,11 +120,32 @@ export interface MovementStatusVisual {
 
 export const MOVEMENT_STATUS_VISUAL: Record<MovementStatus, MovementStatusVisual> = {
   DRAFT:  { icon: 'pi-pencil',       color: '#64748b', soft: '#f1f5f9',  label: 'Brouillon' },
-  POSTED: { icon: 'pi-check-circle', color: '#16a34a', soft: '#f0fdf4',  label: 'Validé' },
+  POSTED: { icon: 'pi-check-circle', color: '#16a34a', soft: '#f0fdf4',  label: 'Comptabilisé' },
   VOID:   { icon: 'pi-ban',          color: '#b91c1c', soft: '#fef2f2',  label: 'Annulé' },
 };
 
-export function movementStatusVisual(s: MovementStatus | string | null | undefined): MovementStatusVisual {
+/** Visual used while an approval process is running on a DRAFT movement. */
+const PENDING_VISUAL: MovementStatusVisual = {
+  icon: 'pi-clock', color: '#d97706', soft: '#fffbeb', label: 'En attente',
+};
+
+/**
+ * A DRAFT movement with a running approval process is "pending":
+ * it is locked for editing and must display "En attente" instead of "Brouillon".
+ */
+export function movementPending(
+  m: Pick<CashMovement, 'status' | 'processInstanceId'> | null | undefined
+): boolean {
+  return String(m?.status ?? '').toUpperCase() === 'DRAFT' && !!m?.processInstanceId;
+}
+
+export function movementStatusVisual(
+  s: MovementStatus | string | null | undefined,
+  pending = false
+): MovementStatusVisual {
+  if (pending && String(s ?? '').toUpperCase() === 'DRAFT') {
+    return PENDING_VISUAL; // DRAFT + process en cours → "En attente"
+  }
   const key = String(s ?? '').toUpperCase();
   return MOVEMENT_STATUS_VISUAL[key as MovementStatus] ?? MOVEMENT_STATUS_VISUAL['DRAFT'];
 }

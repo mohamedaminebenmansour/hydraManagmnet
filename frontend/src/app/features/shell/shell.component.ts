@@ -21,7 +21,7 @@ interface NavItem {
 const NAV: NavItem[] = [
   { label: 'Accueil',        icon: 'pi-home',          path: '/',           perm: '',           color: '#0ea5e9' },
   { label: 'Mes tâches',     icon: 'pi-check-square', path: '/mes-taches',  perm: '',           color: '#f59e0b', badge: 'count' },
-  { label: 'Trésorerie',     icon: 'pi-wallet',       path: '/tresorerie',  perm: '',           color: '#0d9488' },
+  { label: 'Trésorerie',     icon: 'pi-wallet',       path: '/tresorerie',  perm: PERM.CASH_READ, color: '#0d9488' },
   { label: 'Processus',      icon: 'pi-sitemap',      path: '/processus',   perm: '',           color: '#7c3aed' },
   { label: 'Chantiers',      icon: 'pi-briefcase',    path: '/projects',    perm: PERM.PROJECT_READ, color: '#0d9488' },
   { label: 'Utilisateurs',   icon: 'pi-users',        path: '/users',       perm: PERM.USER_CREATE, color: '#2563eb' },

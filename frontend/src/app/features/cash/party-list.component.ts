@@ -7,6 +7,8 @@ import { InputTextModule } from 'primeng/inputtext';
 import { SelectModule } from 'primeng/select';
 import { MessageService } from 'primeng/api';
 import { PartyService } from '@app/core/services/party.service';
+import { AuthService } from '@app/core/auth.service';
+import { PERM } from '@app/core/permissions';
 import { Party, PartyType, partyTypeVisual } from '@app/core/models/cash.model';
 import { avatarGradient, initials } from '@app/shared/hydra-design';
 
@@ -26,8 +28,10 @@ import { avatarGradient, initials } from '@app/shared/hydra-design';
           <h1><i class="pi pi-users"></i> Sous-traitants</h1>
           <p>Répertoire des tiers + historique des paiements par personne.</p>
         </div>
-        <button pButton label="Nouveau sous-traitant" icon="pi pi-user-plus"
-                severity="success" (click)="openAdd()"></button>
+        @if (canManageParty) {
+          <button pButton label="Nouveau sous-traitant" icon="pi pi-user-plus"
+                  severity="success" (click)="openAdd()"></button>
+        }
       </header>
 
       <!-- Search + type filter -->
@@ -50,7 +54,9 @@ import { avatarGradient, initials } from '@app/shared/hydra-design';
           <i class="pi pi-users"></i>
           <h3>Aucun sous-traitant</h3>
           <p>Ajoutez votre premier tiers pour suivre les paiements.</p>
-          <button pButton label="Ajouter" icon="pi pi-plus" severity="success" (click)="openAdd()"></button>
+          @if (canManageParty) {
+            <button pButton label="Ajouter" icon="pi pi-plus" severity="success" (click)="openAdd()"></button>
+          }
         </div>
       } @else {
         <div class="pl-grid">
@@ -104,6 +110,10 @@ import { avatarGradient, initials } from '@app/shared/hydra-design';
 export class PartyListComponent implements OnInit {
   private partyService = inject(PartyService);
   private msgs = inject(MessageService);
+  private auth = inject(AuthService);
+
+  // Route only requires CASH_READ — party creation needs PARTY_MANAGE
+  canManageParty = this.auth.can(PERM.PARTY_MANAGE);
 
   parties = this.partyService.parties;
   loading = signal(true);

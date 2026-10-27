@@ -4,9 +4,11 @@ import { ActivatedRoute, RouterLink } from '@angular/router';
 import { ButtonModule } from 'primeng/button';
 import { PartyService } from '@app/core/services/party.service';
 import { CashService } from '@app/core/services/cash.service';
+import { AuthService } from '@app/core/auth.service';
+import { PERM } from '@app/core/permissions';
 import {
   Party, formatAmount, formatDate,
-  movementTypeVisual, movementStatusVisual, partyTypeVisual,
+  movementTypeVisual, movementStatusVisual, movementPending, partyTypeVisual,
 } from '@app/core/models/cash.model';
 import { avatarGradient, initials } from '@app/shared/hydra-design';
 
@@ -47,12 +49,14 @@ import { avatarGradient, initials } from '@app/shared/hydra-design';
               @if (p.phone) { <span class="pd-phone"><i class="pi pi-phone"></i> {{ p.phone }}</span> }
             </div>
           </div>
-          <div class="pd-cta">
-            <button pButton label="Payer ce sous-traitant" icon="pi pi-arrow-circle-up"
-                    severity="danger"
-                    [routerLink]="['/tresorerie/operations/new']"
-                    [queryParams]="{ partyId: p.id, type: 'OUT' }"></button>
-          </div>
+          @if (canDraft) {
+            <div class="pd-cta">
+              <button pButton label="Payer ce sous-traitant" icon="pi pi-arrow-circle-up"
+                      severity="danger"
+                      [routerLink]="['/tresorerie/operations/new']"
+                      [queryParams]="{ partyId: p.id, type: 'OUT' }"></button>
+            </div>
+          }
         </header>
 
         <!-- Total paid -->
@@ -100,8 +104,8 @@ import { avatarGradient, initials } from '@app/shared/hydra-design';
                     <div class="mv-amount" [class.in]="m.movementType === 'IN'" [class.out]="m.movementType === 'OUT'">
                       {{ m.movementType === 'IN' ? '+' : '−' }}{{ fmt(m.amount) }}
                     </div>
-                    <span class="mv-status" [style.--st-color]="sv(m.status).color" [style.--st-soft]="sv(m.status).soft">
-                      <i class="pi" [class]="sv(m.status).icon"></i> {{ sv(m.status).label }}
+                    <span class="mv-status" [style.--st-color]="sv(m.status, pd(m)).color" [style.--st-soft]="sv(m.status, pd(m)).soft">
+                      <i class="pi" [class]="sv(m.status, pd(m)).icon"></i> {{ sv(m.status, pd(m)).label }}
                     </span>
                   </div>
                 </a>
@@ -118,6 +122,10 @@ export class PartyDetailComponent implements OnInit {
   private route = inject(ActivatedRoute);
   private partyService = inject(PartyService);
   private cashService = inject(CashService);
+  private auth = inject(AuthService);
+
+  // Route only requires CASH_READ — creating operations needs CASH_DRAFT
+  canDraft = this.auth.can(PERM.CASH_DRAFT);
 
   party = signal<Party | null>(null);
   movements = signal<any[]>([]);
@@ -130,6 +138,7 @@ export class PartyDetailComponent implements OnInit {
   pv = partyTypeVisual;
   tv = movementTypeVisual;
   sv = movementStatusVisual;
+  pd = movementPending;
   fmt = (a: number) => formatAmount(a);
   formatDate = formatDate;
   grad = (p: Party) => avatarGradient(p.id);

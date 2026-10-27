@@ -9,17 +9,20 @@ import { TextareaModule } from 'primeng/textarea';
 import { MessageService } from 'primeng/api';
 import { CashService } from '@app/core/services/cash.service';
 import { PartyService } from '@app/core/services/party.service';
+import { AuthService } from '@app/core/auth.service';
+import { PERM } from '@app/core/permissions';
 import {
   CashMovement, formatAmount, formatDate,
-  movementTypeVisual, movementStatusVisual,
+  movementTypeVisual, movementStatusVisual, movementPending,
 } from '@app/core/models/cash.model';
 
 /**
  * MovementDetailComponent — /tresorerie/operations/:id
  *
  * Shows all fields + status chip.
- * DRAFT  → Valider (poster) + Modifier buttons
- * POSTED → Annuler (void) with required reason dialog
+ * DRAFT (no process)  → Valider (poster, CASH_POST) + Modifier
+ * DRAFT (process en cours) → "En attente" chip, no action buttons
+ * POSTED → Annuler (CASH_VOID) with required reason dialog
  * VOID   → read-only
  */
 @Component({
@@ -55,8 +58,8 @@ import {
             <div class="md-amount" [class.in]="m.movementType === 'IN'" [class.out]="m.movementType === 'OUT'">
               {{ m.movementType === 'IN' ? '+' : '−' }}{{ fmt(m.amount) }}
             </div>
-            <span class="md-status" [style.--st-color]="sv(m.status).color" [style.--st-soft]="sv(m.status).soft">
-              <i class="pi" [class]="sv(m.status).icon"></i> {{ sv(m.status).label }}
+            <span class="md-status" [style.--st-color]="sv(m.status, pd(m)).color" [style.--st-soft]="sv(m.status, pd(m)).soft">
+              <i class="pi" [class]="sv(m.status, pd(m)).icon"></i> {{ sv(m.status, pd(m)).label }}
             </span>
           </div>
         </header>
@@ -115,19 +118,36 @@ import {
 
         <!-- Actions -->
         <div class="md-actions">
-          @if (m.status === 'DRAFT') {
-            <button pButton label="Modifier" icon="pi pi-pencil" severity="info" [outlined]="true"
-                    [routerLink]="['/tresorerie/operations', m.id, 'edit']"></button>
-            <button pButton label="Valider (poster)" icon="pi pi-check" severity="success"
-                    [loading]="acting()"
-                    (click)="post()"></button>
+          @if (pd(m)) {
+            <div class="md-note info">
+              <i class="pi pi-clock"></i>
+              Un processus d'approbation est en cours — l'opération sera comptabilisée automatiquement à la validation.
+            </div>
+          } @else if (m.status === 'DRAFT') {
+            @if (canDraft) {
+              <button pButton label="Modifier" icon="pi pi-pencil" severity="info" [outlined]="true"
+                      [routerLink]="['/tresorerie/operations', m.id, 'edit']"></button>
+            }
+            @if (canPost) {
+              <button pButton label="Valider (poster)" icon="pi pi-check" severity="success"
+                      [loading]="acting()"
+                      (click)="post()"></button>
+            } @else {
+              <div class="md-note muted">
+                <i class="pi pi-lock"></i>
+                Seul un utilisateur autorisé peut comptabiliser cette opération — soumettez-la via un processus d'approbation.
+              </div>
+            }
           } @else if (m.status === 'POSTED') {
             <div class="md-note info">
               <i class="pi pi-lock"></i>
-              Opération validée — le solde de la caisse est à jour. Utilisez « Annuler » pour la corriger.
+              Opération comptabilisée — le solde de la caisse est à jour.
+              @if (canVoid) { Utilisez « Annuler » pour la corriger. }
             </div>
-            <button pButton label="Annuler (void)" icon="pi pi-ban" severity="danger" [outlined]="true"
-                    (click)="showVoidDialog()"></button>
+            @if (canVoid) {
+              <button pButton label="Annuler (void)" icon="pi pi-ban" severity="danger" [outlined]="true"
+                      (click)="showVoidDialog()"></button>
+            }
           } @else {
             <div class="md-note muted">
               <i class="pi pi-ban"></i>
@@ -173,6 +193,7 @@ export class MovementDetailComponent implements OnInit {
   private cashService = inject(CashService);
   private partyService = inject(PartyService);
   private msgs = inject(MessageService);
+  private auth = inject(AuthService);
 
   movement = signal<CashMovement | null>(null);
   voidReason = '';
@@ -180,9 +201,15 @@ export class MovementDetailComponent implements OnInit {
   acting = signal(false);
   voidVisible = false;
 
+  // Permission gates (route only requires CASH_READ — actions re-checked here)
+  canDraft = this.auth.can(PERM.CASH_DRAFT);
+  canPost = this.auth.can(PERM.CASH_POST);
+  canVoid = this.auth.can(PERM.CASH_VOID);
+
   // Template helpers
   tv = movementTypeVisual;
   sv = movementStatusVisual;
+  pd = movementPending;
   fmt = (a: number) => formatAmount(a);
   formatDate = formatDate;
 
@@ -222,7 +249,7 @@ export class MovementDetailComponent implements OnInit {
     this.cashService.postMovement(this.id).subscribe(res => {
       this.acting.set(false);
       if (res) {
-        this.msgs.add({ severity: 'success', summary: 'Opération validée',
+        this.msgs.add({ severity: 'success', summary: 'Opération comptabilisée',
           detail: 'Le solde de la caisse est à jour.' });
         this.cashService.invalidatePots();
         this.load();
