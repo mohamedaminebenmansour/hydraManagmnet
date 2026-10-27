@@ -130,6 +130,21 @@ import {
               </div>
             </div>
           }
+          @if (proofDocumentId()) {
+            <!-- TASK 6 — open the payment proof stored in the Finance folder -->
+            <div class="md-field md-field-wide">
+              <div class="mdf-label">Pièce justificative</div>
+              <div class="mdf-value proof">
+                <i class="pi pi-file-pdf"></i>
+                <span class="proof-name" [title]="proofDocumentName()">{{ proofDocumentName() }}</span>
+                @if (canReadDocs) {
+                  <a class="proof-btn" [routerLink]="['/documents', proofDocumentId()]">
+                    <i class="pi pi-eye"></i> Voir la pièce
+                  </a>
+                }
+              </div>
+            </div>
+          }
           @if (m.status === 'VOID') {
             <div class="md-field md-field-wide">
               <div class="mdf-label">Motif d'annulation</div>
@@ -215,11 +230,14 @@ import {
                     <div class="tl-body">
                       <div class="tl-head">
                         <span class="tl-action">{{ tav(ev.action).label }}</span>
+                        @if (sourceBadge(ev); as sb) {
+                          <span class="tl-source" [style.--sb-color]="sb.color">{{ sb.label }}</span>
+                        }
                         @if (ev.at) { <span class="tl-date">{{ fmtDateTime(ev.at) }}</span> }
                       </div>
                       <div class="tl-meta">
                         @if (ev.userName) { <span><i class="pi pi-user"></i> {{ ev.userName }}</span> }
-                        @if (eventReason(ev)) { <span class="tl-reason">{{ eventReason(ev) }}</span> }
+                        @if (eventNote(ev)) { <span class="tl-reason">{{ eventNote(ev) }}</span> }
                       </div>
                     </div>
                   </li>
@@ -280,6 +298,7 @@ export class MovementDetailComponent implements OnInit {
   canPost = this.auth.can(PERM.CASH_POST);
   canVoid = this.auth.can(PERM.CASH_VOID);
   canSubmit = this.auth.can(PERM.CASH_SUBMIT);
+  canReadDocs = this.auth.can(PERM.DOCUMENT_READ);
 
   // Template helpers
   tv = movementTypeVisual;
@@ -305,6 +324,30 @@ export class MovementDetailComponent implements OnInit {
     return !!m && movementRejected(m, this.timeline()?.events);
   }
 
+  /**
+   * TASK 6 — the attached proof document (movement read model first; the
+   * timeline snapshot is the fallback while the page loads).
+   */
+  proofDocumentId(): string | null {
+    return this.movement()?.documentId ?? this.timeline()?.documentId ?? null;
+  }
+
+  proofDocumentName(): string {
+    return this.movement()?.documentName ?? this.timeline()?.documentName ?? 'Pièce jointe';
+  }
+
+  /**
+   * TASK 6 — small badge separating the three timeline sources
+   * (cash_movement = opération itself, process_instance/process_step = validation).
+   */
+  sourceBadge(ev: { source?: string | null }): { label: string; color: string } | null {
+    switch (String(ev.source ?? '')) {
+      case 'process_instance': return { label: 'Validation', color: '#0d9488' };
+      case 'process_step':     return { label: 'Étape', color: '#0891b2' };
+      default: return null; // 'cash_movement' rows need no badge
+    }
+  }
+
   /** Timeline event timestamp — date + time (fr-FR). */
   fmtDateTime(iso: string | null | undefined): string {
     if (!iso) return '—';
@@ -316,11 +359,15 @@ export class MovementDetailComponent implements OnInit {
     });
   }
 
-  /** Human-readable reason extracted from the event details JSON. */
-  eventReason(ev: { details?: string | null }): string | null {
+  /** Human-readable note extracted from the event details JSON (reason, title, reference…). */
+  eventNote(ev: { details?: string | null }): string | null {
     const d = parseTimelineDetails(ev.details);
-    return (d && typeof d['reason'] === 'string' && d['reason'].trim())
-      ? d['reason'].trim() : null;
+    if (!d) return null;
+    for (const key of ['reason', 'title', 'reference', 'label', 'stepName']) {
+      const v = d[key];
+      if (typeof v === 'string' && v.trim()) return v.trim();
+    }
+    return null;
   }
 
   private id = '';

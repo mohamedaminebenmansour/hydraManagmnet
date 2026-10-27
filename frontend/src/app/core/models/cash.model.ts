@@ -53,6 +53,7 @@ export interface CashMovement {
   varianceReason?: string | null;
   /** TASK 3 — proof document attached to this movement (Finance folder). */
   documentId?: string | null;
+  documentName?: string | null;
 }
 
 /** Create/edit body for POST/PUT /api/cash/movements. */
@@ -366,5 +367,6 @@ export function mapMovement(raw: any): CashMovement {
     assessedAmount: raw?.assessedAmount != null ? Number(raw.assessedAmount) : null,
     varianceReason: raw?.varianceReason ?? raw?.variance_reason ?? null,
     documentId: raw?.documentId ?? raw?.document_id ?? null,
+    documentName: raw?.documentName ?? raw?.document_name ?? null,
   };
 }
