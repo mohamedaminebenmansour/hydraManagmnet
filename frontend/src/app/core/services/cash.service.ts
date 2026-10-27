@@ -222,16 +222,48 @@ export class CashService {
         partyName: raw?.['partyName'] ?? null,
         projectName: raw?.['projectName'] ?? null,
         processInstanceId: raw?.['processInstanceId'] ?? null,
+        claimedAmount: raw?.['claimedAmount'] != null ? Number(raw['claimedAmount']) : null,
+        assessedAmount: raw?.['assessedAmount'] != null ? Number(raw['assessedAmount']) : null,
+        varianceReason: raw?.['varianceReason'] ?? null,
+        documentId: raw?.['documentId'] ?? null,
+        documentName: raw?.['documentName'] ?? null,
         events: (Array.isArray(raw?.['events']) ? raw['events'] : []).map((e: AnyRaw) => ({
           action: String(e?.['action'] ?? ''),
           at: e?.['at'] ?? null,
           userId: e?.['userId'] ?? null,
           userName: e?.['userName'] ?? null,
           details: e?.['details'] ?? null,
+          source: e?.['source'] ?? null,
         })),
       })),
       catchError(err => {
         this.toastError(err, 'Historique indisponible');
+        return of(null);
+      })
+    );
+  }
+
+  /**
+   * POST /api/cash/movements/{id}/attachment (TASK 3 backend) — upload the
+   * payment proof (facture / BL / situation) as a REAL Document stored in the
+   * project's Finance folder, linked on movement.document_id. Multipart
+   * FormData: file + title (+ docType optional, backend defaults FACTURE).
+   * DRAFT movements only. Returns the refreshed movement (documentId set).
+   */
+  uploadAttachment(
+    movementId: string,
+    file: File,
+    title: string,
+    docType?: 'FACTURE' | 'SITUATION' | 'BON_LIVRAISON' | 'AUTRE'
+  ): Observable<CashMovement | null> {
+    const form = new FormData();
+    form.append('file', file, file.name);
+    form.append('title', title);
+    if (docType) { form.append('docType', docType); }
+    return this.http.post<AnyRaw>(`/api/cash/movements/${movementId}/attachment`, form).pipe(
+      map(raw => mapMovement(raw)),
+      catchError(err => {
+        this.toastError(err, 'Impossible de joindre la pièce (brouillon uniquement)');
         return of(null);
       })
     );

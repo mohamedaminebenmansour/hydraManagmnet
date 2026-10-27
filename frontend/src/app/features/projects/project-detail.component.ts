@@ -121,6 +121,11 @@ export class ProjectDetailComponent implements OnInit {
 
   canWrite = computed(() => this.auth.can(PERM.PROJECT_WRITE));
 
+  // TASK 5 — money actions of the chantier strip (form re-checks CASH_SUBMIT
+  // for « Envoyer pour validation », CASH_DRAFT for draft saving)
+  canPay = computed(() => this.auth.can(PERM.CASH_DRAFT));
+  canReceive = computed(() => this.auth.can(PERM.CASH_DRAFT));
+
   // Aides visuelles pour le template (langage icône + couleur)
   tv = typeVisual;
   sv = statusVisual;

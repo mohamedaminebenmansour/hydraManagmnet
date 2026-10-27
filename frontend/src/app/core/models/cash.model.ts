@@ -47,6 +47,12 @@ export interface CashMovement {
   note?: string;
   status: MovementStatus;
   processInstanceId?: string | null;
+  /** TASK 1 — claimed vs assessed: what the party asked vs what we pay. */
+  claimedAmount?: number | null;
+  assessedAmount?: number | null;
+  varianceReason?: string | null;
+  /** TASK 3 — proof document attached to this movement (Finance folder). */
+  documentId?: string | null;
 }
 
 /** Create/edit body for POST/PUT /api/cash/movements. */
@@ -61,6 +67,10 @@ export interface MovementBody {
   label?: string;
   note?: string;
   processInstanceId?: string | null;
+  /** TASK 1 — claimed vs assessed (OUT short form; omitted for IN/TRANSFER). */
+  claimedAmount?: number;
+  assessedAmount?: number;
+  varianceReason?: string;
 }
 
 /** GET /api/cash/pots/{id}/balance response. */
@@ -86,6 +96,12 @@ export interface SubmitPaymentBody {
   partyId?: string | null;
   label?: string;
   note?: string;
+  /** TASK 1 — claimed = what the party asked; assessed = what we accept to pay
+   *  (amount posted). When assessed differs from claimed, varianceReason is
+   *  REQUIRED (backend-enforced, mirrored in the payment form). */
+  claimedAmount?: number;
+  assessedAmount?: number;
+  varianceReason?: string;
 }
 
 /** Response of submit-payment: the new DRAFT movement + the running process. */
@@ -101,6 +117,8 @@ export interface MovementTimelineEvent {
   userId?: string | null;
   userName?: string | null;
   details?: string | null; // raw JSON string
+  /** TASK 2 — where the event came from: 'cash_movement' | 'process_instance' | 'process_step'. */
+  source?: string | null;
 }
 
 /** GET /api/cash/movements/{id}/timeline — snapshot + ordered events. */
@@ -115,6 +133,13 @@ export interface MovementTimeline {
   partyName?: string | null;
   projectName?: string | null;
   processInstanceId?: string | null;
+  /** TASK 1 — claimed vs assessed snapshot (for "where every dinar went"). */
+  claimedAmount?: number | null;
+  assessedAmount?: number | null;
+  varianceReason?: string | null;
+  /** TASK 3 — attached proof document. */
+  documentId?: string | null;
+  documentName?: string | null;
   events: MovementTimelineEvent[];
 }
 
@@ -125,6 +150,16 @@ export const TIMELINE_ACTION_VISUAL: Record<string, { label: string; icon: strin
   CASH_MOVEMENT_POSTED:    { label: 'Comptabilisée',               icon: 'pi-check-circle', color: '#16a34a' },
   CASH_MOVEMENT_VOIDED:    { label: 'Annulée',                     icon: 'pi-ban',          color: '#b91c1c' },
   CASH_MOVEMENT_REJECTED:  { label: 'Refusée',                     icon: 'pi-times',        color: '#b91c1c' },
+  // TASK 2 — merged workflow events (process_instance + process_step sources)
+  PROCESS_STARTED:         { label: 'Validation démarrée',         icon: 'pi-play',         color: '#0d9488' },
+  PROCESS_COMPLETED:       { label: 'Validation terminée',         icon: 'pi-check-circle', color: '#16a34a' },
+  PROCESS_REJECTED:        { label: 'Paiement refusé',             icon: 'pi-times',        color: '#b91c1c' },
+  PROCESS_CANCELLED:       { label: 'Validation annulée',          icon: 'pi-ban',          color: '#64748b' },
+  STEP_STARTED:            { label: 'Étape de validation commencée', icon: 'pi-hourglass', color: '#0891b2' },
+  STEP_COMPLETED:          { label: 'Étape validée',               icon: 'pi-check',        color: '#16a34a' },
+  STEP_REJECTED:           { label: 'Étape refusée',               icon: 'pi-times',        color: '#b91c1c' },
+  // TASK 3 — proof document attached (Finance folder)
+  DOCUMENT_ATTACHED_TO_MOVEMENT: { label: 'Pièce justificative jointe', icon: 'pi-paperclip', color: '#7c3aed' },
 };
 
 export function timelineActionVisual(action: string | null | undefined) {
@@ -327,5 +362,9 @@ export function mapMovement(raw: any): CashMovement {
     note: raw?.note ?? undefined,
     status: String(raw?.status ?? raw?.movementStatus ?? 'DRAFT').toUpperCase() as MovementStatus,
     processInstanceId: raw?.processInstanceId ?? raw?.process_instance_id ?? null,
+    claimedAmount: raw?.claimedAmount != null ? Number(raw.claimedAmount) : null,
+    assessedAmount: raw?.assessedAmount != null ? Number(raw.assessedAmount) : null,
+    varianceReason: raw?.varianceReason ?? raw?.variance_reason ?? null,
+    documentId: raw?.documentId ?? raw?.document_id ?? null,
   };
 }

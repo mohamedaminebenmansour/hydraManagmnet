@@ -23,11 +23,13 @@ import {
  *                          /tresorerie/operations/:id/edit (edit DRAFT)
  *
  * Two layouts:
- *  - OUT create → SHORT PAYMENT UX (B5): montant + sous-traitant + libellé
- *    up front, caisse/projet/note under « Plus d'options », and a primary
- *    « Envoyer pour validation » button (submitPayment → PAYMENT_APPROVAL).
- *    Prefilled from project strip: type=OUT & fromPotId=<caisse chantier> &
- *    projectId — date defaults to today.
+ *  - OUT create → SHORT PAYMENT UX (B5 + TASK 5): « Montant à payer » (assessed)
+ *    + « Montant demandé » (claimed, optional) + motif d'écart when they differ,
+ *    sous-traitant + libellé + pièce justificative (facultatif, uploadée après
+ *    submission dans le dossier Finance du projet), caisse/projet/note under
+ *    « Plus d'options », and a primary « Envoyer pour validation » button
+ *    (submitPayment → PAYMENT_APPROVAL). Defaults: OUT, aujourd'hui, contexte
+ *    projet via deep-link.
  *  - IN / TRANSFER (and edit mode) → full 4-step layout.
  * Buttons: "Enregistrer brouillon" (CASH_DRAFT) + "Enregistrer et valider"
  * (CASH_POST, IN/TRANSFER only — OUT must go through the approval workflow).
@@ -75,23 +77,44 @@ import {
         </div>
       </div>
 
-      <!-- SHORT PAYMENT UX (B5): OUT creation — montant / tiers / libellé -->
+      <!-- SHORT PAYMENT UX (B5 + TASK 5): OUT creation — claimed vs assessed,
+           tiers, libellé, pièce justificative. Defaults: OUT, aujourd'hui,
+           contexte projet (deep-link). CTA = « Envoyer pour validation ». -->
       @if (movementType === 'OUT' && !isEdit()) {
         <div class="mf-section">
-          <h2><span class="s-num">2</span> Montant et date</h2>
+          <h2><span class="s-num">2</span> Montants et date</h2>
           <div class="field-row">
             <div class="field">
-              <label>Montant <span class="req">*</span></label>
+              <label>Montant à payer <span class="req">*</span></label>
               <p-inputnumber [(ngModel)]="amount" mode="decimal"
                              [minFractionDigits]="3" [maxFractionDigits]="3"
                              placeholder="0,000" [min]="0"
                              inputStyleClass="w-100" styleClass="w-100" />
+              <small class="field-hint">Ce que l'entreprise accepte de payer (comptabilisé à la caisse).</small>
             </div>
             <div class="field">
               <label>Date <span class="req">*</span></label>
               <p-datepicker [(ngModel)]="movementDate" dateFormat="dd/mm/yy"
                             [showIcon]="true" styleClass="w-100" />
             </div>
+          </div>
+          <div class="field-row">
+            <div class="field">
+              <label>Montant demandé <small>(facultatif)</small></label>
+              <p-inputnumber [(ngModel)]="claimedAmount" mode="decimal"
+                             [minFractionDigits]="3" [maxFractionDigits]="3"
+                             placeholder="Identique au montant à payer" [min]="0"
+                             inputStyleClass="w-100" styleClass="w-100" />
+              <small class="field-hint">Montant réclamé sur la facture / situation du sous-traitant.</small>
+            </div>
+            @if (hasVariance()) {
+              <div class="field">
+                <label>Motif de l'écart <span class="req">*</span></label>
+                <textarea pInputTextarea [(ngModel)]="varianceReason" rows="2"
+                          placeholder="Ex: retenue de garantie 5%, pénalité de retard, travaux non conformes…"></textarea>
+                <small class="field-hint">Obligatoire : vous payez moins que le montant réclamé.</small>
+              </div>
+            }
           </div>
         </div>
 
@@ -107,6 +130,27 @@ import {
             <label>Libellé <small>(court)</small></label>
             <input pInputText [(ngModel)]="label" maxlength="120"
                    placeholder="Ex: Paiement Pipetech — Tronçon 3" />
+          </div>
+          <div class="field">
+            <label>Pièce justificative <small>(facultatif — facture, bon de livraison, situation)</small></label>
+            @if (attachmentFile(); as att) {
+              <div class="attachment-chip">
+                <i class="pi pi-paperclip"></i>
+                <span class="att-name" [title]="att.name">{{ att.name }}</span>
+                <span class="att-size">{{ fmtSize(att.size) }}</span>
+                <button type="button" class="att-remove" (click)="clearAttachment()" aria-label="Retirer la pièce">
+                  <i class="pi pi-times"></i>
+                </button>
+              </div>
+            } @else {
+              <label class="file-input">
+                <input type="file" accept=".pdf,.png,.jpg,.jpeg,.webp"
+                       (change)="onAttachmentPicked($event)" />
+                <i class="pi pi-upload"></i>
+                <span>Choisir un fichier</span>
+                <small class="field-hint">PDF ou image — rangé automatiquement dans le dossier Finance du projet.</small>
+              </label>
+            }
           </div>
         </div>
 
@@ -160,6 +204,12 @@ import {
               <div class="mf-warn" style="width: 100%">
                 <i class="pi pi-info-circle"></i>
                 « Envoyer pour validation » nécessite un projet rattaché (Plus d'options).
+              </div>
+            }
+            @if (hasVariance() && !varianceReason.trim()) {
+              <div class="mf-warn" style="width: 100%">
+                <i class="pi pi-exclamation-triangle"></i>
+                Vous payez un montant différent de celui réclamé — indiquez le motif de l'écart.
               </div>
             }
           }
@@ -301,7 +351,9 @@ export class MovementFormComponent implements OnInit {
 
   // Form state
   movementType: MovementType = 'OUT';
-  amount: number | null = null;
+  amount: number | null = null;          // assessed — « Montant à payer »
+  claimedAmount: number | null = null;   // claimed — « Montant demandé » (optional)
+  varianceReason = '';
   movementDate: Date = new Date();
   fromPotId: string | null = null;
   toPotId: string | null = null;
@@ -309,6 +361,42 @@ export class MovementFormComponent implements OnInit {
   partyId: string | null = null;
   label = '';
   note = '';
+
+  /** Optional payment proof (facture / BL / situation) — TASK 3 upload after submit. */
+  private attachment = signal<File | null>(null);
+  attachmentFile = this.attachment.asReadonly();
+
+  /**
+   * TASK 5 — claimed ≠ assessed (compared in millimes to dodge float noise).
+   * When true, the « Motif de l'écart » field appears and is REQUIRED
+   * (mirrors backend validateClaimedAssessed / VARIANCE_REASON_REQUIRED).
+   */
+  hasVariance(): boolean {
+    if (this.claimedAmount == null || this.amount == null) return false;
+    return Math.round(this.claimedAmount * 1000) !== Math.round(this.amount * 1000);
+  }
+
+  onAttachmentPicked(ev: Event): void {
+    const input = ev.target as HTMLInputElement;
+    const f = input.files?.[0] ?? null;
+    if (!f) return;
+    if (f.size > 50 * 1024 * 1024) {
+      this.msgs.add({ severity: 'warn', summary: 'Fichier trop volumineux',
+        detail: 'La pièce jointe ne doit pas dépasser 50 Mo.' });
+      input.value = '';
+      return;
+    }
+    this.attachment.set(f);
+  }
+
+  clearAttachment(): void { this.attachment.set(null); }
+
+  /** Human-readable file size (Ko / Mo). */
+  fmtSize(bytes: number): string {
+    return bytes >= 1024 * 1024
+      ? `${(bytes / (1024 * 1024)).toFixed(1)} Mo`
+      : `${Math.max(1, Math.round(bytes / 1024))} Ko`;
+  }
 
   saving = signal(false);
 
@@ -398,6 +486,7 @@ export class MovementFormComponent implements OnInit {
 
   isValid(): boolean {
     if (!this.amount || this.amount <= 0) return false;
+    if (this.hasVariance() && !this.varianceReason.trim()) return false; // TASK 5
     if (!this.movementDate) return false;
     switch (this.movementType) {
       case 'IN': return !!this.toPotId;
@@ -421,6 +510,14 @@ export class MovementFormComponent implements OnInit {
       partyId: this.partyId,
       label: this.label.trim() || undefined,
       note: this.note.trim() || undefined,
+      // TASK 1/5 — claimed vs assessed ride along on OUT draft saves too, so
+      // no filled field is lost when the user saves before submitting.
+      // (IN/TRANSFER never see these fields — nothing to send.)
+      ...(this.movementType === 'OUT' ? {
+        claimedAmount: this.effectiveClaimed(),
+        assessedAmount: this.amount ?? undefined,
+        varianceReason: this.hasVariance() ? this.varianceReason.trim() : undefined,
+      } : {}),
     };
 
     if (this.isEdit() && this.editId) {
@@ -465,8 +562,18 @@ export class MovementFormComponent implements OnInit {
   }
 
   /**
-   * B5 — primary CTA for OUT: create the draft AND start the
-   * PAYMENT_APPROVAL workflow in one call (submit-payment).
+   * Claimed actually sent to the backend: the filled « Montant demandé »,
+   * else the assessed amount (spec: claimed defaults to the same value).
+   */
+  private effectiveClaimed(): number | undefined {
+    return this.claimedAmount ?? this.amount ?? undefined;
+  }
+
+  /**
+   * B5 + TASK 5 — primary CTA for OUT: create the draft AND start the
+   * PAYMENT_APPROVAL workflow in one call (submit-payment), carrying
+   * claimed vs assessed + variance reason, then upload the optional proof
+   * document (Finance folder, TASK 3 backend) before navigating.
    * Requires a project (the backend rejects payments without one).
    */
   submitForApproval(): void {
@@ -477,6 +584,7 @@ export class MovementFormComponent implements OnInit {
       return;
     }
     this.saving.set(true);
+    const att = this.attachment();
     this.cashService.submitPayment({
       fromPotId: this.fromPotId!,
       amount: this.amount!,
@@ -485,14 +593,41 @@ export class MovementFormComponent implements OnInit {
       partyId: this.partyId,
       label: this.label.trim() || undefined,
       note: this.note.trim() || undefined,
+      claimedAmount: this.effectiveClaimed(),
+      assessedAmount: this.amount ?? undefined,
+      varianceReason: this.hasVariance() ? this.varianceReason.trim() : undefined,
     }).subscribe(res => {
-      this.saving.set(false);
-      if (res) {
+      if (!res) {
+        this.saving.set(false);
+        return;
+      }
+      if (att) {
+        // Best effort: the payment EXISTS now — a failed upload must not
+        // swallow the submission (the proof can be re-attached later).
+        this.cashService.uploadAttachment(res.movement.id, att,
+          this.label.trim() || att.name).subscribe(up => {
+          this.saving.set(false);
+          if (up) {
+            this.msgs.add({ severity: 'success', summary: 'Paiement envoyé',
+              detail: 'Pièce justificative rangée dans le dossier Finance du projet.' });
+          } else {
+            this.msgs.add({ severity: 'warn', summary: 'Paiement envoyé',
+              detail: 'La pièce jointe n\'a pas pu être téléversée — réessayez depuis la fiche de l\'opération.' });
+          }
+          this.finishSubmission(res.movement.id);
+        });
+      } else {
+        this.saving.set(false);
         this.msgs.add({ severity: 'success', summary: 'Paiement envoyé',
           detail: 'Il attend maintenant la validation du workflow d\'approbation.' });
-        this.router.navigate(['/tresorerie/operations', res.movement.id]);
+        this.finishSubmission(res.movement.id);
       }
     });
+  }
+
+  private finishSubmission(movementId: string): void {
+    this.attachment.set(null);
+    this.router.navigate(['/tresorerie/operations', movementId]);
   }
 
   private toYmd(d: Date): string {

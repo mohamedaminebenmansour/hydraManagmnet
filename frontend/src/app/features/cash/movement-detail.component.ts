@@ -99,6 +99,23 @@ import {
             <div class="mdf-label">Devise</div>
             <div class="mdf-value">{{ m.currency || 'TND' }}</div>
           </div>
+          @if (m.claimedAmount != null || m.assessedAmount != null) {
+            <!-- TASK 5 — claimed vs assessed (« where every dinar went ») -->
+            <div class="md-field">
+              <div class="mdf-label">Montant demandé</div>
+              <div class="mdf-value">{{ fmt(m.claimedAmount ?? m.amount) }}</div>
+            </div>
+            <div class="md-field">
+              <div class="mdf-label">Montant à payer</div>
+              <div class="mdf-value assessed">{{ fmt(m.assessedAmount ?? m.amount) }}</div>
+            </div>
+            @if (m.varianceReason) {
+              <div class="md-field md-field-wide">
+                <div class="mdf-label">Motif de l'écart</div>
+                <div class="mdf-value">{{ m.varianceReason }}</div>
+              </div>
+            }
+          }
           <div class="md-field md-field-wide">
             <div class="mdf-label">Note</div>
             <div class="mdf-value">{{ m.note || '—' }}</div>

@@ -90,10 +90,15 @@
       }
     </div>
     <div class="cash-strip-actions">
-      <button pButton label="Encaisser" icon="pi pi-arrow-circle-down" severity="success" size="small"
-              (click)="receiveToProjectPot()"></button>
-      <button pButton label="Payer" icon="pi pi-arrow-circle-up" severity="danger" size="small"
-              [outlined]="true" (click)="payFromProjectPot()"></button>
+      <!-- TASK 5 — « Payer » is THE primary money action of the chantier -->
+      @if (projectPot() && canPay()) {
+        <button pButton label="Payer" icon="pi pi-arrow-circle-up" severity="warn"
+                (click)="payFromProjectPot()"></button>
+      }
+      @if (canReceive()) {
+        <button pButton label="Encaisser" icon="pi pi-arrow-circle-down" severity="success" size="small"
+                [outlined]="true" (click)="receiveToProjectPot()"></button>
+      }
       @if (projectPot()) {
         <button pButton icon="pi pi-angle-right" label="Voir la caisse" severity="info"
                 size="small" [text]="true" (click)="viewProjectPot()"></button>
