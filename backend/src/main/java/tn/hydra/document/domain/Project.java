@@ -36,7 +36,11 @@ public class Project {
     private LocalDate startDate;
     private LocalDate endDate;
 
-    @Enumerated(EnumType.STRING)
+    /**
+     * Lenient via {@link ProjectTypeConverter}: unknown legacy DB values read
+     * as AUTRE (WARN log) instead of "No enum constant" → HTTP 500.
+     */
+    @Convert(converter = ProjectTypeConverter.class)
     private ProjectType projectType;
     private String description;
     private BigDecimal contractValue;

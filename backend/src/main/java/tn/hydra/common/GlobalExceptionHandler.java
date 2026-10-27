@@ -178,8 +178,12 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(Exception.class)
     public ResponseEntity<ApiError> generic(Exception e, HttpServletRequest request) {
         Throwable root = rootCause(e);
+        // request can be null when the handler is invoked programmatically
+        // (unit tests, rethrown async errors) — never NPE out of the 500 path.
+        String method = request == null ? "?" : request.getMethod();
+        String uri = request == null ? "?" : request.getRequestURI();
         log.error("Unhandled exception on {} {} — type={} rootType={} rootMsg={}",
-                request.getMethod(), request.getRequestURI(),
+                method, uri,
                 e.getClass().getSimpleName(),
                 root.getClass().getSimpleName(),
                 root.getMessage(), e);

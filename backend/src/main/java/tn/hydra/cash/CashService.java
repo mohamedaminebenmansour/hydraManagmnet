@@ -17,8 +17,10 @@ import java.sql.Date;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 
 /**
@@ -121,7 +123,9 @@ public class CashService {
                                     String label, String note, String status,
                                     UUID processInstanceId, UUID createdBy, Instant createdAt,
                                     UUID postedBy, Instant postedAt,
-                                    UUID voidedBy, Instant voidedAt, String voidReason) {}
+                                    UUID voidedBy, Instant voidedAt, String voidReason,
+                                    BigDecimal claimedAmount, BigDecimal assessedAmount,
+                                    String varianceReason) {}
 
     /**
      * Richer movement response — includes the human-readable names of the
@@ -141,7 +145,8 @@ public class CashService {
             String label, String note, String status,
             UUID processInstanceId, UUID createdBy, Instant createdAt,
             UUID postedBy, String postedByName, Instant postedAt,
-            UUID voidedBy, String voidedByName, Instant voidedAt, String voidReason) {}
+            UUID voidedBy, String voidedByName, Instant voidedAt, String voidReason,
+            BigDecimal claimedAmount, BigDecimal assessedAmount, String varianceReason) {}
 
     /** One event in the movement timeline. */
     public record MovementTimelineEvent(
@@ -149,7 +154,8 @@ public class CashService {
             Instant at,            // event_log.created_at
             UUID userId,           // event_log.user_id (nullable for system-triggered)
             String userName,       // app_user.full_name (nullable)
-            String details         // event_log.details (raw JSON string for the frontend to parse)
+            String details,        // event_log.details (raw JSON string for the frontend to parse)
+            String source           // 'cash_movement' | 'process_instance' | 'process_step'
     ) {}
 
     /** Full timeline view = movement snapshot + ordered events. */
@@ -158,6 +164,9 @@ public class CashService {
             String movementType,
             BigDecimal amount,
             String currency,
+            BigDecimal claimedAmount,
+            BigDecimal assessedAmount,
+            String varianceReason,
             String status,
             String fromPotName,
             String toPotName,
@@ -166,11 +175,21 @@ public class CashService {
             UUID processInstanceId,
             List<MovementTimelineEvent> events) {}
 
+    /**
+     * Create-movement request.
+     * claimed/assessed (TASK 1): when assessedAmount is provided the amount
+     * column is kept IN SYNC with it (amount = assessed — the caisse posts the
+     * assessed amount). claimedAmount alone defaults assessed to the same value.
+     * If claimed != assessed, varianceReason is REQUIRED (service-enforced +
+     * DB check chk_cm_variance_reason).
+     */
     public record CreateMovementRequest(String movementType, BigDecimal amount,
                                          LocalDate movementDate, UUID fromPotId, UUID toPotId,
                                          UUID projectId, UUID partyId,
                                          String label, String note,
-                                         UUID processInstanceId) {}
+                                         UUID processInstanceId,
+                                         BigDecimal claimedAmount, BigDecimal assessedAmount,
+                                         String varianceReason) {}
 
     public record UpdateMovementRequest(String movementType, BigDecimal amount,
                                          LocalDate movementDate, UUID fromPotId, UUID toPotId,
@@ -427,8 +446,21 @@ public class CashService {
     @Transactional
     public MovementResponse createMovement(Authentication auth, CreateMovementRequest req) {
         AppUser me = currentUser(auth);
-        validateMovementInput(req.movementType(), req.amount(), req.movementDate(),
+
+        // ── Claimed vs assessed normalization (TASK 1) ─────────────────
+        // amount is the posting source of truth and stays in sync with
+        // assessed_amount: the caisse always posts the ASSESSED amount.
+        BigDecimal claimed = req.claimedAmount();
+        BigDecimal assessed = req.assessedAmount();
+        String varianceReason = blankToNull(req.varianceReason());
+        if (claimed != null && assessed == null) {
+            assessed = claimed;               // claimed only → no variance
+        }
+        BigDecimal effectiveAmount = assessed != null ? assessed : req.amount();
+
+        validateMovementInput(req.movementType(), effectiveAmount, req.movementDate(),
                 req.fromPotId(), req.toPotId());
+        validateClaimedAssessed(claimed, assessed, varianceReason);
 
         // Resolve project_id: from request, or from PROJECT pot (when from/to is project pot)
         UUID resolvedProjectId = req.projectId();
@@ -453,18 +485,23 @@ public class CashService {
                 insert into cash_movement
                   (id, org_id, movement_type, amount, currency, movement_date,
                    from_pot_id, to_pot_id, project_id, party_id, label, note,
+                   claimed_amount, assessed_amount, variance_reason,
                    status, process_instance_id, created_by, created_at)
-                values (?, ?, ?, ?, 'TND', ?, ?, ?, ?, ?, ?, ?, 'DRAFT', ?, ?, now())
-                """, id, me.getOrgId(), normalizeType(req.movementType()), req.amount(),
+                values (?, ?, ?, ?, 'TND', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'DRAFT', ?, ?, now())
+                """, id, me.getOrgId(), normalizeType(req.movementType()), effectiveAmount,
                 Date.valueOf(req.movementDate()),
                 req.fromPotId(), req.toPotId(), resolvedProjectId, req.partyId(),
                 blankToNull(req.label()), blankToNull(req.note()),
+                claimed, assessed, varianceReason,
                 req.processInstanceId(),
                 me.getId());
 
         audit.log("CASH_MOVEMENT_CREATED", "cash_movement", id,
                 "{\"type\":\"" + normalizeType(req.movementType()) +
-                "\",\"amount\":" + req.amount() +
+                "\",\"amount\":" + effectiveAmount +
+                (claimed != null ? ",\"claimedAmount\":" + claimed : "") +
+                (assessed != null ? ",\"assessedAmount\":" + assessed : "") +
+                (varianceReason != null ? ",\"varianceReason\":\"" + jsonEscape(varianceReason) + "\"" : "") +
                 ",\"status\":\"DRAFT\"}");
 
         return getMovement(auth, id);
@@ -529,6 +566,7 @@ public class CashService {
                        m.project_id,  p.name as project_name,
                        m.party_id,    py.name as party_name, py.type as party_type,
                        m.label, m.note, m.status, m.process_instance_id,
+                       m.claimed_amount, m.assessed_amount, m.variance_reason,
                        m.created_by,  m.created_at,
                        m.posted_by,   pbu.full_name as posted_by_name,  m.posted_at,
                        m.voided_by,   vu.full_name as voided_by_name,   m.voided_at,
@@ -553,10 +591,29 @@ public class CashService {
 
     /**
      * Movement timeline — ordered audit events for this movement.
-     * Events come from event_log WHERE entity_type='cash_movement' AND entity_id=movementId.
-     * Each event has: action, at, userId, userName (resolved via JOIN), details (raw JSON).
      *
-     * Returns events for: CREATED, SUBMITTED, POSTED, VOIDED, REJECTED.
+     * TASK 2 — "Merge event_log + process step completions ordered by time."
+     *
+     * Three event sources are UNIONED (all on event_log, joined to app_user
+     * for the actor name, ordered by created_at asc):
+     *
+     *   (1) Direct cash_movement events — CASH_MOVEMENT_CREATED,
+     *       CASH_MOVEMENT_SUBMITTED, CASH_MOVEMENT_POSTED, CASH_MOVEMENT_VOIDED
+     *       (entity_type='cash_movement', entity_id=movementId).
+     *
+     *   (2) Process-instance lifecycle events for the PAYMENT_APPROVAL workflow
+     *       whose subject is this movement — PROCESS_STARTED, PROCESS_COMPLETED,
+     *       PROCESS_REJECTED, PROCESS_CANCELLED
+     *       (entity_type='process_instance', pi.subject_type='CASH_MOVEMENT',
+     *        pi.subject_id=movementId).
+     *
+     *   (3) Process-step events for every step of that workflow — STEP_STARTED,
+     *       STEP_COMPLETED, STEP_REJECTED — so the owner can see exactly who
+     *       approved what and when (entity_type='process_step_instance', joined
+     *       through process_step_instance → process_instance → subject_id).
+     *
+     * All three queries resolve actor name in the same JOIN, so the merge is
+     * a single SQL round-trip with zero client-side N+1.
      */
     public MovementTimeline getMovementTimeline(Authentication auth, UUID movementId) {
         AppUser me = currentUser(auth);
@@ -568,15 +625,45 @@ public class CashService {
         // Fetch the snapshot fields (pot names, party name, project name)
         MovementDetailResponse snapshot = getMovementDetail(auth, movementId);
 
-        // Fetch all events
+        // Merge: direct movement events + whole-process events + step events.
+        // Each branch carries its own "source" tag so the UI can render
+        // cash vs process rows distinctly if desired.
         List<Map<String, Object>> eventRows = jdbc.queryForList("""
-                select el.action, el.created_at, el.user_id, el.details, u.full_name
+                -- (1) Direct cash_movement events
+                select el.action, el.created_at, el.user_id, u.full_name, el.details,
+                       'cash_movement' as source
                 from event_log el
                 left join app_user u on u.id = el.user_id
-                where el.entity_type = 'cash_movement'
-                  and el.entity_id = ?
-                order by el.created_at asc
-                """, movementId);
+                where el.entity_type = 'cash_movement' and el.entity_id = ?
+
+                union all
+
+                -- (2) Whole-process lifecycle events for the linked workflow
+                select el.action, el.created_at, el.user_id, u.full_name, el.details,
+                       'process_instance' as source
+                from event_log el
+                left join app_user u on u.id = el.user_id
+                join process_instance pi on pi.id = el.entity_id
+                where el.entity_type = 'process_instance'
+                  and pi.subject_type = 'CASH_MOVEMENT'
+                  and pi.subject_id = ?
+
+                union all
+
+                -- (3) Process-step events (STEP_STARTED / STEP_COMPLETED / STEP_REJECTED)
+                -- joined through process_step_instance (instance_id) → process_instance (subject)
+                select el.action, el.created_at, el.user_id, u.full_name, el.details,
+                       'process_step' as source
+                from event_log el
+                left join app_user u on u.id = el.user_id
+                join process_step_instance psi on psi.id = el.entity_id
+                join process_instance pi on pi.id = psi.instance_id
+                where el.entity_type = 'process_step_instance'
+                  and pi.subject_type = 'CASH_MOVEMENT'
+                  and pi.subject_id = ?
+
+                order by created_at asc
+                """, movementId, movementId, movementId);
 
         List<MovementTimelineEvent> events = eventRows.stream()
                 .map(r -> new MovementTimelineEvent(
@@ -584,7 +671,8 @@ public class CashService {
                         toInstant(r.get("created_at")),
                         (UUID) r.get("user_id"),
                         (String) r.get("full_name"),
-                        r.get("details") == null ? null : r.get("details").toString()
+                        r.get("details") == null ? null : r.get("details").toString(),
+                        (String) r.get("source")
                 ))
                 .toList();
 
@@ -593,6 +681,9 @@ public class CashService {
                 snapshot.movementType(),
                 snapshot.amount(),
                 snapshot.currency(),
+                snapshot.claimedAmount(),
+                snapshot.assessedAmount(),
+                snapshot.varianceReason(),
                 snapshot.status(),
                 snapshot.fromPotName(),
                 snapshot.toPotName(),
@@ -623,7 +714,8 @@ public class CashService {
                 select id, org_id, movement_type, amount, currency, movement_date,
                        from_pot_id, to_pot_id, project_id, party_id, label, note, status,
                        process_instance_id, created_by, created_at, posted_by, posted_at,
-                       voided_by, voided_at, void_reason
+                       voided_by, voided_at, void_reason,
+                       claimed_amount, assessed_amount, variance_reason
                 from cash_movement
                 where org_id = ?
                 """);
@@ -656,20 +748,30 @@ public class CashService {
         }
         sql.append(" order by movement_date desc, created_at desc");
 
-        // Filter out movements on PROJECT pots the caller can't access
-        // (for non-owner). Done in Java to keep SQL simple.
+        // Filter out movements on PROJECT pots the caller can't access (non-owner).
+        // Membership is resolved with ONE query up front — never per row (no N+1).
+        Set<UUID> accessible = accessibleProjectIds(me);
         return jdbc.queryForList(sql.toString(), args.toArray())
                 .stream()
                 .map(CashService::toMovementResponse)
-                .filter(m -> {
-                    if (Boolean.TRUE.equals(me.getIsOwner())) return true;
-                    if (m.projectId() == null) return true;
-                    Integer cnt = jdbc.queryForObject(
-                            "select count(*) from project_member where project_id = ? and user_id = ?",
-                            Integer.class, m.projectId(), me.getId());
-                    return cnt != null && cnt > 0;
-                })
+                .filter(m -> m.projectId() == null || accessible.contains(m.projectId()))
                 .toList();
+    }
+
+    /**
+     * Project ids the caller may see. Owner → all project ids of the org
+     * (also one query). Non-owner → projects they are a member of.
+     * Called ONCE per list request so the row filter stays O(1) per row.
+     */
+    private Set<UUID> accessibleProjectIds(AppUser me) {
+        if (Boolean.TRUE.equals(me.getIsOwner())) {
+            return new HashSet<>(jdbc.queryForList(
+                    "select id from project where org_id = ?",
+                    UUID.class, me.getOrgId()));
+        }
+        return new HashSet<>(jdbc.queryForList(
+                "select project_id from project_member where user_id = ?",
+                UUID.class, me.getId()));
     }
 
     /**
@@ -691,6 +793,7 @@ public class CashService {
                        m.project_id,  p.name as project_name,
                        m.party_id,    py.name as party_name, py.type as party_type,
                        m.label, m.note, m.status, m.process_instance_id,
+                       m.claimed_amount, m.assessed_amount, m.variance_reason,
                        m.created_by,  m.created_at,
                        m.posted_by,   pbu.full_name as posted_by_name,  m.posted_at,
                        m.voided_by,   vu.full_name as voided_by_name,   m.voided_at,
@@ -733,17 +836,12 @@ public class CashService {
         }
         sql.append(" order by m.movement_date desc, m.created_at desc");
 
+        // Same no-N+1 project filter as listMovements — one membership query, then in-memory.
+        Set<UUID> accessible = accessibleProjectIds(me);
         return jdbc.queryForList(sql.toString(), args.toArray())
                 .stream()
                 .map(CashService::toMovementDetailResponse)
-                .filter(m -> {
-                    if (Boolean.TRUE.equals(me.getIsOwner())) return true;
-                    if (m.projectId() == null) return true;
-                    Integer cnt = jdbc.queryForObject(
-                            "select count(*) from project_member where project_id = ? and user_id = ?",
-                            Integer.class, m.projectId(), me.getId());
-                    return cnt != null && cnt > 0;
-                })
+                .filter(m -> m.projectId() == null || accessible.contains(m.projectId()))
                 .toList();
     }
 
@@ -779,6 +877,8 @@ public class CashService {
         BigDecimal amount = (BigDecimal) row.get("amount");
         UUID projectId = (UUID) row.get("project_id");
         UUID processInstanceId = (UUID) row.get("process_instance_id");
+        BigDecimal claimed = (BigDecimal) row.get("claimed_amount");
+        BigDecimal assessedAmt = (BigDecimal) row.get("assessed_amount");
 
         // Naked-OUT guard: OUT must come from a completed workflow (or owner force)
         if ("OUT".equals(type)) {
@@ -820,6 +920,8 @@ public class CashService {
 
         audit.log("CASH_MOVEMENT_POSTED", "cash_movement", id,
                 "{\"type\":\"" + type + "\",\"amount\":" + amount +
+                (claimed != null ? ",\"claimedAmount\":" + claimed : "") +
+                (assessedAmt != null ? ",\"assessedAmount\":" + assessedAmt : "") +
                 (fromPotId != null ? ",\"fromPot\":\"" + fromPotId + "\"" : "") +
                 (toPotId != null ? ",\"toPot\":\"" + toPotId + "\"" : "") +
                 (force ? ",\"force\":true" : "") +
@@ -916,6 +1018,8 @@ public class CashService {
         UUID toPotId = (UUID) row.get("to_pot_id");
         BigDecimal amount = (BigDecimal) row.get("amount");
         String currency = (String) row.get("currency");
+        BigDecimal claimed = (BigDecimal) row.get("claimed_amount");
+        BigDecimal assessedAmt = (BigDecimal) row.get("assessed_amount");
 
         // 5. Negative balance guard for OUT / TRANSFER (same as manual post)
         if ("OUT".equals(type) || "TRANSFER".equals(type)) {
@@ -937,6 +1041,8 @@ public class CashService {
         // 7. Audit (system-triggered, no auth context — use logAs)
         audit.logAs(orgId, postedBy, "CASH_MOVEMENT_POSTED", "cash_movement", movementId,
                 "{\"type\":\"" + type + "\",\"amount\":" + amount +
+                (claimed != null ? ",\"claimedAmount\":" + claimed : "") +
+                (assessedAmt != null ? ",\"assessedAmount\":" + assessedAmt : "") +
                 (fromPotId != null ? ",\"fromPot\":\"" + fromPotId + "\"" : "") +
                 (toPotId != null ? ",\"toPot\":\"" + toPotId + "\"" : "") +
                 ",\"autoPostedViaProcess\":true}");
@@ -1040,6 +1146,31 @@ public class CashService {
         }
     }
 
+    /**
+     * Claimed vs assessed rules (TASK 1):
+     *   - assessed, when present, must be strictly positive;
+     *   - claimed, when present, must be strictly positive;
+     *   - claimed present AND assessed != claimed  →  variance_reason REQUIRED.
+     *     (Mirrors DB constraint chk_cm_variance_reason — service gives the
+     *     friendly French 400, the DB is the safety net.)
+     */
+    private void validateClaimedAssessed(BigDecimal claimed, BigDecimal assessed, String varianceReason) {
+        if (assessed != null && assessed.signum() <= 0) {
+            throw new BadRequestException("INVALID_ASSESSED_AMOUNT",
+                    "Le montant évalué doit être positif");
+        }
+        if (claimed != null && claimed.signum() <= 0) {
+            throw new BadRequestException("INVALID_CLAIMED_AMOUNT",
+                    "Le montant réclamé doit être positif");
+        }
+        if (claimed != null && assessed != null && claimed.compareTo(assessed) != 0
+                && (varianceReason == null || varianceReason.isBlank())) {
+            throw new BadRequestException("VARIANCE_REASON_REQUIRED",
+                    "Un motif d'écart est obligatoire quand le montant évalué " +
+                    "diffère du montant réclamé");
+        }
+    }
+
     private void validatePotInOrg(UUID potId, UUID orgId) {
         if (potId == null) return;
         Integer cnt = jdbc.queryForObject(
@@ -1069,7 +1200,8 @@ public class CashService {
                 select id, org_id, movement_type, amount, currency, movement_date,
                        from_pot_id, to_pot_id, project_id, party_id, label, note, status,
                        process_instance_id, created_by, created_at, posted_by, posted_at,
-                       voided_by, voided_at, void_reason
+                       voided_by, voided_at, void_reason,
+                       claimed_amount, assessed_amount, variance_reason
                 from cash_movement
                 where id = ? and org_id = ?
                 for update
@@ -1087,7 +1219,8 @@ public class CashService {
                 select id, org_id, movement_type, amount, currency, movement_date,
                        from_pot_id, to_pot_id, project_id, party_id, label, note, status,
                        process_instance_id, created_by, created_at, posted_by, posted_at,
-                       voided_by, voided_at, void_reason
+                       voided_by, voided_at, void_reason,
+                       claimed_amount, assessed_amount, variance_reason
                 from cash_movement
                 where id = ? and org_id = ?
                 """, id, orgId);
@@ -1133,7 +1266,10 @@ public class CashService {
                 toInstant(row.get("posted_at")),
                 (UUID) row.get("voided_by"),
                 toInstant(row.get("voided_at")),
-                (String) row.get("void_reason")
+                (String) row.get("void_reason"),
+                (BigDecimal) row.get("claimed_amount"),
+                (BigDecimal) row.get("assessed_amount"),
+                (String) row.get("variance_reason")
         );
     }
 
@@ -1171,7 +1307,10 @@ public class CashService {
                 (UUID) row.get("voided_by"),
                 (String) row.get("voided_by_name"),
                 toInstant(row.get("voided_at")),
-                (String) row.get("void_reason")
+                (String) row.get("void_reason"),
+                (BigDecimal) row.get("claimed_amount"),
+                (BigDecimal) row.get("assessed_amount"),
+                (String) row.get("variance_reason")
         );
     }
 

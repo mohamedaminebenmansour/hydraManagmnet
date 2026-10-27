@@ -101,7 +101,12 @@ public class ProcessService {
             UUID assigneeUserId,
             String assigneeName,
             boolean requiresAttachment,
-            Instant startedAt) {}
+            Instant startedAt,
+            // Subject display info (cash payments): label + amount when the
+            // subject is a CASH_MOVEMENT — filled via LEFT JOIN, null otherwise.
+            // Lets "Mes tâches" show "Paiement — 2 500,000 TND" without N+1.
+            String subjectLabel,
+            java.math.BigDecimal subjectAmount) {}
 
     /** Summary row for the project chantier screen. */
     public record ProcessInstanceSummary(
@@ -805,12 +810,15 @@ public class ProcessService {
                        psi.step_key, psi.name as step_name, psi.status,
                        psi.assignee_role, psi.assignee_user_id,
                        u.full_name as assignee_name,
-                       psi.requires_attachment, psi.started_at
+                       psi.requires_attachment, psi.started_at,
+                       cm.label as subject_label, cm.amount as subject_amount
                 from process_step_instance psi
                 join process_instance pi on pi.id = psi.instance_id
                 join project p on p.id = pi.project_id
                 join process_template pt on pt.id = pi.template_id
                 left join app_user u on u.id = psi.assignee_user_id
+                left join cash_movement cm
+                       on pi.subject_type = 'CASH_MOVEMENT' and cm.id = pi.subject_id
                 where psi.status = 'PENDING'
                   and pi.status = 'RUNNING'
                   and pi.org_id = ?
@@ -845,7 +853,9 @@ public class ProcessService {
                         (UUID) rs.getObject("assignee_user_id"),
                         rs.getString("assignee_name"),
                         rs.getBoolean("requires_attachment"),
-                        toInstant(rs.getTimestamp("started_at"))
+                        toInstant(rs.getTimestamp("started_at")),
+                        rs.getString("subject_label"),
+                        rs.getBigDecimal("subject_amount")
                 ),
                 orgId, isOwner, me.getId(), me.getId());
     }

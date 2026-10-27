@@ -9,6 +9,7 @@ import org.springframework.security.core.Authentication;
 import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import tn.hydra.audit.EventLogService;
 import tn.hydra.common.BusinessRuleException;
+import tn.hydra.exception.ResourceNotFoundException;
 import tn.hydra.user.AppUser;
 import tn.hydra.user.AppUserRepository;
 
@@ -72,6 +73,8 @@ class TicketServiceTest {
         row.put("created_by_name", "Moi");
         row.put("resolved_at", null);
         row.put("resolved_by", null);
+        row.put("document_id", null);
+        row.put("process_instance_id", null);
         return row;
     }
 
@@ -106,13 +109,13 @@ class TicketServiceTest {
     }
 
     @Test
-    void create_insertsOuvertTicket_andAudits() {
+    void create_insertsDraftTicket_andAudits() {
         when(jdbc.queryForList("select status from project where id = ? and org_id = ?",
                 PROJECT_ID, ORG)).thenReturn(List.of(Map.of("status", "ACTIF")));
         when(jdbc.queryForObject(contains("insert into ticket"), eq(UUID.class),
                 any(), any(), any(), any(), any(), any(), any(), any(), any(), any()))
                 .thenReturn(TICKET_ID);
-        var createdRow = ticketRow("OUVERT", null, PROJECT_ID);
+        var createdRow = ticketRow("DRAFT", null, PROJECT_ID);
         createdRow.put("priority", "HIGH");
         when(jdbc.queryForList(contains("from ticket t"), eq(TICKET_ID), eq(ORG)))
                 .thenReturn(List.of(createdRow));
@@ -120,9 +123,10 @@ class TicketServiceTest {
         TicketService.TicketResponse created = service.create(auth, "Fuite", "regard",
                 PROJECT_ID, null, "HIGH", LocalDate.now(), LocalDate.now().plusDays(2), null);
 
-        assertThat(created.status()).isEqualTo("OUVERT");
+        assertThat(created.status()).isEqualTo("DRAFT");
         assertThat(created.priority()).isEqualTo("HIGH");
-        verify(jdbc).queryForObject(contains("'OUVERT'"), eq(UUID.class),
+        assertThat(created.processInstanceId()).isNull();
+        verify(jdbc).queryForObject(contains("'DRAFT'"), eq(UUID.class),
                 eq(ORG), eq("Fuite"), eq("regard"), eq("HIGH"),
                 eq(PROJECT_ID), isNull(), any(LocalDate.class), any(LocalDate.class), eq(me.getId()), isNull());
 
@@ -154,7 +158,7 @@ class TicketServiceTest {
     @Test
     void list_alwaysScopesToOrg_andAddsMineFilter() {
         when(jdbc.queryForList(anyString(), any(Object[].class)))
-                .thenReturn(List.of(ticketRow("OUVERT", null, PROJECT_ID)));
+                .thenReturn(List.of(ticketRow("DRAFT", null, PROJECT_ID)));
 
         service.list(auth, null, null, null, null, true);
 
@@ -168,24 +172,24 @@ class TicketServiceTest {
     void list_appliesStatusAndPriorityFilters() {
         when(jdbc.queryForList(anyString(), any(Object[].class))).thenReturn(List.of());
 
-        service.list(auth, null, null, "OUVERT", "HIGH", false);
+        service.list(auth, null, null, "DRAFT", "HIGH", false);
 
         ArgumentCaptor<Object[]> captor = ArgumentCaptor.forClass(Object[].class);
         verify(jdbc).queryForList(contains("and t.status = ?"), captor.capture());
-        assertThat(captor.getValue()).contains("OUVERT");
+        assertThat(captor.getValue()).contains("DRAFT");
         assertThat(captor.getValue()).contains("HIGH");
     }
 
     // ---- update ----
 
     @Test
-    void update_returnsNullForForeignTicket() {
+    void update_rejectsForeignTicketWith404() {
         when(jdbc.queryForList(contains("from ticket where id = ? and org_id = ?"),
                 eq(TICKET_ID), eq(ORG))).thenReturn(List.of());
 
         assertThatThrownBy(() -> service.update(auth, TICKET_ID, "Fuite", null,
                 null, null, null, null, null, null))
-                .isInstanceOf(BusinessRuleException.class)
+                .isInstanceOf(ResourceNotFoundException.class)
                 .hasMessageContaining("Ticket");
     }
 
@@ -193,9 +197,9 @@ class TicketServiceTest {
     void update_onlyChangesProvidedFields() {
         when(jdbc.queryForList(contains("from ticket where id = ? and org_id = ?"),
                 eq(TICKET_ID), eq(ORG)))
-                .thenReturn(List.of(ticketRow("OUVERT", null, PROJECT_ID)));
+                .thenReturn(List.of(ticketRow("DRAFT", null, PROJECT_ID)));
         when(jdbc.queryForList(contains("from ticket t"), eq(TICKET_ID), eq(ORG)))
-                .thenReturn(List.of(ticketRow("OUVERT", null, PROJECT_ID)));
+                .thenReturn(List.of(ticketRow("DRAFT", null, PROJECT_ID)));
 
         service.update(auth, TICKET_ID, "Nouveau titre", null,
                 null, null, "LOW", null, null, null);
@@ -205,82 +209,78 @@ class TicketServiceTest {
         verify(audit).log(eq("TICKET_UPDATED"), eq("ticket"), eq(TICKET_ID), isNull());
     }
 
-    // ---- transitions ----
+    // ---- close (simple task semantics — no workflow walk, no process) ----
 
     private void stubTicket(String status, UUID assignedTo) {
         when(jdbc.queryForList(contains("from ticket where id = ? and org_id = ?"),
                 eq(TICKET_ID), eq(ORG)))
                 .thenReturn(List.of(ticketRow(status, assignedTo, PROJECT_ID)));
+        when(jdbc.queryForList(contains("from ticket t"), eq(TICKET_ID), eq(ORG)))
+                .thenReturn(List.of(ticketRow(status, assignedTo, PROJECT_ID)));
     }
 
     @Test
-    void start_movesOuvertToEnCours_forAssigneeWithoutWritePerm() {
-        stubTicket("OUVERT", me.getId());
+    void close_closesFromAnyNonTerminalStatus_andAudits() {
+        stubTicket("DRAFT", OTHER_USER);
 
-        service.start(auth, TICKET_ID);
+        TicketService.TicketResponse closed = service.close(writer, TICKET_ID);
 
-        verify(jdbc).update(contains("set status = ?, updated_at = now()"),
-                eq("EN_COURS"), eq(TICKET_ID), eq(ORG));
-        verify(audit).log(eq("TICKET_STATUS_CHANGED"), eq("ticket"), eq(TICKET_ID), contains("EN_COURS"));
+        assertThat(closed.status()).isEqualTo("DRAFT"); // row stub unchanged; SQL does the update
+        verify(jdbc).update(contains("status = 'AS_BUILT', resolved_at = now(), resolved_by = ?"),
+                eq(me.getId()), eq(TICKET_ID), eq(ORG));
+        verify(audit).log(eq("TICKET_CLOSED"), eq("ticket"), eq(TICKET_ID),
+                contains("\"from\":\"DRAFT\""));
     }
 
     @Test
-    void start_rejectsNonAssigneeWithoutWritePerm() {
-        stubTicket("OUVERT", OTHER_USER);
+    void close_rejectsAlreadyClosedTicket() {
+        stubTicket("AS_BUILT", me.getId());
 
-        assertThatThrownBy(() -> service.start(auth, TICKET_ID))
+        assertThatThrownBy(() -> service.close(writer, TICKET_ID))
                 .isInstanceOf(BusinessRuleException.class)
-                .hasMessageContaining("assigné");
+                .hasMessageContaining("clôturé");
         verify(jdbc, never()).update(contains("update ticket"), any(), any(), any(), any());
     }
 
     @Test
-    void start_allowedForWriterEvenWhenAssignedToSomeoneElse() {
-        stubTicket("OUVERT", OTHER_USER);
+    void close_rejectsForeignTicketWith404() {
+        when(jdbc.queryForList(contains("from ticket where id = ? and org_id = ?"),
+                eq(TICKET_ID), eq(ORG))).thenReturn(List.of());
 
-        service.start(writer, TICKET_ID);
-
-        verify(jdbc).update(contains("set status = ?"), eq("EN_COURS"), eq(TICKET_ID), eq(ORG));
+        assertThatThrownBy(() -> service.close(writer, TICKET_ID))
+                .isInstanceOf(ResourceNotFoundException.class)
+                .hasMessageContaining("Ticket");
+        verifyNoInteractions(audit);
     }
 
+    // ---- workflow transitions ----
+
     @Test
-    void illegalTransitionsAreRejected() {
-        stubTicket("RESOLU", me.getId());
-        assertThatThrownBy(() -> service.start(auth, TICKET_ID))
+    void setStatus_rejectsIllegalTransition() {
+        stubTicket("DRAFT", me.getId());
+
+        assertThatThrownBy(() -> service.setStatus(auth, TICKET_ID, "AS_BUILT"))
                 .isInstanceOf(BusinessRuleException.class)
                 .hasMessageContaining("Transition");
         verify(jdbc, never()).update(contains("update ticket"), any(), any(), any(), any());
     }
 
     @Test
-    void wait_andResume_toggleBetweenEnCoursAndEnAttente() {
-        stubTicket("EN_COURS", me.getId());
-        service.wait_(auth, TICKET_ID);
-        verify(jdbc).update(contains("update ticket"), eq("EN_ATTENTE"), eq(TICKET_ID), eq(ORG));
+    void setStatus_rejectsUnknownStatus() {
+        stubTicket("DRAFT", me.getId());
 
-        stubTicket("EN_ATTENTE", me.getId());
-        service.resume(auth, TICKET_ID);
-        verify(jdbc).update(contains("update ticket"), eq("EN_COURS"), eq(TICKET_ID), eq(ORG));
+        assertThatThrownBy(() -> service.setStatus(auth, TICKET_ID, "OUVERT"))
+                .isInstanceOf(BusinessRuleException.class)
+                .hasMessageContaining("Statut inconnu");
     }
 
     @Test
-    void close_setsResolvedStampAndAuditsTICKET_CLOSED() {
-        stubTicket("EN_ATTENTE", OTHER_USER);
-
-        service.close(writer, TICKET_ID);
-
-        verify(jdbc).update(contains("resolved_at = now(), resolved_by = ?"),
-                eq("RESOLU"), eq(me.getId()), eq(TICKET_ID), eq(ORG));
-        verify(audit).log(eq("TICKET_CLOSED"), eq("ticket"), eq(TICKET_ID), any());
-    }
-
-    @Test
-    void transitions_rejectForeignTicket() {
+    void transitions_rejectForeignTicketWith404() {
         when(jdbc.queryForList(contains("from ticket where id = ? and org_id = ?"),
                 eq(TICKET_ID), eq(ORG))).thenReturn(List.of());
 
-        assertThatThrownBy(() -> service.start(auth, TICKET_ID))
-                .isInstanceOf(BusinessRuleException.class)
+        assertThatThrownBy(() -> service.availableTransitions(auth, TICKET_ID))
+                .isInstanceOf(ResourceNotFoundException.class)
                 .hasMessageContaining("Ticket");
         verifyNoInteractions(audit);
     }

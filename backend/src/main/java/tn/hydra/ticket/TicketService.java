@@ -6,6 +6,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import tn.hydra.audit.EventLogService;
 import tn.hydra.common.BusinessRuleException;
+import tn.hydra.exception.ResourceNotFoundException;
 import tn.hydra.user.AppUser;
 import tn.hydra.user.AppUserRepository;
 
@@ -34,7 +35,7 @@ public class TicketService {
                                  LocalDate startAt, LocalDate dueAt,
                                  Instant createdAt, UUID createdById, String createdByName,
                                  Instant resolvedAt, UUID resolvedById,
-                                 UUID documentId) {}
+                                 UUID documentId, UUID processInstanceId) {}
 
     private static final String SELECT_SQL = """
             select t.id, t.title, t.description, t.status, t.priority,
@@ -43,7 +44,7 @@ public class TicketService {
                    t.start_at, t.due_at,
                    t.created_at, t.created_by, cu.full_name as created_by_name,
                    t.resolved_at, t.resolved_by,
-                   t.document_id
+                   t.document_id, t.process_instance_id
             from ticket t
             left join project p on p.id = t.project_id
             left join app_user au on au.id = t.assigned_to
@@ -195,59 +196,28 @@ public class TicketService {
                 .allowedTransitions().stream().map(Enum::name).sorted().toList();
     }
 
-    // ══════════════════ 5b. SIMPLE STATUS TRANSITIONS ══════════════════
+    // ══════════════════ 5b. CLOSE (simple task semantics) ══════════════════
 
+    /**
+     * Close a ticket from any non-terminal status (simple task/issue semantics —
+     * no need to walk the full transmittal workflow). Sets the terminal status,
+     * resolved_at and resolved_by. Closing an already-closed ticket is a 409.
+     */
     @Transactional
-    public void start(Authentication auth, UUID id) {
+    public TicketResponse close(Authentication auth, UUID id) {
         AppUser me = users.findByEmail(auth.getName()).orElseThrow();
         Map<String, Object> t = requireTicket(me, id);
         String current = (String) t.get("status");
-        if (!"OUVERT".equals(current))
-            throw new BusinessRuleException("INVALID_STATUS", "Transition non autorisée : " + current + " → OUVERT");
+        if (TicketStatus.AS_BUILT.name().equals(current))
+            throw new BusinessRuleException("ALREADY_CLOSED", "Ce ticket est déjà clôturé");
         jdbc.update("""
-                update ticket set status = 'EN_COURS', updated_at = now()
-                where id = ? and org_id = ?
-                """, id, me.getOrgId());
-        audit.log("TICKET_STATUS_CHANGED", "ticket", id, "{\"from\":\"" + current + "\",\"to\":\"EN_COURS\"}");
-    }
-
-    @Transactional
-    public void wait_(Authentication auth, UUID id) {
-        AppUser me = users.findByEmail(auth.getName()).orElseThrow();
-        Map<String, Object> t = requireTicket(me, id);
-        String current = (String) t.get("status");
-        if (!"EN_COURS".equals(current))
-            throw new BusinessRuleException("INVALID_STATUS", "Transition non autorisée : " + current + " → EN_ATTENTE");
-        jdbc.update("""
-                update ticket set status = 'EN_ATTENTE', updated_at = now()
-                where id = ? and org_id = ?
-                """, id, me.getOrgId());
-        audit.log("TICKET_STATUS_CHANGED", "ticket", id, "{\"from\":\"" + current + "\",\"to\":\"EN_ATTENTE\"}");
-    }
-
-    @Transactional
-    public void resume(Authentication auth, UUID id) {
-        AppUser me = users.findByEmail(auth.getName()).orElseThrow();
-        Map<String, Object> t = requireTicket(me, id);
-        String current = (String) t.get("status");
-        if (!"EN_ATTENTE".equals(current))
-            throw new BusinessRuleException("INVALID_STATUS", "Transition non autorisée : " + current + " → EN_COURS");
-        jdbc.update("""
-                update ticket set status = 'EN_COURS', updated_at = now()
-                where id = ? and org_id = ?
-                """, id, me.getOrgId());
-        audit.log("TICKET_STATUS_CHANGED", "ticket", id, "{\"from\":\"" + current + "\",\"to\":\"EN_COURS\"}");
-    }
-
-    @Transactional
-    public void close(Authentication auth, UUID id) {
-        AppUser me = users.findByEmail(auth.getName()).orElseThrow();
-        Map<String, Object> t = requireTicket(me, id);
-        jdbc.update("""
-                update ticket set status = 'RESOLU', resolved_at = now(), resolved_by = ?, updated_at = now()
+                update ticket set status = 'AS_BUILT', resolved_at = now(), resolved_by = ?,
+                                  updated_at = now()
                 where id = ? and org_id = ?
                 """, me.getId(), id, me.getOrgId());
-        audit.log("TICKET_CLOSED", "ticket", id, null);
+        audit.log("TICKET_CLOSED", "ticket", id,
+                "{\"from\":\"" + current + "\",\"to\":\"AS_BUILT\"}");
+        return get(auth, id);
     }
 
     // ══════════════════ 6. LINKED DOCUMENTS ══════════════════
@@ -268,13 +238,13 @@ public class TicketService {
 
     // ══════════════════ VALIDATION HELPERS ══════════════════
 
-    /** Same-org ticket row or BusinessRuleException(TICKET_NOT_FOUND). */
+    /** Same-org ticket row or ResourceNotFoundException(TICKET_NOT_FOUND → 404 JSON). */
     private Map<String, Object> requireTicket(AppUser me, UUID id) {
         List<Map<String, Object>> rows = jdbc.queryForList(
                 "select id, title, status, project_id, assigned_to from ticket where id = ? and org_id = ?",
                 id, me.getOrgId());
         if (rows.isEmpty())
-            throw new BusinessRuleException("TICKET_NOT_FOUND", "Ticket introuvable");
+            throw new ResourceNotFoundException("TICKET_NOT_FOUND", "Ticket introuvable");
         return rows.get(0);
     }
 
@@ -321,7 +291,8 @@ public class TicketService {
                 (String) r.get("created_by_name"),
                 toInstant(r.get("resolved_at")),
                 (UUID) r.get("resolved_by"),
-                (UUID) r.get("document_id"));
+                (UUID) r.get("document_id"),
+                (UUID) r.get("process_instance_id"));
     }
 
     private static LocalDate toLocalDate(Object v) {

@@ -59,6 +59,15 @@ public class PaymentFacade {
      * Mirrors CreateMovementRequest but pinned to OUT (fromPotId only) —
      * the facade injects movement_type=OUT and processInstanceId=null,
      * then links the process after starting it.
+     *
+     * Claimed vs assessed (TASK 1):
+     *   - claimedAmount  = what the party asked (facture/situation);
+     *   - assessedAmount = what the company accepts to pay — the amount the
+     *     caisse will POST;
+     *   - varianceReason REQUIRED when claimed != assessed (service-enforced,
+     *     DB check chk_cm_variance_reason is the safety net);
+     *   - amount stays accepted for backward compatibility with the B5 short
+     *     form: when claimed/assessed are omitted, amount IS the assessed value.
      */
     public record SubmitPaymentRequest(
             UUID fromPotId,
@@ -67,7 +76,10 @@ public class PaymentFacade {
             UUID projectId,
             UUID partyId,
             String label,
-            String note
+            String note,
+            java.math.BigDecimal claimedAmount,
+            java.math.BigDecimal assessedAmount,
+            String varianceReason
     ) {}
 
     /**
@@ -102,7 +114,7 @@ public class PaymentFacade {
         //     (pot in org, project access, amount > 0, date set, type=OUT)
         CashService.CreateMovementRequest draftReq = new CashService.CreateMovementRequest(
                 "OUT",                          // pinned: OUT for v1
-                req.amount(),
+                req.amount(),                   // legacy fallback — synced to assessed in CashService
                 req.movementDate(),
                 req.fromPotId(),
                 null,                           // toPotId null for OUT
@@ -110,7 +122,10 @@ public class PaymentFacade {
                 req.partyId(),
                 req.label(),
                 req.note(),
-                null                            // processInstanceId set in step (c)
+                null,                           // processInstanceId set in step (c)
+                req.claimedAmount(),
+                req.assessedAmount(),
+                req.varianceReason()
         );
         CashService.MovementResponse movement = cashService.createMovement(auth, draftReq);
 
@@ -139,10 +154,17 @@ public class PaymentFacade {
         cashService.linkProcessInstance(movement.id(), started.id(), me.getOrgId());
 
         // (d) Audit (separate from CASH_MOVEMENT_CREATED emitted by createMovement)
+        //     claimed/assessed/variance are part of the audit story: the owner
+        //     must see WHAT WAS ASKED vs WHAT WAS PAID in the timeline.
+        String variance = movement.varianceReason() == null ? ""
+                : movement.varianceReason().replace("\\", "\\\\").replace("\"", "\\\"");
         audit.log("CASH_MOVEMENT_SUBMITTED", "cash_movement", movement.id(),
                 "{\"processInstance\":\"" + started.id() +
                 "\",\"projectId\":\"" + projectId + "\"" +
                 ",\"amount\":" + movement.amount() +
+                (movement.claimedAmount() != null ? ",\"claimedAmount\":" + movement.claimedAmount() : "") +
+                (movement.assessedAmount() != null ? ",\"assessedAmount\":" + movement.assessedAmount() : "") +
+                (movement.varianceReason() != null ? ",\"varianceReason\":\"" + variance + "\"" : "") +
                 ",\"fromPot\":\"" + movement.fromPotId() + "\"}");
 
         // (e) Return — refetch the movement so processInstanceId is populated

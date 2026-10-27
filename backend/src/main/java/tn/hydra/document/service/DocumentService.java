@@ -73,9 +73,10 @@ public class DocumentService {
     private EntityManager em;
 
     private static final Set<String> ALLOWED_EXTENSIONS = Set.of(
-            "pdf", "doc", "docx", "xls", "xlsx",
-            "png", "jpg", "jpeg", "gif", "webp",
-            "dwg", "dxf", "zip", "txt", "csv"
+            "pdf", "doc", "docx", "xls", "xlsx", "ppt", "pptx", "rtf",
+            "png", "jpg", "jpeg", "gif", "webp", "heic", "heif",
+            "dwg", "dxf", "ifc", "zip", "txt", "csv",
+            "msg", "eml"
     );
 
     public DocumentService(DocumentRepository documents, DocFolderRepository folders,
@@ -111,7 +112,8 @@ public class DocumentService {
         String ext = FilenameBuilder.extension(file.getOriginalFilename());
         if (!ALLOWED_EXTENSIONS.contains(ext.toLowerCase())) {
             throw new BadRequestException("FILE_TYPE_NOT_ALLOWED",
-                    "Type de fichier non autorisé. Formats acceptés : PDF, Word, Excel, images, DWG/DXF, ZIP");
+                    "Type de fichier non autorisé. Formats acceptés : PDF, Word, Excel, PowerPoint, "
+                            + "images (dont photos HEIC), DWG/DXF/IFC, ZIP, TXT/CSV, e-mails .msg/.eml");
         }
 
         // Business rule: the document must live in a folder of a project of the caller's org.

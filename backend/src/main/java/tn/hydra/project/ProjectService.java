@@ -63,7 +63,7 @@ public class ProjectService {
                                   BigDecimal contractValue, String currency,
                                   Integer memberCount, Instant createdAt) {}
 
-    public record ProjectOption(UUID id, String name) {}
+    public record ProjectOption(UUID id, String name, String projectType) {}
 
     public record FolderResponse(UUID id, UUID projectId, UUID parentId,
                                  String code, String name, Integer sortOrder,
@@ -106,21 +106,23 @@ public class ProjectService {
         AppUser me = users.findByEmail(auth.getName()).orElseThrow();
         if (companyWide(auth, me)) {
             return jdbc.queryForList("""
-                    select p.id, p.name from project p
+                    select p.id, p.name, p.project_type from project p
                     where p.org_id = ? and p.status = 'ACTIF'
                     order by p.name
                     """, me.getOrgId()).stream()
-                    .map(r -> new ProjectOption((UUID) r.get("id"), (String) r.get("name")))
+                    .map(r -> new ProjectOption((UUID) r.get("id"), (String) r.get("name"),
+                            (String) r.get("project_type")))
                     .toList();
         }
         return jdbc.queryForList("""
-                select p.id, p.name from project p
+                select p.id, p.name, p.project_type from project p
                 where p.org_id = ? and p.status = 'ACTIF'
                   and exists (select 1 from project_member pm
                               where pm.project_id = p.id and pm.user_id = ?)
                 order by p.name
                 """, me.getOrgId(), me.getId()).stream()
-                .map(r -> new ProjectOption((UUID) r.get("id"), (String) r.get("name")))
+                .map(r -> new ProjectOption((UUID) r.get("id"), (String) r.get("name"),
+                        (String) r.get("project_type")))
                 .toList();
     }
 

@@ -19,6 +19,8 @@ public class Ticket {
     @Column(name = "project_id") private UUID projectId;
     @Column(name = "assigned_to") private UUID assignedTo;
     @Column(name = "document_id") private UUID documentId;
+    /** Optional reference to a process instance (tickets are NOT routed through processes). */
+    @Column(name = "process_instance_id") private UUID processInstanceId;
     @Column(name = "start_at") private LocalDate startAt;
     @Column(name = "due_at") private LocalDate dueAt;
     @Column(name = "created_by") private UUID createdBy;
@@ -36,6 +38,8 @@ public class Ticket {
     public UUID getProjectId() { return projectId; }   public void setProjectId(UUID v) { projectId = v; }
     public UUID getAssignedTo() { return assignedTo; } public void setAssignedTo(UUID v) { assignedTo = v; }
     public UUID getDocumentId() { return documentId; } public void setDocumentId(UUID v) { documentId = v; }
+    public UUID getProcessInstanceId() { return processInstanceId; }
+    public void setProcessInstanceId(UUID v) { processInstanceId = v; }
     public LocalDate getStartAt() { return startAt; }  public void setStartAt(LocalDate v) { startAt = v; }
     public LocalDate getDueAt() { return dueAt; }      public void setDueAt(LocalDate v) { dueAt = v; }
     public UUID getCreatedBy() { return createdBy; }   public void setCreatedBy(UUID v) { createdBy = v; }

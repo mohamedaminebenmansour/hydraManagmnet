@@ -268,6 +268,18 @@ public class DemoDataRunner implements CommandLineRunner {
                 {"bbbbbb00-0000-0000-0000-000000000009", "karim.bouzid@hydra.tn",   "ADMIN"},
                 {"bbbbbb00-0000-0000-0000-000000000009", "ahlem.cherif@hydra.tn",  "ENGINEER"},
                 {"bbbbbb00-0000-0000-0000-000000000009", "fawzi.haddad@hydra.tn",  "ENGINEER"},
+                // FINANCE staff must be a project_member to act on PAYMENT_APPROVAL
+                // steps via the role fallback (project member + business role).
+                // Finance oversees payments on every chantier → MANAGER everywhere.
+                {"bbbbbb00-0000-0000-0000-000000000001", "safa.mtibaa@hydra.tn",   "MANAGER"},
+                {"bbbbbb00-0000-0000-0000-000000000002", "safa.mtibaa@hydra.tn",   "MANAGER"},
+                {"bbbbbb00-0000-0000-0000-000000000003", "safa.mtibaa@hydra.tn",   "MANAGER"},
+                {"bbbbbb00-0000-0000-0000-000000000004", "safa.mtibaa@hydra.tn",   "MANAGER"},
+                {"bbbbbb00-0000-0000-0000-000000000005", "safa.mtibaa@hydra.tn",   "MANAGER"},
+                {"bbbbbb00-0000-0000-0000-000000000006", "safa.mtibaa@hydra.tn",   "MANAGER"},
+                {"bbbbbb00-0000-0000-0000-000000000007", "safa.mtibaa@hydra.tn",   "MANAGER"},
+                {"bbbbbb00-0000-0000-0000-000000000008", "safa.mtibaa@hydra.tn",   "MANAGER"},
+                {"bbbbbb00-0000-0000-0000-000000000009", "safa.mtibaa@hydra.tn",   "MANAGER"},
         };
         for (Object[] m : members) {
             jdbc.update("""

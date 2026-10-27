@@ -56,7 +56,9 @@ class GlobalExceptionHandlerTest {
 
         assertThat(res.getStatusCode()).isEqualTo(HttpStatus.INTERNAL_SERVER_ERROR);
         assertThat(res.getBody().code()).isEqualTo("INTERNAL");
-        assertThat(res.getBody().message()).startsWith("INTERNAL: IllegalStateException");
+        // Message format shipped for actionable Network-tab 500s:
+        // "ExceptionSimpleName — message | root: RootSimpleName — rootMessage"
+        assertThat(res.getBody().message()).startsWith("IllegalStateException");
     }
 
     @Test
