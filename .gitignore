@@ -41,3 +41,6 @@ nohup.out
 *.pid
 backend-run.log
 frontend-run.log
+download/hydra-project.tar.gz
+backend/'
+backend/=
