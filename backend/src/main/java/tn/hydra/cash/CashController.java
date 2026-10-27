@@ -2,10 +2,12 @@ package tn.hydra.cash;
 
 import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.web.multipart.MultipartFile;
 
 import java.time.LocalDate;
 import java.util.List;
@@ -216,5 +218,32 @@ public class CashController {
             @RequestBody CashService.VoidRequest req,
             Authentication auth) {
         return ResponseEntity.ok(svc.voidMovement(auth, id, req));
+    }
+
+    /**
+     * POST /api/cash/movements/{id}/attachment — TASK 3: attach the payment
+     * proof (facture / BL / situation) to a DRAFT movement.
+     *
+     * Multipart form-data:
+     *   file    — required, the proof file (PDF, image, ...)
+     *   title   — required, document title
+     *   docType — optional: FACTURE (default) | SITUATION | BON_LIVRAISON | AUTRE
+     *
+     * The file becomes a real Document in the project's Finance folder (06_FIN)
+     * via DocumentService.upload — same folder upload ACL as the documents API
+     * (folderAccess UPLOAD matrix + project can_upload) — and is linked on
+     * movement.document_id. Only DRAFT movements accept attachments (POSTED is
+     * immutable, VOID is dead → 409 MOVEMENT_NOT_EDITABLE).
+     */
+    @PostMapping(value = "/movements/{id}/attachment", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+    @PreAuthorize("hasAuthority('PERM_CASH_DRAFT')")
+    public ResponseEntity<CashService.MovementDetailResponse> attachDocument(
+            @PathVariable UUID id,
+            @RequestParam("file") MultipartFile file,
+            @RequestParam String title,
+            @RequestParam(required = false) String docType,
+            Authentication auth) {
+        CashService.MovementDetailResponse resp = svc.attachDocument(auth, id, file, title, docType);
+        return ResponseEntity.status(HttpStatus.CREATED).body(resp);
     }
 }

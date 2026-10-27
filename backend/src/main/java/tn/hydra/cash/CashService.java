@@ -5,8 +5,12 @@ import org.springframework.security.core.Authentication;
 import org.springframework.security.core.GrantedAuthority;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.web.multipart.MultipartFile;
 import tn.hydra.audit.EventLogService;
 import tn.hydra.common.BusinessRuleException;
+import tn.hydra.document.domain.DocType;
+import tn.hydra.document.dto.DocumentResponse;
+import tn.hydra.document.service.DocumentService;
 import tn.hydra.exception.BadRequestException;
 import tn.hydra.exception.ResourceNotFoundException;
 import tn.hydra.user.AppUser;
@@ -100,11 +104,14 @@ public class CashService {
     private final JdbcTemplate jdbc;
     private final AppUserRepository users;
     private final EventLogService audit;
+    private final DocumentService documentService;
 
-    public CashService(JdbcTemplate jdbc, AppUserRepository users, EventLogService audit) {
+    public CashService(JdbcTemplate jdbc, AppUserRepository users, EventLogService audit,
+                       DocumentService documentService) {
         this.jdbc = jdbc;
         this.users = users;
         this.audit = audit;
+        this.documentService = documentService;
     }
 
     // ══════════════════════════════════════════════════════════════
@@ -125,7 +132,7 @@ public class CashService {
                                     UUID postedBy, Instant postedAt,
                                     UUID voidedBy, Instant voidedAt, String voidReason,
                                     BigDecimal claimedAmount, BigDecimal assessedAmount,
-                                    String varianceReason) {}
+                                    String varianceReason, UUID documentId) {}
 
     /**
      * Richer movement response — includes the human-readable names of the
@@ -146,7 +153,8 @@ public class CashService {
             UUID processInstanceId, UUID createdBy, Instant createdAt,
             UUID postedBy, String postedByName, Instant postedAt,
             UUID voidedBy, String voidedByName, Instant voidedAt, String voidReason,
-            BigDecimal claimedAmount, BigDecimal assessedAmount, String varianceReason) {}
+            BigDecimal claimedAmount, BigDecimal assessedAmount, String varianceReason,
+            UUID documentId, String documentName) {}
 
     /** One event in the movement timeline. */
     public record MovementTimelineEvent(
@@ -173,6 +181,7 @@ public class CashService {
             String partyName,
             String projectName,
             UUID processInstanceId,
+            UUID documentId, String documentName,
             List<MovementTimelineEvent> events) {}
 
     /**
@@ -567,6 +576,7 @@ public class CashService {
                        m.party_id,    py.name as party_name, py.type as party_type,
                        m.label, m.note, m.status, m.process_instance_id,
                        m.claimed_amount, m.assessed_amount, m.variance_reason,
+                       m.document_id, drv.file_name as document_name,
                        m.created_by,  m.created_at,
                        m.posted_by,   pbu.full_name as posted_by_name,  m.posted_at,
                        m.voided_by,   vu.full_name as voided_by_name,   m.voided_at,
@@ -578,6 +588,13 @@ public class CashService {
                 left join party    py  on py.id  = m.party_id
                 left join app_user pbu on pbu.id = m.posted_by
                 left join app_user vu  on vu.id  = m.voided_by
+                left join document d   on d.id  = m.document_id
+                left join lateral (
+                    select r.file_name from document_revision r
+                    where r.document_id = d.id
+                    order by r.created_at desc
+                    limit 1
+                ) drv on m.document_id is not null
                 where m.id = ? and m.org_id = ?
                 """, id, me.getOrgId());
         if (rows.isEmpty()) {
@@ -690,8 +707,138 @@ public class CashService {
                 snapshot.partyName(),
                 snapshot.projectName(),
                 snapshot.processInstanceId(),
+                snapshot.documentId(),
+                snapshot.documentName(),
                 events
         );
+    }
+
+    // ══════════════════════════════════════════════════════════════
+    //  ATTACHMENT (TASK 3) — payment proof → Document in Finance folder
+    // ══════════════════════════════════════════════════════════════
+
+    /**
+     * Attach a payment proof (facture / BL / situation) to a movement.
+     *
+     * TASK 3 rules:
+     *   - the movement must still be DRAFT. Our ledger statuses are
+     *     DRAFT / POSTED / VOID: a payment waiting for approval is a DRAFT with
+     *     a RUNNING process (there is no separate PENDING status — "PENDING" in
+     *     the spec maps to exactly that DRAFT+RUNNING state). POSTED is
+     *     immutable and VOID is dead → 409, never attach.
+     *   - the file MUST land in the project's Finance folder (06_FIN) as a real
+     *     Document via {@link DocumentService#upload} — never a storage-only
+     *     orphan. The folder is ensured first (created if the project somehow
+     *     lacks it, reusing the V8/V9 template convention).
+     *   - docType restricted to payment-proof values: FACTURE (default),
+     *     SITUATION, BON_LIVRAISON, AUTRE.
+     *   - ACL is exactly the folder upload rules: DocumentService.upload
+     *     enforces folderAccess(UPLOAD) (06_FIN matrix: owner / project admin /
+     *     explicit grants) + project can_upload — same as any upload into the
+     *     Finance folder through the documents API.
+     *   - movement.document_id is set AND the V20 junction
+     *     cash_movement_document is kept in sync (future multi-proof support).
+     *   - audit DOCUMENT_ATTACHED_TO_MOVEMENT with document id + docType.
+     */
+    @Transactional
+    public MovementDetailResponse attachDocument(Authentication auth, UUID movementId,
+                                                 MultipartFile file, String title, String docType) {
+        AppUser me = currentUser(auth);
+
+        // Lock the row: prevents a concurrent post/void between the guard and the link.
+        Map<String, Object> row = fetchMovementForUpdate(movementId, me.getOrgId());
+        String status = (String) row.get("status");
+        if (!"DRAFT".equals(status)) {
+            throw new BusinessRuleException("MOVEMENT_NOT_EDITABLE",
+                    "Impossible de joindre une pièce à un mouvement " + status
+                            + " — seul un mouvement en brouillon (DRAFT) est modifiable");
+        }
+        UUID projectId = (UUID) row.get("project_id");
+        if (projectId == null) {
+            throw new BadRequestException("PROJECT_REQUIRED",
+                    "Le mouvement doit être rattaché à un projet pour y joindre une pièce");
+        }
+        requireProjectAccess(me, projectId);
+        requireCanWrite(auth, me, projectId, "attach-movement-document");
+
+        if (title == null || title.isBlank()) {
+            throw new BadRequestException("REQUIRED_FIELDS", "Le titre de la pièce est obligatoire");
+        }
+
+        // Ensure the project's Finance folder (06_FIN) exists — never orphan files.
+        UUID financeFolderId = ensureFinanceFolder(projectId);
+
+        DocType type = parseAttachmentDocType(docType);
+
+        // Real Document in the Finance folder — DocumentService.upload enforces
+        // the folder upload ACL (folderAccess UPLOAD + project can_upload) and
+        // stores Document + DocumentRevision atomically.
+        DocumentResponse doc = documentService.upload(auth, financeFolderId, title.trim(),
+                type, null, null, null, null, file);
+
+        // Link on the movement (single FK per TASK 3) + keep the V20 junction in sync.
+        jdbc.update("update cash_movement set document_id = ? where id = ?", doc.id(), movementId);
+        jdbc.update("""
+                insert into cash_movement_document (movement_id, document_id)
+                values (?, ?)
+                on conflict (movement_id, document_id) do nothing
+                """, movementId, doc.id());
+
+        audit.log("DOCUMENT_ATTACHED_TO_MOVEMENT", "cash_movement", movementId,
+                "{\"documentId\":\"" + doc.id() + "\"" +
+                ",\"reference\":\"" + jsonEscape(doc.reference()) + "\"" +
+                ",\"docType\":\"" + type.name() + "\"" +
+                ",\"title\":\"" + jsonEscape(title.trim()) + "\"" +
+                ",\"amount\":" + row.get("amount") + "}");
+
+        return getMovementDetail(auth, movementId);
+    }
+
+    /**
+     * Return the project's Finance folder id, creating it if missing.
+     * Preference order: exact template code '06_FIN' → any '06%' code → any
+     * folder literally named 'Finance'. If none exist (very old projects), one
+     * is created with the template convention (code 06_FIN, name Finance,
+     * sort_order 6) so the payment proof always has a home.
+     */
+    private UUID ensureFinanceFolder(UUID projectId) {
+        List<Map<String, Object>> rows = jdbc.queryForList("""
+                select id from doc_folder
+                where project_id = ?
+                  and (code = '06_FIN' or code ilike '06%' or lower(name) = 'finance')
+                order by (code = '06_FIN') desc, sort_order asc, created_at asc
+                limit 1
+                """, projectId);
+        if (!rows.isEmpty()) {
+            return (UUID) rows.get(0).get("id");
+        }
+        // Safety net: create the Finance folder with the V8/V9 template convention.
+        jdbc.queryForObject("""
+                insert into doc_folder (project_id, code, name, sort_order)
+                values (?, '06_FIN', 'Finance', 6)
+                returning id
+                """, UUID.class, projectId);
+        audit.log("FINANCE_FOLDER_CREATED", "project", projectId,
+                "{\"code\":\"06_FIN\",\"name\":\"Finance\"}");
+        return jdbc.queryForObject("""
+                select id from doc_folder
+                where project_id = ? and code = '06_FIN'
+                order by created_at desc limit 1
+                """, UUID.class, projectId);
+    }
+
+    /** Payment-proof docTypes only. Default FACTURE. Unknown → clear French 400. */
+    private static DocType parseAttachmentDocType(String raw) {
+        if (raw == null || raw.isBlank()) return DocType.FACTURE;
+        String t = raw.trim().toUpperCase().replace('-', '_');
+        return switch (t) {
+            case "FACTURE" -> DocType.FACTURE;
+            case "SITUATION" -> DocType.SITUATION;
+            case "BON_LIVRAISON", "BL" -> DocType.BON_LIVRAISON;
+            case "AUTRE", "OTHER" -> DocType.AUTRE;
+            default -> throw new BadRequestException("INVALID_DOC_TYPE",
+                    "Type de pièce invalide: " + raw + " — valeurs acceptées : FACTURE, SITUATION, BON_LIVRAISON, AUTRE");
+        };
     }
 
     /**
@@ -715,7 +862,7 @@ public class CashService {
                        from_pot_id, to_pot_id, project_id, party_id, label, note, status,
                        process_instance_id, created_by, created_at, posted_by, posted_at,
                        voided_by, voided_at, void_reason,
-                       claimed_amount, assessed_amount, variance_reason
+                       claimed_amount, assessed_amount, variance_reason, document_id
                 from cash_movement
                 where org_id = ?
                 """);
@@ -794,6 +941,7 @@ public class CashService {
                        m.party_id,    py.name as party_name, py.type as party_type,
                        m.label, m.note, m.status, m.process_instance_id,
                        m.claimed_amount, m.assessed_amount, m.variance_reason,
+                       m.document_id, d.title as document_name,
                        m.created_by,  m.created_at,
                        m.posted_by,   pbu.full_name as posted_by_name,  m.posted_at,
                        m.voided_by,   vu.full_name as voided_by_name,   m.voided_at,
@@ -805,6 +953,7 @@ public class CashService {
                 left join party    py  on py.id  = m.party_id
                 left join app_user pbu on pbu.id = m.posted_by
                 left join app_user vu  on vu.id  = m.voided_by
+                left join document d   on d.id  = m.document_id
                 where m.org_id = ?
                 """);
         List<Object> args = new ArrayList<>();
@@ -1194,14 +1343,14 @@ public class CashService {
     //  ROW FETCHERS + MAPPERS
     // ══════════════════════════════════════════════════════════════
 
-    /** Fetch one movement row with lock (FOR UPDATE) — for post/void. */
+    /** Fetch one movement row with lock (FOR UPDATE) — for post/void/attach. */
     private Map<String, Object> fetchMovementForUpdate(UUID id, UUID orgId) {
         List<Map<String, Object>> rows = jdbc.queryForList("""
                 select id, org_id, movement_type, amount, currency, movement_date,
                        from_pot_id, to_pot_id, project_id, party_id, label, note, status,
                        process_instance_id, created_by, created_at, posted_by, posted_at,
                        voided_by, voided_at, void_reason,
-                       claimed_amount, assessed_amount, variance_reason
+                       claimed_amount, assessed_amount, variance_reason, document_id
                 from cash_movement
                 where id = ? and org_id = ?
                 for update
@@ -1220,7 +1369,7 @@ public class CashService {
                        from_pot_id, to_pot_id, project_id, party_id, label, note, status,
                        process_instance_id, created_by, created_at, posted_by, posted_at,
                        voided_by, voided_at, void_reason,
-                       claimed_amount, assessed_amount, variance_reason
+                       claimed_amount, assessed_amount, variance_reason, document_id
                 from cash_movement
                 where id = ? and org_id = ?
                 """, id, orgId);
@@ -1269,7 +1418,8 @@ public class CashService {
                 (String) row.get("void_reason"),
                 (BigDecimal) row.get("claimed_amount"),
                 (BigDecimal) row.get("assessed_amount"),
-                (String) row.get("variance_reason")
+                (String) row.get("variance_reason"),
+                (UUID) row.get("document_id")
         );
     }
 
@@ -1310,7 +1460,9 @@ public class CashService {
                 (String) row.get("void_reason"),
                 (BigDecimal) row.get("claimed_amount"),
                 (BigDecimal) row.get("assessed_amount"),
-                (String) row.get("variance_reason")
+                (String) row.get("variance_reason"),
+                (UUID) row.get("document_id"),
+                (String) row.get("document_name")
         );
     }
 

@@ -77,15 +77,50 @@ POST http://localhost:8080/api/processes/{processInstanceId}/steps/{stepInstance
 - **REJECTED** → movement stays **DRAFT**, `process_instance_id` is cleared (editable +
   resubmittable), audit `CASH_MOVEMENT_REJECTED`, **never posted**.
 
-## 3) Read back
+## 3) Attach the payment proof (TASK 3 — facture / BL / situation)
+
+The proof file becomes a **real Document in the project's Finance folder
+(`06_FIN`)** via the documents pipeline — never a storage-only orphan — and is
+linked on `movement.document_id` (junction `cash_movement_document` kept in
+sync). Only **DRAFT** movements accept attachments (POSTED is immutable,
+VOID is dead → 409 `MOVEMENT_NOT_EDITABLE`). ACL is exactly the folder upload
+rules: `folderAccess(UPLOAD)` on the 06_FIN matrix (owner / project admin /
+explicit grants) + project `can_upload`.
 
 ```
-GET /api/cash/movements/{id}           → MovementResponse (claimed/assessed/varianceReason)
-GET /api/cash/movements/{id}/detail    → + pot/party/project display names
-GET /api/cash/movements/{id}/timeline  → snapshot + ordered audit events (claimed vs assessed story)
+POST http://localhost:8080/api/cash/movements/{movementId}/attachment
+X-XSRF-TOKEN: <token>
+Content-Type: multipart/form-data
+
+file    = (binary) facture.pdf          # required
+title   = Facture SOTRAM situation 12   # required
+docType = FACTURE                       # optional: FACTURE (default) | SITUATION | BON_LIVRAISON | AUTRE
 ```
 
-## 4) Forbidden paths (by design)
+Response `201` = the movement **detail** (documentId + documentName filled):
+
+```json
+{ "id": "…", "status": "DRAFT", "amount": 2500.000,
+  "documentId": "0fc8f5c6-…", "documentName": "PRJ-…_FACTURE_…_Rev.0.pdf", … }
+```
+
+Errors: `400 REQUIRED_FIELDS` (no title/file), `400 INVALID_DOC_TYPE`,
+`400 PROJECT_REQUIRED` (movement not tied to a project), `403` folder ACL,
+`404 MOVEMENT_NOT_FOUND`, `409 MOVEMENT_NOT_EDITABLE` (not DRAFT).
+Audit: `DOCUMENT_ATTACHED_TO_MOVEMENT` (visible on the movement timeline).
+
+The document then appears both on the movement (detail + timeline) and under
+the project documents in the **Finance** folder (doc module screens).
+
+## 4) Read back
+
+```
+GET /api/cash/movements/{id}           → MovementResponse (claimed/assessed/varianceReason, documentId)
+GET /api/cash/movements/{id}/detail    → + pot/party/project display names + documentId/documentName
+GET /api/cash/movements/{id}/timeline  → snapshot + ordered audit events (claimed vs assessed + attachment story)
+```
+
+## 5) Forbidden paths (by design)
 
 - `POST /api/cash/movements` with `movementType: OUT` → created DRAFT only;
   posting it via `POST /api/cash/movements/{id}/post` returns
@@ -93,8 +128,12 @@ GET /api/cash/movements/{id}/timeline  → snapshot + ordered audit events (clai
   (owner-only `?force=true` escape hatch, default off).
 - POSTED movements are immutable: money corrections = `VOID` with reason + new movement.
 
-## 5) E2E script
+## 6) E2E scripts
 
-`scripts/payment-e2e.sh` (21 checks) covers: variance rule, assessed ≤ 0,
-legacy back-compat, reject-never-posts, complete-posts-once (single audit event,
-pot debited by exactly the assessed amount), JSON responses and the DB safety net.
+- `scripts/payment-e2e.sh` (21 checks) covers: variance rule, assessed ≤ 0,
+  legacy back-compat, reject-never-posts, complete-posts-once (single audit event,
+  pot debited by exactly the assessed amount), JSON responses and the DB safety net.
+- `scripts/task3-attachment-e2e.sh` (6 checks) covers: attach → 201 with
+  documentId/documentName, document listed in the Finance (06_FIN) folder,
+  409 on POSTED, 400 PROJECT_REQUIRED, 400 INVALID_DOC_TYPE,
+  DOCUMENT_ATTACHED_TO_MOVEMENT on the timeline.
