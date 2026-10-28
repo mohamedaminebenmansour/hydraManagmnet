@@ -18,6 +18,7 @@ import {
   UpdateStepBody,
   RoleAssignee, RoleNeeded, UpsertRoleAssigneesBody,
   mapRoleAssignee, mapRoleNeeded,
+  ApprovalDesk, mapApprovalDesk,
 } from '@app/core/models/process.model';
 
 import { MessageService } from 'primeng/api';
@@ -390,6 +391,35 @@ export class ProcessService {
             detail: err?.error?.message ?? 'Impossible de supprimer l\u2019affectation',
           });
           return of(false);
+        })
+      );
+  }
+
+  // ══════════════════════════════════════════════════════════════
+  //  TASK 1 (backend) — APPROVAL DESK
+  //  Single-payload read for an approver to decide on a CASH_MOVEMENT
+  //  payment step. One round-trip, no N+1.
+  // ══════════════════════════════════════════════════════════════
+
+  /**
+   * GET /api/process/steps/{stepInstanceId}/approval-desk — full dossier
+   * payload: movement details (assessed/claimed/variance, paymentMode,
+   * voucher, nature), linked entity names (project/party/pot/document),
+   * flags (canComplete/canReject/requiresAttachment/hasAttachment), and a
+   * mini-timeline of previous steps.
+   */
+  getApprovalDesk(stepInstanceId: string): Observable<ApprovalDesk | null> {
+    return this.http
+      .get<AnyRaw>(`/api/process/steps/${stepInstanceId}/approval-desk`)
+      .pipe(
+        map(raw => mapApprovalDesk(raw)),
+        catchError(err => {
+          this.msgs.add({
+            severity: 'error',
+            summary: 'Erreur',
+            detail: err?.error?.message ?? 'Impossible de charger le dossier de validation',
+          });
+          return of(null);
         })
       );
   }

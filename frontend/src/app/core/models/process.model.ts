@@ -356,3 +356,128 @@ export function roleLabel(code: string | null | undefined): string {
   if (!code) return '';
   return ROLE_LABEL[code.toUpperCase()] ?? code;
 }
+
+// ============================================================================
+//  TASK 1 (backend) — APPROVAL DESK (single payload for payment approvers)
+//  Mirrors ProcessService.ApprovalDeskResponse + DeskStepView.
+// ============================================================================
+
+/** One step shown in the desk's mini-timeline (previous/completed steps). */
+export interface DeskStepView {
+  stepOrder: number;
+  stepKey: string;
+  name: string;
+  status: string;
+  assigneeRole: string;
+  assigneeName: string | null;
+  completedAt: string | null;
+  comment: string | null;
+}
+
+/** Single-payload response from GET /api/process/steps/{id}/approval-desk. */
+export interface ApprovalDesk {
+  // ── process step + instance context ──
+  stepInstanceId: string;
+  instanceId: string;
+  templateKey: string;
+  templateName: string;
+  instanceStatus: string;
+  currentStepOrder: number;
+  currentStepKey: string;
+  currentStepName: string;
+  currentStepRole: string;
+  assigneeUserId: string | null;
+  assigneeName: string | null;
+  requiresAttachment: boolean;
+  // ── subject identification ──
+  subjectType: string;
+  subjectId: string;
+  // ── cash movement payload (CASH_MOVEMENT only) ──
+  movementId: string | null;
+  movementLabel: string | null;
+  movementDate: string | null;
+  movementType: string;
+  movementStatus: string;
+  assessedAmount: number | null;
+  claimedAmount: number | null;
+  varianceAmount: number | null;
+  varianceReason: string | null;
+  paymentMode: string | null;
+  paymentRef: string | null;
+  voucherNo: string | null;
+  nature: string | null;
+  invoiceRef: string | null;
+  // ── linked entities (names — JOINed, no N+1) ──
+  projectId: string | null;
+  projectName: string | null;
+  partyId: string | null;
+  partyName: string | null;
+  partyType: string | null;
+  fromPotId: string | null;
+  fromPotName: string | null;
+  // ── proof document ──
+  documentId: string | null;
+  documentName: string | null;
+  // ── flags ──
+  canComplete: boolean;
+  canReject: boolean;
+  hasAttachment: boolean;
+  // ── mini-timeline ──
+  steps: DeskStepView[];
+}
+
+/** Defensive mapper: any raw backend row → ApprovalDesk. */
+export function mapApprovalDesk(raw: any): ApprovalDesk {
+  return {
+    stepInstanceId: String(raw?.stepInstanceId ?? raw?.step_instance_id ?? ''),
+    instanceId: String(raw?.instanceId ?? raw?.instance_id ?? ''),
+    templateKey: String(raw?.templateKey ?? raw?.template_key ?? ''),
+    templateName: String(raw?.templateName ?? raw?.template_name ?? ''),
+    instanceStatus: String(raw?.instanceStatus ?? raw?.instance_status ?? ''),
+    currentStepOrder: Number(raw?.currentStepOrder ?? raw?.current_step_order ?? 0),
+    currentStepKey: String(raw?.currentStepKey ?? raw?.current_step_key ?? ''),
+    currentStepName: String(raw?.currentStepName ?? raw?.current_step_name ?? ''),
+    currentStepRole: String(raw?.currentStepRole ?? raw?.current_step_role ?? raw?.assigneeRole ?? ''),
+    assigneeUserId: raw?.assigneeUserId ?? raw?.assignee_user_id ?? null,
+    assigneeName: raw?.assigneeName ?? raw?.assignee_name ?? null,
+    requiresAttachment: Boolean(raw?.requiresAttachment ?? raw?.requires_attachment ?? false),
+    subjectType: String(raw?.subjectType ?? raw?.subject_type ?? ''),
+    subjectId: raw?.subjectId ?? raw?.subject_id ? String(raw?.subjectId ?? raw?.subject_id) : '',
+    movementId: raw?.movementId ?? raw?.movement_id ?? null,
+    movementLabel: raw?.movementLabel ?? raw?.movement_label ?? null,
+    movementDate: raw?.movementDate ?? raw?.movement_date ?? null,
+    movementType: String(raw?.movementType ?? raw?.movement_type ?? ''),
+    movementStatus: String(raw?.movementStatus ?? raw?.movement_status ?? ''),
+    assessedAmount: raw?.assessedAmount != null ? Number(raw.assessedAmount) : null,
+    claimedAmount: raw?.claimedAmount != null ? Number(raw.claimedAmount) : null,
+    varianceAmount: raw?.varianceAmount != null ? Number(raw.varianceAmount) : null,
+    varianceReason: raw?.varianceReason ?? raw?.variance_reason ?? null,
+    paymentMode: raw?.paymentMode ?? raw?.payment_mode ?? null,
+    paymentRef: raw?.paymentRef ?? raw?.payment_ref ?? null,
+    voucherNo: raw?.voucherNo ?? raw?.voucher_no ?? null,
+    nature: raw?.nature ?? null,
+    invoiceRef: raw?.invoiceRef ?? raw?.invoice_ref ?? null,
+    projectId: raw?.projectId ?? raw?.project_id ?? null,
+    projectName: raw?.projectName ?? raw?.project_name ?? null,
+    partyId: raw?.partyId ?? raw?.party_id ?? null,
+    partyName: raw?.partyName ?? raw?.party_name ?? null,
+    partyType: raw?.partyType ?? raw?.party_type ?? null,
+    fromPotId: raw?.fromPotId ?? raw?.from_pot_id ?? null,
+    fromPotName: raw?.fromPotName ?? raw?.from_pot_name ?? null,
+    documentId: raw?.documentId ?? raw?.document_id ?? null,
+    documentName: raw?.documentName ?? raw?.document_name ?? null,
+    canComplete: Boolean(raw?.canComplete ?? raw?.can_complete ?? false),
+    canReject: Boolean(raw?.canReject ?? raw?.can_reject ?? false),
+    hasAttachment: Boolean(raw?.hasAttachment ?? raw?.has_attachment ?? false),
+    steps: (Array.isArray(raw?.steps) ? raw.steps : []).map((s: any) => ({
+      stepOrder: Number(s?.stepOrder ?? s?.step_order ?? 0),
+      stepKey: String(s?.stepKey ?? s?.step_key ?? ''),
+      name: String(s?.name ?? ''),
+      status: String(s?.status ?? ''),
+      assigneeRole: String(s?.assigneeRole ?? s?.assignee_role ?? ''),
+      assigneeName: s?.assigneeName ?? s?.assignee_name ?? null,
+      completedAt: s?.completedAt ?? s?.completed_at ?? null,
+      comment: s?.comment ?? null,
+    })),
+  };
+}

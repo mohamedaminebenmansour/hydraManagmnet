@@ -65,6 +65,16 @@ import { formatAmount } from '@app/core/models/cash.model';
               </div>
               <div class="card-actions">
                 @if (canAct(task)) {
+                  @if (task.subjectType === 'CASH_MOVEMENT' && task.subjectId) {
+                    <button pButton
+                          label="Voir le dossier"
+                          icon="pi pi-folder-open"
+                          severity="info"
+                          size="small"
+                          (click)="onOpenDesk($event, task)"
+                          class="btn-desk"
+                    ></button>
+                  }
                   <button pButton
                         label="Valider"
                         icon="pi pi-check"
@@ -196,11 +206,20 @@ export class MyTasksComponent implements OnInit {
 
   fmtAmount = (a: number | null | undefined): string => formatAmount(a ?? 0);
 
-  /** CASH_MOVEMENT tasks deep-link to the movement detail (B5). */
+  /** CASH_MOVEMENT tasks deep-link to the validation desk (TASK 2 — primary path
+   *  is "open dossier then decide", not one-click Valider on the list card).
+   *  Other subjects: no-op (card click stays on Mes tâches). */
   openSubject(task: MyTask): void {
     if (task.subjectType === 'CASH_MOVEMENT' && task.subjectId) {
-      this.router.navigate(['/tresorerie/operations', task.subjectId]);
+      this.router.navigate(['/processus/etapes', task.stepInstanceId, 'validation']);
     }
+  }
+
+  /** "Voir le dossier" button — same navigation as openSubject but stops the
+   *  card click from racing. */
+  onOpenDesk(ev: MouseEvent, task: MyTask): void {
+    ev.stopPropagation();
+    this.openSubject(task);
   }
 
   validate(task: MyTask): void {

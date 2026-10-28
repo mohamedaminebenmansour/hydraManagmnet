@@ -45,6 +45,10 @@ export const routes: Routes = [
         loadComponent: () => import('./features/process/process-builder.component').then(m => m.ProcessBuilderComponent) },
       { path: 'processes/:id',
         loadComponent: () => import('./features/process/process-timeline.component').then(m => m.ProcessTimelineComponent) },
+      // TASK 2 — Approval desk: validation screen for a CASH_MOVEMENT step.
+      // Reached from Mes tâches → "Voir le dossier". Single round-trip.
+      { path: 'processus/etapes/:stepInstanceId/validation',
+        loadComponent: () => import('./features/process/approval-desk.component').then(m => m.ApprovalDeskComponent) },
       // Trésorerie — read access required (write actions re-checked in components:
       // CASH_DRAFT to save drafts, CASH_POST to post, CASH_VOID to void, PARTY_MANAGE for parties)
       { path: 'tresorerie', canActivate: [permGuard(PERM.CASH_READ)],

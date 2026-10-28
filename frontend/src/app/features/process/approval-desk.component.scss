@@ -1,0 +1,199 @@
+/**
+ * ApprovalDeskComponent — validation screen styles.
+ * Scannable: header + amounts band + meta chips + document + timeline + actions.
+ * Mobile: stacks vertically; amounts always visible.
+ */
+.desk {
+  max-width: 900px;
+  margin: 0 auto;
+  padding: 18px 18px 40px;
+
+  .desk-bc {
+    display: flex; align-items: center; gap: 6px;
+    font-size: 12px; color: #64748b;
+    margin-bottom: 14px;
+    a { color: #475569; text-decoration: none; &:hover { color: #0891b2; } }
+    .pi { font-size: 10px;
+      &.pi-angle-right { color: #cbd5e1; }
+    }
+  }
+}
+
+.desk-loading, .desk-error {
+  padding: 40px; text-align: center; color: #64748b;
+  i { font-size: 28px; display: block; margin-bottom: 8px; color: #94a3b8; }
+  p { margin: 0; }
+}
+
+// ── HEADER ────────────────────────────────────────────────────────────
+.desk-hero {
+  display: flex; justify-content: space-between; align-items: center;
+  gap: 16px;
+  background: linear-gradient(135deg, #0d9488 0%, #0891b2 100%);
+  color: #fff;
+  border-radius: 16px;
+  padding: 18px 22px;
+  margin-bottom: 16px;
+  box-shadow: 0 4px 14px rgba(8, 145, 178, 0.18);
+
+  .hero-left { flex: 1; min-width: 0;
+    .hero-project {
+      font-size: 12px; font-weight: 600; opacity: 0.9;
+      display: flex; align-items: center; gap: 6px;
+      margin-bottom: 4px;
+      i { font-size: 11px; }
+    }
+    .hero-party {
+      font-size: 18px; font-weight: 700; margin-bottom: 4px;
+      display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
+      i { font-size: 14px; opacity: 0.8; }
+      small { font-size: 11px; font-weight: 400; opacity: 0.8; }
+    }
+    .hero-label {
+      font-size: 13px; opacity: 0.85;
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
+  }
+  .hero-amount { text-align: right;
+    .ha-label { font-size: 11px; font-weight: 600; opacity: 0.9; text-transform: uppercase; letter-spacing: 0.04em; }
+    .ha-value { font-size: 26px; font-weight: 800; font-variant-numeric: tabular-nums; line-height: 1.1; }
+    .ha-status { font-size: 11px; opacity: 0.9; margin-top: 4px; display: inline-flex; align-items: center; gap: 4px; }
+  }
+
+  @media (max-width: 640px) {
+    flex-direction: column; align-items: flex-start;
+    .hero-amount { text-align: left; align-self: stretch; }
+  }
+}
+
+// ── AMOUNTS BAND ──────────────────────────────────────────────────────
+.desk-amounts {
+  display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px;
+  margin-bottom: 16px;
+
+  .amt-card {
+    background: #fff; border: 1px solid #e2e8f0; border-radius: 12px;
+    padding: 12px 14px;
+    .amt-label { font-size: 11px; font-weight: 600; color: #64748b; text-transform: uppercase; letter-spacing: 0.03em; margin-bottom: 4px; }
+    .amt-value { font-size: 18px; font-weight: 800; color: #0f172a; font-variant-numeric: tabular-nums; }
+    .amt-reason { font-size: 11px; color: #64748b; margin-top: 4px; font-style: italic; }
+  }
+  .amt-card.amt-pay {
+    background: #f0fdf4; border-color: #bbf7d0;
+    .amt-value { color: #16a34a; }
+  }
+  .amt-card.amt-variance {
+    background: #fef2f2; border-color: #fecaca;
+    .amt-label { color: #b91c1c; }
+    .variance-text { color: #dc2626; }
+  }
+
+  @media (max-width: 640px) { grid-template-columns: 1fr; }
+}
+
+// ── META CHIPS ────────────────────────────────────────────────────────
+.desk-meta {
+  display: flex; flex-wrap: wrap; gap: 8px;
+  margin-bottom: 16px;
+
+  .meta-chip {
+    display: inline-flex; align-items: center; gap: 6px;
+    padding: 6px 12px; border-radius: 999px;
+    background: #f1f5f9; color: #475569;
+    font-size: 12px; font-weight: 600;
+    border: 1px solid #e2e8f0;
+    i { font-size: 12px; color: var(--chip-color, #64748b); }
+  }
+}
+
+// ── DOCUMENT BLOCK ────────────────────────────────────────────────────
+.desk-doc {
+  background: #fff; border: 1px solid #e2e8f0; border-radius: 14px;
+  padding: 14px 18px; margin-bottom: 16px;
+
+  .dd-head {
+    display: flex; justify-content: space-between; align-items: center;
+    margin-bottom: 10px;
+    h2 { font-size: 14px; font-weight: 700; color: #0f172a; margin: 0;
+        display: inline-flex; align-items: center; gap: 6px;
+        i { color: #7c3aed; } }
+    .dd-warn { color: #b91c1c; font-size: 11px; font-weight: 700; display: inline-flex; align-items: center; gap: 4px; }
+  }
+  .dd-attached {
+    display: flex; align-items: center; gap: 10px;
+    padding: 10px 12px; background: #f8fafc; border-radius: 10px;
+    i.pi-file-pdf { font-size: 20px; color: #dc2626; }
+    .dd-name { flex: 1; font-size: 13px; font-weight: 600; color: #0f172a; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .dd-open { color: #0891b2; font-size: 12px; font-weight: 600; text-decoration: none; display: inline-flex; align-items: center; gap: 4px; &:hover { color: #0d9488; } }
+  }
+  .dd-missing {
+    display: flex; align-items: center; gap: 10px;
+    padding: 12px 14px; background: #f8fafc; border-radius: 10px;
+    color: #64748b; font-size: 13px;
+    i { font-size: 18px; color: #94a3b8; }
+    &.dd-required {
+      background: #fef2f2; color: #b91c1c;
+      i { color: #dc2626; }
+    }
+  }
+}
+
+// ── MINI TIMELINE ─────────────────────────────────────────────────────
+.desk-timeline {
+  background: #fff; border: 1px solid #e2e8f0; border-radius: 14px;
+  padding: 14px 18px; margin-bottom: 16px;
+
+  .dt-head h2 { font-size: 14px; font-weight: 700; color: #0f172a; margin: 0 0 10px;
+    display: inline-flex; align-items: center; gap: 6px;
+    i { color: #475569; } }
+  .dt-list { display: flex; flex-direction: column; gap: 8px; }
+  .dt-step {
+    display: flex; align-items: flex-start; gap: 10px;
+    padding: 8px 0;
+    .dt-dot {
+      width: 28px; height: 28px; border-radius: 50%;
+      display: flex; align-items: center; justify-content: center;
+      flex-shrink: 0;
+      i { font-size: 13px; }
+    }
+    &.done .dt-dot { background: #dcfce7; i { color: #16a34a; } }
+    &.pending .dt-dot { background: #fef3c7; i { color: #d97706; } }
+    &.rejected .dt-dot { background: #fee2e2; i { color: #dc2626; } }
+
+    .dt-body { flex: 1; min-width: 0; }
+    .dt-title { display: flex; justify-content: space-between; align-items: center; gap: 8px; flex-wrap: wrap;
+      .dt-name { font-size: 13px; font-weight: 600; color: #0f172a; }
+      .dt-role { font-size: 10px; font-weight: 700; color: #64748b; text-transform: uppercase; letter-spacing: 0.03em; }
+    }
+    .dt-meta { font-size: 11px; color: #64748b; margin-top: 2px;
+      span { white-space: nowrap; }
+    }
+  }
+}
+
+// ── ACTIONS ───────────────────────────────────────────────────────────
+.desk-actions {
+  display: flex; flex-wrap: wrap; gap: 10px; align-items: center;
+  justify-content: flex-end;
+  padding: 14px 0;
+
+  .da-readonly {
+    flex: 1; text-align: center; color: #64748b; font-size: 13px;
+    display: flex; align-items: center; justify-content: center; gap: 6px;
+    i { color: #94a3b8; }
+  }
+  .da-warn {
+    width: 100%; color: #b91c1c; font-size: 12px; font-weight: 600;
+    display: flex; align-items: center; gap: 6px; justify-content: center;
+    i { font-size: 13px; }
+  }
+}
+
+// ── REJECT DIALOG ─────────────────────────────────────────────────────
+.reject-form {
+  display: flex; flex-direction: column; gap: 6px;
+  label { font-size: 13px; font-weight: 600; color: #475569; }
+  .req { color: #dc2626; }
+  textarea { width: 100%; font-family: inherit; }
+  small { font-size: 11px; color: #94a3b8; }
+}

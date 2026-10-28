@@ -277,3 +277,44 @@ curl -b /tmp/c.txt -X POST \
   3-way-match feature — explicitly out of scope.
 - **No threshold matrix**: amount-based approval routing (e.g. "> 10k TND
   needs owner") is not implemented — out of scope per STANDING RULE 12.
+
+## Frontend (TASK 2)
+
+### Route
+
+```
+/processus/etapes/:stepInstanceId/validation
+```
+
+Component: `ApprovalDeskComponent` (`frontend/src/app/features/process/approval-desk.component.ts`).
+
+### Layout (scannable, French, mobile-friendly)
+
+1. **Header**: Projet | Tiers | big "À payer: X TND" + movement status.
+2. **Amounts band**: Demandé / À payer / Écart+motif (warning color when variance ≠ 0).
+3. **Meta chips**: Mode (icon), Bon N°, Nature, Date, Caisse, Réf.
+4. **Document block**: name + "Ouvrir" button (links to `/documents/{id}`);
+   if no document + `requiresAttachment`: strong warning, Approuver disabled.
+5. **Mini-timeline**: all steps with status (DONE/PENDING/REJECTED) + assignee
+   name + completedAt + comment.
+6. **Actions**: Approuver (green) | Rejeter (red outline) | Retour.
+   - Read-only viewers (non-assignees) see a "Lecture seule" banner instead.
+   - Reject opens a dialog with a required comment textarea.
+
+### Mes tâches update
+
+Each CASH_MOVEMENT task card now has a primary **"Voir le dossier"** button
+(navigate to the validation screen) alongside the existing Valider / Rejeter
+quick actions. Clicking the card body also opens the dossier.
+
+### Test scenario (frontend)
+
+1. As owner: submit a payment with claimed ≠ assessed + attach a fake PDF.
+2. As finance (safa.mtibaa@hydra.tn / HydraDemo2026!): open Mes tâches →
+   "Voir le dossier" → see the écart + the document → Approuver.
+3. As owner: open the same dossier (next step) → see finance's approval in
+   the mini-timeline → Approuver → cash POSTED.
+4. Verify the movement timeline (`/tresorerie/operations/{id}`) shows both
+   STEP_COMPLETED events.
+5. Reject path: create another payment → open dossier → Rejeter with a
+   comment → movement stays DRAFT, process REJECTED.
