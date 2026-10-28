@@ -5,10 +5,12 @@ import { ButtonModule } from 'primeng/button';
 import { DialogModule } from 'primeng/dialog';
 import { InputTextModule } from 'primeng/inputtext';
 import { SelectModule } from 'primeng/select';
+import { TooltipModule } from 'primeng/tooltip';
 import { MessageService } from 'primeng/api';
 import { PartyService } from '@app/core/services/party.service';
 import { AuthService } from '@app/core/auth.service';
 import { PERM } from '@app/core/permissions';
+import { ViewModeService } from '@app/core/view-mode.service';
 import { Party, PartyType, partyTypeVisual } from '@app/core/models/cash.model';
 import { avatarGradient, initials } from '@app/shared/hydra-design';
 
@@ -19,7 +21,7 @@ import { avatarGradient, initials } from '@app/shared/hydra-design';
 @Component({
   selector: 'app-party-list',
   standalone: true,
-  imports: [FormsModule, ButtonModule, DialogModule, InputTextModule, SelectModule, RouterLink],
+  imports: [FormsModule, ButtonModule, DialogModule, InputTextModule, SelectModule, RouterLink, TooltipModule],
   styleUrl: './party-list.component.scss',
   template: `
     <section class="party-list">
@@ -34,7 +36,7 @@ import { avatarGradient, initials } from '@app/shared/hydra-design';
         }
       </header>
 
-      <!-- Search + type filter -->
+      <!-- Search + type filter + view toggle -->
       <div class="pl-filters">
         <div class="search">
           <i class="pi pi-search"></i>
@@ -45,6 +47,14 @@ import { avatarGradient, initials } from '@app/shared/hydra-design';
                   placeholder="Tous les types" [showClear]="true"
                   optionLabel="label" optionValue="value"
                   (onChange)="refresh.set(refresh() + 1)" styleClass="type-sel" />
+        <div class="view-toggle">
+          <button pButton [text]="true" [outlined]="viewMode() !== 'table'"
+                  icon="pi pi-list" pTooltip="Tableau" tooltipPosition="top"
+                  (click)="viewModeService.set('parties', 'table')"></button>
+          <button pButton [text]="true" [outlined]="viewMode() !== 'cards'"
+                  icon="pi pi-th-large" pTooltip="Cartes" tooltipPosition="top"
+                  (click)="viewModeService.set('parties', 'cards')"></button>
+        </div>
       </div>
 
       @if (loading()) {
@@ -59,6 +69,39 @@ import { avatarGradient, initials } from '@app/shared/hydra-design';
           }
         </div>
       } @else {
+        @if (viewMode() === 'table') {
+          <div class="pl-table-wrap">
+            <table class="pl-table">
+              <thead>
+                <tr>
+                  <th>Nom</th>
+                  <th>Type</th>
+                  <th>Téléphone</th>
+                  <th>Statut</th>
+                </tr>
+              </thead>
+              <tbody>
+                @for (p of filtered(); track p.id) {
+                  <tr [routerLink]="['/tresorerie/parties', p.id]">
+                    <td class="c-name">{{ p.name }}</td>
+                    <td class="c-type">
+                      <span class="type-chip" [style.--tc-color]="pv(p.type).color">
+                        <i class="pi" [class]="pv(p.type).icon"></i> {{ pv(p.type).label }}
+                      </span>
+                    </td>
+                    <td class="c-phone">{{ p.phone || '—' }}</td>
+                    <td class="c-status">
+                      <span [class.active]="p.active !== false" [class.inactive]="p.active === false">
+                        <i class="pi" [class]="p.active !== false ? 'pi-check-circle' : 'pi-ban'"></i>
+                        {{ p.active !== false ? 'Actif' : 'Inactif' }}
+                      </span>
+                    </td>
+                  </tr>
+                }
+              </tbody>
+            </table>
+          </div>
+        } @else {
         <div class="pl-grid">
           @for (p of filtered(); track p.id) {
             <a [routerLink]="['/tresorerie/parties', p.id]" class="party-card"
@@ -77,6 +120,7 @@ import { avatarGradient, initials } from '@app/shared/hydra-design';
             </a>
           }
         </div>
+        }
       }
 
       <!-- Add dialog -->
@@ -111,6 +155,7 @@ export class PartyListComponent implements OnInit {
   private partyService = inject(PartyService);
   private msgs = inject(MessageService);
   private auth = inject(AuthService);
+  viewModeService = inject(ViewModeService);
 
   // Route only requires CASH_READ — party creation needs PARTY_MANAGE
   canManageParty = this.auth.can(PERM.PARTY_MANAGE);
@@ -118,6 +163,9 @@ export class PartyListComponent implements OnInit {
   parties = this.partyService.parties;
   loading = signal(true);
   saving = signal(false);
+
+  // Dual view toggle — defaults to table (Excel mental model)
+  viewMode = this.viewModeService.forPage('parties', 'table');
 
   search = '';
   typeFilter: PartyType | null = null;

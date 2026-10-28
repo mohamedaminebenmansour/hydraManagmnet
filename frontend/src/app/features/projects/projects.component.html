@@ -59,8 +59,54 @@
       </button>
     }
   </div>
+
+  <div class="view-toggle">
+    <button pButton [text]="true" [outlined]="viewMode() !== 'table'"
+            icon="pi pi-list" pTooltip="Tableau" tooltipPosition="bottom"
+            (click)="viewModeService.set('projects', 'table')"></button>
+    <button pButton [text]="true" [outlined]="viewMode() !== 'cards'"
+            icon="pi pi-th-large" pTooltip="Cartes" tooltipPosition="bottom"
+            (click)="viewModeService.set('projects', 'cards')"></button>
+  </div>
 </div>
 
+<!-- Liste des chantiers: table or cards -->
+@if (viewMode() === 'table') {
+  <div class="dv-table-wrap">
+    <table class="dv-table">
+      <thead>
+        <tr>
+          <th>Nom</th>
+          <th>Type</th>
+          <th>Statut</th>
+          <th>Code</th>
+        </tr>
+      </thead>
+      <tbody>
+        @for (p of filteredProjects(); track p.id) {
+          <tr (click)="open(p)" style="cursor: pointer;">
+            <td class="c-name">{{ p.name }}</td>
+            <td>
+              <span class="type-chip" [style.--tc-color]="tv(p.projectType).color">
+                <i class="pi" [class]="tv(p.projectType).icon"></i> {{ tv(p.projectType).label }}
+              </span>
+            </td>
+            <td>
+              @if (p.status === 'ACTIF') {
+                <span class="active"><i class="pi pi-check-circle"></i> En cours</span>
+              } @else {
+                <span class="inactive"><i class="pi pi-ban"></i> Clôturé</span>
+              }
+            </td>
+            <td class="c-phone">{{ p.code || '—' }}</td>
+          </tr>
+        } @empty {
+          <tr><td colspan="4" style="text-align: center; color: #94a3b8; padding: 24px;">Aucun chantier</td></tr>
+        }
+      </tbody>
+    </table>
+  </div>
+} @else {
 <!-- Grille de cartes chantier -->
 <div class="grid">
   @for (p of filteredProjects(); track p.id) {
@@ -123,6 +169,7 @@
     }
   }
 </div>
+}
 
 <!-- ==========================================================================
      WIZARD — création / modification en 3 étapes (leçon Odoo : ne jamais

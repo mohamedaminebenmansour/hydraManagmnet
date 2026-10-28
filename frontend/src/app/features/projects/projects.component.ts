@@ -11,9 +11,10 @@ import { DatePickerModule } from 'primeng/datepicker';
 import { DialogModule } from 'primeng/dialog';
 import { TagModule } from 'primeng/tag';
 import { ChipModule } from 'primeng/chip';
-import { TooltipModule } from 'primeng/tooltip';
 import { MessageService } from 'primeng/api';
 import { AuthService } from '@app/core/auth.service';
+import { ViewModeService } from '@app/core/view-mode.service';
+import { TooltipModule } from 'primeng/tooltip';
 import { PERM } from '@app/core/permissions';
 import { ProjectService } from '@app/core/services/project.service';
 import { UserService } from '@app/core/services/user.service';
@@ -48,7 +49,7 @@ const STATUS_OPTS = [
     TagModule,
     ChipModule,
     TooltipModule,
-    EmptyStateComponent
+    EmptyStateComponent,
   ],
   templateUrl: './projects.component.html',
   styleUrl: './projects.component.scss'
@@ -60,6 +61,8 @@ export class ProjectsComponent implements OnInit {
   private route = inject(ActivatedRoute);
   private auth = inject(AuthService);
   private msgs = inject(MessageService);
+  viewModeService = inject(ViewModeService);
+  viewMode = this.viewModeService.forPage('projects', 'table');
 
   /** Chantiers chargés depuis l'API (signal → l'UI se met à jour automatiquement). */
   projects = signal<Project[]>([]);
