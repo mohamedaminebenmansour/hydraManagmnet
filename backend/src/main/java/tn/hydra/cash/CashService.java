@@ -620,6 +620,18 @@ public class CashService {
         AppUser me = currentUser(auth);
         Map<String, Object> row = fetchMovementForUpdate(id, me.getOrgId());
         String currentStatus = (String) row.get("status");
+        // TASK 1 hardening: POSTED is immutable; VOID is dead. Both reject with
+        // a precise French error code so the frontend can show the right message.
+        if ("POSTED".equals(currentStatus)) {
+            throw new BusinessRuleException("POSTED_IMMUTABLE",
+                    "Un mouvement comptabilisé (POSTED) ne peut pas être modifié. " +
+                    "Annulez-le (VOID) puis créez un nouveau mouvement.");
+        }
+        if ("VOID".equals(currentStatus)) {
+            throw new BusinessRuleException("MOVEMENT_VOID",
+                    "Un mouvement annulé (VOID) ne peut pas être modifié. " +
+                    "Créez un nouveau mouvement.");
+        }
         if (!"DRAFT".equals(currentStatus)) {
             throw new BusinessRuleException("MOVEMENT_NOT_DRAFT",
                     "Seul un mouvement DRAFT peut être modifié (statut actuel: " + currentStatus + ")");
@@ -1314,6 +1326,16 @@ public class CashService {
 
         Map<String, Object> row = fetchMovementForUpdate(id, me.getOrgId());
         String status = (String) row.get("status");
+        // TASK 1 hardening: can't post a POSTED (already done) or VOID (dead).
+        if ("POSTED".equals(status)) {
+            throw new BusinessRuleException("POSTED_IMMUTABLE",
+                    "Ce mouvement est déjà comptabilisé (POSTED). Il ne peut pas être re-posté.");
+        }
+        if ("VOID".equals(status)) {
+            throw new BusinessRuleException("MOVEMENT_VOID",
+                    "Un mouvement annulé (VOID) ne peut pas être comptabilisé. " +
+                    "Créez un nouveau mouvement.");
+        }
         if (!"DRAFT".equals(status)) {
             throw new BusinessRuleException("MOVEMENT_NOT_DRAFT",
                     "Seul un mouvement DRAFT peut être comptabilisé (POST). Statut actuel: " + status);
@@ -1411,8 +1433,25 @@ public class CashService {
                 where id = ? and org_id = ?
                 """, me.getId(), req.reason().trim(), id, me.getOrgId());
 
+        // Enriched audit (TASK 1 hardening) — include amount, movementType, pot,
+        // and partyId so the timeline answers "what was voided, for how much,
+        // from which caisse, to whom" without re-querying the movement.
+        BigDecimal voidedAmount = (BigDecimal) row.get("amount");
+        String voidedType = (String) row.get("movement_type");
+        UUID fromPotId = (UUID) row.get("from_pot_id");
+        UUID toPotId = (UUID) row.get("to_pot_id");
+        UUID partyId = (UUID) row.get("party_id");
+        UUID projectId = (UUID) row.get("project_id");
         audit.log("CASH_MOVEMENT_VOIDED", "cash_movement", id,
-                "{\"reason\":\"" + jsonEscape(req.reason().trim()) + "\"}");
+                "{\"reason\":\"" + jsonEscape(req.reason().trim()) + "\"" +
+                ",\"voidedBy\":\"" + me.getId() + "\"" +
+                ",\"amount\":" + voidedAmount +
+                ",\"movementType\":\"" + voidedType + "\"" +
+                (fromPotId != null ? ",\"fromPotId\":\"" + fromPotId + "\"" : "") +
+                (toPotId != null ? ",\"toPotId\":\"" + toPotId + "\"" : "") +
+                (partyId != null ? ",\"partyId\":\"" + partyId + "\"" : "") +
+                (projectId != null ? ",\"projectId\":\"" + projectId + "\"" : "") +
+                "}");
 
         return getMovement(auth, id);
     }
