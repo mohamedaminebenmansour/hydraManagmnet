@@ -194,6 +194,23 @@ public class ProcessController {
         return ResponseEntity.ok().build();
     }
 
+    /**
+     * TASK 3 — Reassign a RUNNING instance's current PENDING step to a
+     * different user. Owner / project ADMIN only.
+     * POST /api/processes/{instanceId}/steps/{stepInstanceId}/reassign
+     * Body: { userId, comment? }
+     * Audits PROCESS_STEP_REASSIGNED.
+     */
+    @PostMapping("/api/processes/{instanceId}/steps/{stepInstanceId}/reassign")
+    public ResponseEntity<ProcessService.StepResult> reassignStep(
+            @PathVariable UUID instanceId,
+            @PathVariable UUID stepInstanceId,
+            @RequestBody ProcessService.ReassignStepRequest req) {
+        Authentication auth = SecurityContextHolder.getContext().getAuthentication();
+        ProcessService.StepResult result = svc.reassignStep(auth, instanceId, stepInstanceId, req);
+        return ResponseEntity.ok(result);
+    }
+
     // ══════════════════════════════════════════════════════════════
     //  READ / QUERY ENDPOINTS
     // ══════════════════════════════════════════════════════════════

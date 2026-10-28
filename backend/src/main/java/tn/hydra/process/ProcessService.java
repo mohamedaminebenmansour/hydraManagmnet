@@ -48,9 +48,23 @@ public class ProcessService {
 
     public record CancelRequest(String reason) {}
 
+    /** TASK 3 — body for POST /steps/{stepInstanceId}/reassign. */
+    public record ReassignStepRequest(UUID userId, String comment) {}
+
     /** Returned after start — 201 */
     public record StartProcessResponse(UUID id, String status, UUID projectId,
-                                       String templateKey, String subjectType, UUID subjectId) {}
+                                       String templateKey, String subjectType, UUID subjectId,
+                                       // TASK 3 — guardrails: warnings when a step's role has no
+                                       // user mapped (process still starts; the role-based
+                                       // fallback keeps it alive).
+                                       List<String> warnings) {
+
+        /** Backwards-compatible 6-field constructor (no warnings → empty list). */
+        public StartProcessResponse(UUID id, String status, UUID projectId,
+                                     String templateKey, String subjectType, UUID subjectId) {
+            this(id, status, projectId, templateKey, subjectType, subjectId, List.of());
+        }
+    }
 
     /** One line on the timeline steps list. */
     public record StepView(
@@ -445,19 +459,33 @@ public class ProcessService {
                 instanceId, orgId, cmd.projectId(), templateId,
                 cmd.subjectType(), cmd.subjectId(), me.getId());
 
-        // (6) Load first step only
-        List<Map<String, Object>> firstSteps = jdbc.queryForList(
+        // (6) Load ALL template steps up front — TASK 3: collect warnings
+        // for any role that doesn't resolve to a concrete user (the process
+        // still starts; the role-based fallback keeps it alive).
+        List<Map<String, Object>> allSteps = jdbc.queryForList(
                 """
                 select step_order, step_key, name, assignee_role, requires_attachment
                 from process_template_step
                 where template_id = ?
                 order by step_order asc
-                limit 1
                 """,
                 templateId);
 
-        if (!firstSteps.isEmpty()) {
-            Map<String, Object> first = firstSteps.get(0);
+        List<String> warnings = new ArrayList<>();
+        for (Map<String, Object> s : allSteps) {
+            String role = (String) s.get("assignee_role");
+            if (role == null || role.isBlank()) continue;
+            UUID resolved = resolveAssigneeByRole(cmd.projectId(), role);
+            if (resolved == null) {
+                warnings.add("Aucun utilisateur pour le rôle " + role.toUpperCase()
+                        + " sur ce projet — étape '" + s.get("name") + "' (rôle seul).");
+            }
+        }
+
+        // (7) Insert first PENDING step_instance (same as before — only the first
+        //     step is created at start; subsequent steps are created by completeStep).
+        if (!allSteps.isEmpty()) {
+            Map<String, Object> first = allSteps.get(0);
             int stepOrder = ((Number) first.get("step_order")).intValue();
             String stepKey = (String) first.get("step_key");
             String stepName = (String) first.get("name");
@@ -467,7 +495,6 @@ public class ProcessService {
             // Resolve assignee — null is OK; any user with role may still act
             UUID assigneeUserId = resolveAssigneeByRole(cmd.projectId(), assigneeRole);
 
-            // (7) Insert first PENDING step_instance
             jdbc.update(
                     """
                     insert into process_step_instance
@@ -491,8 +518,11 @@ public class ProcessService {
                 "\",\"subjectId\":\"" + cmd.subjectId() +
                 "\",\"projectId\":\"" + cmd.projectId() + "\"}");
 
+        // TASK 3 — return warnings so the caller (PaymentFacade.submitPayment
+        // or the front-end directly) can surface them to the user. The process
+        // is created regardless — soft guardrail, not a hard fail.
         return new StartProcessResponse(instanceId, "RUNNING", cmd.projectId(),
-                cmd.templateKey(), cmd.subjectType(), cmd.subjectId());
+                cmd.templateKey(), cmd.subjectType(), cmd.subjectId(), warnings);
     }
 
     // ═══════════════════════════════════════════════════════════════
@@ -1612,5 +1642,123 @@ public class ProcessService {
             throw new BusinessRuleException("FORBIDDEN",
                     "Seul le gérant ou un administrateur du projet peut configurer les responsables processus");
         }
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // TASK 3 — REASSIGN a RUNNING instance's current PENDING step
+    //   POST /api/processes/{instanceId}/steps/{stepInstanceId}/reassign
+    //   Body: { userId, comment? }
+    //
+    // Rules:
+    //   - Caller is org owner OR project ADMIN (mirrors the role-assignee PUT).
+    //   - Instance must be RUNNING (can't reassign a COMPLETED/REJECTED/
+    //     CANCELLED process — those have no live step).
+    //   - The target step must be PENDING (reassigning a DONE step is a no-op
+    //     and confusing — reject with French 409 instead).
+    //   - Target user must be a project_member (or, for OWNER role, may be
+    //     the org owner) — same rule as upsertRoleAssignees.
+    //   - Audit PROCESS_STEP_REASSIGNED.
+    // ═══════════════════════════════════════════════════════════════
+
+    @Transactional
+    public StepResult reassignStep(Authentication auth, UUID instanceId,
+                                    UUID stepInstanceId, ReassignStepRequest req) {
+        AppUser me = currentUser(auth);
+        if (req == null || req.userId() == null) {
+            throw new BadRequestException("USER_ID_REQUIRED",
+                    "L'utilisateur cible est obligatoire (userId)");
+        }
+        UUID targetUserId = req.userId();
+
+        // Load the instance + step in one JOIN (we need project_id for the
+        // project_member check + the assignee_role for the OWNER special case).
+        List<Map<String, Object>> rows = jdbc.queryForList(
+                """
+                select pi.id as instance_id, pi.org_id, pi.project_id, pi.status as instance_status,
+                       psi.id as step_id, psi.status as step_status, psi.assignee_role
+                from process_instance pi
+                join process_step_instance psi on psi.instance_id = pi.id
+                where pi.id = ? and psi.id = ?
+                """,
+                instanceId, stepInstanceId);
+        if (rows.isEmpty()) {
+            throw new ResourceNotFoundException("STEP_NOT_FOUND",
+                    "Étape ou instance introuvable");
+        }
+        Map<String, Object> row = rows.get(0);
+        UUID orgId = (UUID) row.get("org_id");
+        UUID projectId = (UUID) row.get("project_id");
+        String instanceStatus = (String) row.get("instance_status");
+        String stepStatus = (String) row.get("step_status");
+        String assigneeRole = (String) row.get("assignee_role");
+
+        // (a) caller has org/project write access
+        requireProjectAccess(me, projectId);
+        requireProjectAdminOrOwner(me, projectId);
+
+        // (b) instance RUNNING — otherwise there's no live step to reassign
+        if (!"RUNNING".equalsIgnoreCase(instanceStatus)) {
+            throw new BusinessRuleException("INSTANCE_NOT_RUNNING",
+                    "Impossible de réaffecter une étape d'un processus " + instanceStatus);
+        }
+
+        // (c) step PENDING — DONE/REJECTED/SKIPPED steps are immutable
+        if (!"PENDING".equalsIgnoreCase(stepStatus)) {
+            throw new BusinessRuleException("STEP_NOT_PENDING",
+                    "Seule une étape en attente peut être réaffectée (statut actuel: " + stepStatus + ")");
+        }
+
+        // (d) target user: in org + active
+        Integer userCnt = jdbc.queryForObject(
+                "select count(*) from app_user where id = ? and org_id = ? and coalesce(is_active, true) = true",
+                Integer.class, targetUserId, orgId);
+        if (userCnt == null || userCnt == 0) {
+            throw new BadRequestException("UNKNOWN_USER",
+                    "Utilisateur introuvable ou inactif");
+        }
+
+        // (e) For non-OWNER roles, target must be a project_member.
+        // For OWNER role, target may be org owner OR project_member.
+        boolean isOwnerRole = "OWNER".equalsIgnoreCase(assigneeRole);
+        if (!isOwnerRole) {
+            Integer pmCnt = jdbc.queryForObject(
+                    "select count(*) from project_member where project_id = ? and user_id = ?",
+                    Integer.class, projectId, targetUserId);
+            if (pmCnt == null || pmCnt == 0) {
+                throw new BadRequestException("USER_NOT_PROJECT_MEMBER",
+                        "L'utilisateur n'est pas membre de ce projet (rôle " + assigneeRole + ")");
+            }
+        } else {
+            // OWNER role: target may be the org owner OR a project_member
+            Integer ownerOrPmCnt = jdbc.queryForObject(
+                    """
+                    select count(*) from (
+                      select 1 from app_user u where u.id = ? and u.org_id = ? and u.is_owner = true
+                      union all
+                      select 1 from project_member pm where pm.project_id = ? and pm.user_id = ?
+                    ) x
+                    """,
+                    Integer.class, targetUserId, orgId, projectId, targetUserId);
+            if (ownerOrPmCnt == null || ownerOrPmCnt == 0) {
+                throw new BadRequestException("USER_NOT_PROJECT_MEMBER",
+                        "Pour le rôle OWNER : l'utilisateur doit être gérant de l'organisation ou membre du projet");
+            }
+        }
+
+        // (f) Update the step's assignee_user_id
+        jdbc.update(
+                "update process_step_instance set assignee_user_id = ? where id = ?",
+                targetUserId, stepInstanceId);
+
+        // (g) Audit — PROCESS_STEP_REASSIGNED
+        String comment = req.comment() == null ? "" :
+                req.comment().replace("\\", "\\\\").replace("\"", "\\\"");
+        audit.log("PROCESS_STEP_REASSIGNED", "process_step_instance", stepInstanceId,
+                "{\"instanceId\":\"" + instanceId +
+                "\",\"stepInstanceId\":\"" + stepInstanceId +
+                "\",\"toUserId\":\"" + targetUserId + "\"" +
+                (!comment.isBlank() ? ",\"comment\":\"" + comment + "\"" : "") + "}");
+
+        return new StepResult(stepInstanceId, "PENDING");
     }
 }
