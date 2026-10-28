@@ -9,7 +9,7 @@ import { InputTextarea } from 'primeng/inputtextarea';
 import { TagModule } from 'primeng/tag';
 import { BadgeModule } from 'primeng/badge';
 import { ProcessService } from '@app/core/services/process.service';
-import { MyTask, StepStatus, ROLE_ICONS, STATUS_INFO, dotColorClass } from '@app/core/models/process.model';
+import { MyTask, StepStatus, ROLE_ICONS, STATUS_INFO, dotColorClass, roleLabel } from '@app/core/models/process.model';
 import { formatAmount } from '@app/core/models/cash.model';
 
 @Component({
@@ -31,7 +31,7 @@ import { formatAmount } from '@app/core/models/cash.model';
       } @else if (allTasks().length === 0) {
         <div class="empty-state">
           <i class="pi pi-inbox"></i>
-          <p>Aucune tarea en attente</p>
+          <p>Aucune tâche en attente</p>
         </div>
       } @else {
         <div class="status-chips">
@@ -49,7 +49,7 @@ import { formatAmount } from '@app/core/models/cash.model';
               <div class="card-header">
                 <span class="card-project">{{ task.projectName || task.templateName || 'Processus' }}</span>
                 @if (task.assigneeRole) {
-                  <span class="card-role"><i class="pi {{ roleIcon(task.assigneeRole) }}"></i> {{ task.assigneeRole }}</span>
+                  <span class="card-role"><i class="pi {{ roleIcon(task.assigneeRole) }}"></i> {{ roleLabel(task.assigneeRole) }}</span>
                 }
               </div>
               <div class="card-body">
@@ -65,34 +65,35 @@ import { formatAmount } from '@app/core/models/cash.model';
               </div>
               <div class="card-actions">
                 @if (canAct(task)) {
-                  @if (task.subjectType === 'CASH_MOVEMENT' && task.subjectId) {
+                  @if (isCashTask(task)) {
                     <button pButton
                           label="Voir le dossier"
                           icon="pi pi-folder-open"
-                          severity="info"
+                          severity="success"
                           size="small"
                           (click)="onOpenDesk($event, task)"
                           class="btn-desk"
                     ></button>
+                  } @else {
+                    <button pButton
+                          label="Valider"
+                          icon="pi pi-check"
+                          severity="success"
+                          size="small"
+                          [outlined]="true"
+                          (click)="onValidate($event, task)"
+                          class="btn-validate"
+                    ></button>
+                    <button pButton
+                          label="Rejeter"
+                          icon="pi pi-close"
+                          severity="danger"
+                          size="small"
+                          [outlined]="true"
+                          (click)="onReject($event, task)"
+                          class="btn-reject"
+                    ></button>
                   }
-                  <button pButton
-                        label="Valider"
-                        icon="pi pi-check"
-                        severity="success"
-                        size="small"
-                        [outlined]="true"
-                        (click)="onValidate($event, task)"
-                        class="btn-validate"
-                  ></button>
-                  <button pButton
-                        label="Rejeter"
-                        icon="pi pi-close"
-                        severity="danger"
-                        size="small"
-                        [outlined]="true"
-                        (click)="onReject($event, task)"
-                        class="btn-reject"
-                  ></button>
                 } @else {
                   <span class="status-badge {{ statusBadgeClass(task.status) }}">
                     <i class="pi {{ statusIcon(task.status) }}"></i> {{ statusLabel(task.status) }}
@@ -143,6 +144,7 @@ export class MyTasksComponent implements OnInit {
   pendingCount = computed(() => this.allTasks().filter(t => t.status === 'PENDING').length);
 
   roleIcon = (role: string): string => ROLE_ICONS[role] ?? ROLE_ICONS['default'];
+  roleLabel = roleLabel;
 
   statusBadgeClass = (status: string): string => {
     const s = String(status ?? '').toUpperCase();
@@ -206,11 +208,14 @@ export class MyTasksComponent implements OnInit {
 
   fmtAmount = (a: number | null | undefined): string => formatAmount(a ?? 0);
 
-  /** CASH_MOVEMENT tasks deep-link to the validation desk (TASK 2 — primary path
-   *  is "open dossier then decide", not one-click Valider on the list card).
-   *  Other subjects: no-op (card click stays on Mes tâches). */
+  /** CASH_MOVEMENT tasks must open the dossier — no blind Valider/Rejeter. */
+  isCashTask(task: MyTask): boolean {
+    return task.subjectType === 'CASH_MOVEMENT' && !!task.subjectId && !!task.stepInstanceId;
+  }
+
+  /** CASH_MOVEMENT tasks deep-link to the validation desk (not the movement detail). */
   openSubject(task: MyTask): void {
-    if (task.subjectType === 'CASH_MOVEMENT' && task.subjectId) {
+    if (this.isCashTask(task)) {
       this.router.navigate(['/processus/etapes', task.stepInstanceId, 'validation']);
     }
   }

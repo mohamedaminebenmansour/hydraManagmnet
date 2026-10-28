@@ -53,6 +53,31 @@ import {
         <div class="desk-loading"><i class="pi pi-spin pi-spinner"></i> Chargement du dossier…</div>
       } @else if (desk()) {
         @let d = desk()!;
+
+        <!-- ── STEP BANNER: which step, which role, can I act? ── -->
+        <div class="step-banner" [class.role-finance]="d.currentStepRole === 'FINANCE'"
+             [class.role-owner]="d.currentStepRole === 'OWNER'">
+          <div class="sb-left">
+            <div class="sb-step">
+              <span class="sb-step-name">{{ d.currentStepName }}</span>
+              <span class="sb-role-chip">{{ roleLabel(d.currentStepRole) }}</span>
+            </div>
+            @if (d.assigneeName) {
+              <div class="sb-assignee">
+                <i class="pi pi-user"></i>
+                {{ d.assigneeName }}
+              </div>
+            }
+          </div>
+          <div class="sb-right">
+            @if (d.canComplete) {
+              <span class="sb-badge sb-badge-act"><i class="pi pi-bolt"></i> À votre action</span>
+            } @else {
+              <span class="sb-badge sb-badge-readonly"><i class="pi pi-eye"></i> Lecture seule</span>
+            }
+          </div>
+        </div>
+
         <!-- ── HEADER: Projet | Tiers | big "À payer" ── -->
         <header class="desk-hero">
           <div class="hero-left">
@@ -79,6 +104,12 @@ import {
             </div>
           </div>
         </header>
+
+        @if (d.movementId) {
+          <a [routerLink]="['/tresorerie/operations', d.movementId]" class="desk-movement-link">
+            <i class="pi pi-external-link"></i> Fiche mouvement complète
+          </a>
+        }
 
         <!-- ── BAND: Demandé / À payer / Écart + motif ── -->
         <section class="desk-amounts">
@@ -207,15 +238,28 @@ import {
           @if (!d.canComplete && !d.canReject) {
             <div class="da-readonly">
               <i class="pi pi-lock"></i>
-              Lecture seule — vous n'êtes pas l'assignataire de cette étape.
+              Lecture seule — vous n'êtes pas l'assignataire de cette étape (rôle: {{ roleLabel(d.currentStepRole) }}).
             </div>
           } @else {
-            <button pButton label="Rejeter" icon="pi pi-times" severity="danger"
-                    [outlined]="true" [disabled]="acting()"
-                    (click)="openRejectDialog()"></button>
-            <button pButton label="Approuver" icon="pi pi-check" severity="success"
-                    [disabled]="!canApprove(d) || acting()"
-                    (click)="approve()"></button>
+            @if (d.currentStepRole === 'FINANCE') {
+              <div class="da-hint">
+                <i class="pi pi-info-circle"></i>
+                Contrôlez le dossier (montants, pièce, écart) avant d'envoyer au gérant.
+              </div>
+            } @else if (d.currentStepRole === 'OWNER') {
+              <div class="da-hint">
+                <i class="pi pi-info-circle"></i>
+                Vous autorisez la sortie de caisse pour le montant À payer.
+              </div>
+            }
+            <div class="da-btns">
+              <button pButton label="Rejeter" icon="pi pi-times" severity="danger"
+                      [outlined]="true" [disabled]="acting()"
+                      (click)="openRejectDialog()"></button>
+              <button pButton label="Approuver" icon="pi pi-check" severity="success"
+                      [disabled]="!canApprove(d) || acting()"
+                      (click)="approve()"></button>
+            </div>
             @if (d.requiresAttachment && !d.hasAttachment) {
               <div class="da-warn">
                 <i class="pi pi-exclamation-triangle"></i>

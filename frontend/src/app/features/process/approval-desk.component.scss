@@ -197,3 +197,44 @@
   textarea { width: 100%; font-family: inherit; }
   small { font-size: 11px; color: #94a3b8; }
 }
+
+// ── STEP BANNER (which step, which role, can I act?) ──────────────
+.step-banner {
+  display: flex; justify-content: space-between; align-items: center;
+  gap: 12px; padding: 12px 18px;
+  border-radius: 12px; margin-bottom: 14px;
+  background: #f1f5f9; border: 1px solid #e2e8f0;
+  border-left: 4px solid #64748b;
+  .sb-left { flex: 1; }
+  .sb-step {
+    display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+    .sb-step-name { font-size: 14px; font-weight: 700; color: #0f172a; }
+    .sb-role-chip { font-size: 10px; font-weight: 700; padding: 2px 8px; border-radius: 999px; text-transform: uppercase; background: #e2e8f0; color: #475569; }
+  }
+  .sb-assignee { font-size: 12px; color: #64748b; margin-top: 4px; display: inline-flex; align-items: center; gap: 4px; i { font-size: 11px; } }
+  .sb-right { flex-shrink: 0; }
+  .sb-badge { font-size: 11px; font-weight: 700; padding: 4px 12px; border-radius: 999px; display: inline-flex; align-items: center; gap: 4px; i { font-size: 11px; } }
+  .sb-badge-act { background: #fef3c7; color: #92400e; }
+  .sb-badge-readonly { background: #f1f5f9; color: #64748b; }
+  &.role-finance { background: #f0fdf4; border-color: #bbf7d0; border-left-color: #16a34a; .sb-role-chip { background: #dcfce7; color: #16a34a; } }
+  &.role-owner { background: #fffbeb; border-color: #fde68a; border-left-color: #d97706; .sb-role-chip { background: #fef3c7; color: #92400e; } }
+  @media (max-width: 640px) { flex-direction: column; align-items: flex-start; }
+}
+
+// ── MOVEMENT LINK ─────────────────────────────────────────────────
+.desk-movement-link {
+  display: inline-flex; align-items: center; gap: 6px;
+  font-size: 12px; font-weight: 600; color: #0891b2;
+  text-decoration: none; margin-bottom: 14px;
+  &:hover { color: #0d9488; }
+}
+
+// ── ACTION HINTS + BUTTONS ────────────────────────────────────────
+.da-hint {
+  width: 100%; padding: 8px 14px;
+  background: #eff6ff; border: 1px solid #bfdbfe; border-radius: 10px;
+  color: #1e40af; font-size: 12px; margin-bottom: 10px;
+  display: flex; align-items: center; gap: 6px;
+  i { font-size: 14px; color: #2563eb; }
+}
+.da-btns { display: flex; gap: 10px; flex-wrap: wrap; }
