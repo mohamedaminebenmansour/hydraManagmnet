@@ -14,9 +14,12 @@ import tn.hydra.user.AppUserRepository;
 import java.sql.Timestamp;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 import java.util.UUID;
 
 /**
@@ -156,6 +159,40 @@ public class ProcessService {
             boolean enabled, String defaultForSubjectType) {}
 
     // ═══════════════════════════════════════════════════════════════
+    // V27 (TASK 1) — Project role assignee records
+    // ═══════════════════════════════════════════════════════════════
+
+    /** A role → user mapping as stored in project_role_assignee. */
+    public record RoleAssigneeResponse(
+            String roleCode,
+            UUID userId,
+            String userName,
+            String userEmail) {}
+
+    /** Body for PUT /api/projects/{id}/process-role-assignees — upsert batch. */
+    public record UpsertRoleAssigneesRequest(List<RoleAssigneeItem> items) {}
+
+    public record RoleAssigneeItem(String roleCode, UUID userId) {}
+
+    /**
+     * Composite view returned by GET /process-roles-needed: for each distinct
+     * assignee_role used by templates enabled on this project (or all active
+     * org/system templates when no project_process_template rows exist),
+     * the current assignee (if any) + the candidate users the owner can pick.
+     */
+    public record RoleNeeded(
+            String roleCode,
+            RoleAssigneeResponse currentAssignee,
+            List<RoleCandidate> candidates) {}
+
+    public record RoleCandidate(
+            UUID userId,
+            String userName,
+            String userEmail,
+            boolean isOwner,
+            boolean isProjectMember) {}
+
+    // ═══════════════════════════════════════════════════════════════
     // DEPENDENCIES
     // ═══════════════════════════════════════════════════════════════
 
@@ -254,9 +291,52 @@ public class ProcessService {
      *
      * SPECIAL CASE: if the role is OWNER, return the org's owner directly (the owner
      * doesn't need to be a project_member to act on the project).
+     *
+     * V27 (TASK 1) — resolution order:
+     *   1) project_role_assignee table (per-project explicit mapping);
+     *      the mapping user is re-checked: still active; for non-OWNER roles
+     *      still project_member (or, for OWNER role, may be org owner).
+     *      If the mapping is stale, we fall through to the legacy path so the
+     *      process still starts (don't hard-fail a payment because the finance
+     *      user was removed from the project last week).
+     *   2) OWNER → org owner directly (legacy).
+     *   3) First project_member holding that business role via user_role+role.code.
      */
     private UUID resolveAssigneeByRole(UUID projectId, String assigneeRole) {
-        // OWNER → look up the org's owner directly (not via project_member)
+        if (assigneeRole == null || assigneeRole.isBlank()) return null;
+
+        // ── (1) V27 — explicit per-project mapping ────────────────────
+        List<Map<String, Object>> mappingRows = jdbc.queryForList(
+                """
+                select pra.user_id, u.is_owner as user_is_owner, u.is_active as user_active,
+                       pm.user_id as pm_user_id
+                from project_role_assignee pra
+                join app_user u on u.id = pra.user_id
+                left join project_member pm on pm.project_id = pra.project_id
+                                          and pm.user_id = pra.user_id
+                where pra.project_id = ? and upper(pra.role_code) = upper(?)
+                limit 1
+                """,
+                projectId, assigneeRole);
+        if (!mappingRows.isEmpty()) {
+            Map<String, Object> row = mappingRows.get(0);
+            UUID mappedUser = (UUID) row.get("user_id");
+            boolean userActive = row.get("user_active") == null
+                    || Boolean.TRUE.equals(row.get("user_active"));
+            boolean isOwnerRole = "OWNER".equalsIgnoreCase(assigneeRole);
+            // For OWNER role: mapped user may be org owner OR a project_member.
+            // For other roles: mapped user must be a project_member.
+            boolean pmFound = row.get("pm_user_id") != null;
+            if (userActive && (isOwnerRole || pmFound)) {
+                return mappedUser;
+            }
+            // Mapping is stale (user inactive or no longer member) → fall through
+            // to the legacy path so the process still starts. The owner will be
+            // able to reassign via the UI; for now the role-based fallback keeps
+            // the workflow alive.
+        }
+
+        // ── (2) OWNER → look up the org's owner directly ──────────────
         if ("OWNER".equalsIgnoreCase(assigneeRole)) {
             List<UUID> ownerRows = jdbc.queryForList(
                     """
@@ -270,7 +350,7 @@ public class ProcessService {
             return ownerRows.isEmpty() ? null : ownerRows.get(0);
         }
 
-        // Other roles → must be a project_member AND hold the business role
+        // ── (3) Other roles → must be a project_member AND hold the business role
         List<UUID> rows = jdbc.queryForList(
                 """
                 select pm.user_id from project_member pm
@@ -1276,5 +1356,261 @@ public class ProcessService {
                                         String templateKey, boolean enabled) {
         assignTemplateToProject(auth, projectId,
                 new AssignTemplateRequest(templateKey, enabled, null));
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // V27 (TASK 1) — Project role assignee API
+    //   GET    /api/projects/{projectId}/process-role-assignees
+    //   PUT    /api/projects/{projectId}/process-role-assignees  (batch upsert)
+    //   DELETE /api/projects/{projectId}/process-role-assignees/{roleCode}
+    //   GET    /api/projects/{projectId}/process-roles-needed
+    // ═══════════════════════════════════════════════════════════════
+
+    /** GET — list all role→user mappings for this project. */
+    public List<RoleAssigneeResponse> listRoleAssignees(Authentication auth, UUID projectId) {
+        AppUser me = currentUser(auth);
+        requireProjectAccess(me, projectId);
+        return jdbc.queryForList(
+                """
+                select pra.role_code, pra.user_id, u.full_name as user_name, u.email as user_email
+                from project_role_assignee pra
+                join app_user u on u.id = pra.user_id
+                where pra.project_id = ?
+                order by pra.role_code asc
+                """,
+                projectId)
+                .stream()
+                .map(r -> new RoleAssigneeResponse(
+                        (String) r.get("role_code"),
+                        (UUID) r.get("user_id"),
+                        (String) r.get("user_name"),
+                        (String) r.get("user_email")))
+                .toList();
+    }
+
+    /**
+     * PUT — upsert batch. Body: { items: [ { roleCode, userId } ] }.
+     *
+     * Validation:
+     *   - userId must exist + belong to caller's org
+     *   - For non-OWNER roles, userId must be a project_member of the project
+     *   - For OWNER role, userId may be the org owner OR a project_member
+     *
+     * Auth: org owner OR project ADMIN. We delegate to {@link #requireProjectAccess}
+     * for read access, then check project ADMIN/owner for the write itself.
+     */
+    @Transactional
+    public List<RoleAssigneeResponse> upsertRoleAssignees(Authentication auth, UUID projectId,
+                                                            UpsertRoleAssigneesRequest req) {
+        AppUser me = currentUser(auth);
+        UUID orgId = me.getOrgId();
+        requireProjectAccess(me, projectId);
+        requireProjectAdminOrOwner(me, projectId);
+
+        if (req == null || req.items() == null) {
+            throw new BadRequestException("EMPTY_BODY", "Aucun mappage fourni (items manquant)");
+        }
+
+        // Cache: all project members for this project (single query, not per item)
+        Set<UUID> projectMembers = new HashSet<>(jdbc.queryForList(
+                "select user_id from project_member where project_id = ?",
+                UUID.class, projectId));
+
+        // Cache: org owner id (for OWNER-role validation)
+        UUID orgOwnerId = jdbc.queryForObject(
+                "select id from app_user where org_id = ? and is_owner = true limit 1",
+                UUID.class, orgId);
+
+        for (RoleAssigneeItem item : req.items()) {
+            if (item.roleCode() == null || item.roleCode().isBlank()) {
+                throw new BadRequestException("ROLE_CODE_REQUIRED",
+                        "Le code rôle est obligatoire pour chaque mappage");
+            }
+            if (item.userId() == null) {
+                throw new BadRequestException("USER_ID_REQUIRED",
+                        "L'utilisateur est obligatoire pour le rôle " + item.roleCode());
+            }
+            // (a) user exists + in org
+            Integer userCnt = jdbc.queryForObject(
+                    "select count(*) from app_user where id = ? and org_id = ?",
+                    Integer.class, item.userId(), orgId);
+            if (userCnt == null || userCnt == 0) {
+                throw new BadRequestException("UNKNOWN_USER",
+                        "Utilisateur introuvable ou hors de votre organisation");
+            }
+            // (b) For non-OWNER roles, user must be a project_member
+            boolean isOwnerRole = "OWNER".equalsIgnoreCase(item.roleCode());
+            if (!isOwnerRole && !projectMembers.contains(item.userId())) {
+                throw new BadRequestException("USER_NOT_PROJECT_MEMBER",
+                        "L'utilisateur n'est pas membre de ce projet (rôle " + item.roleCode() + ")");
+            }
+            // (c) For OWNER role, user may be org owner OR project_member
+            if (isOwnerRole
+                    && !Boolean.TRUE.equals(item.userId().equals(orgOwnerId))
+                    && !projectMembers.contains(item.userId())) {
+                throw new BadRequestException("USER_NOT_PROJECT_MEMBER",
+                        "Pour le rôle OWNER : l'utilisateur doit être gérant de l'organisation ou membre du projet");
+            }
+
+            // Upsert: ON CONFLICT (project_id, role_code) DO UPDATE
+            jdbc.update(
+                    """
+                    insert into project_role_assignee (project_id, role_code, user_id, updated_at)
+                    values (?, upper(?), ?, now())
+                    on conflict (project_id, role_code)
+                    do update set user_id = excluded.user_id, updated_at = now()
+                    """,
+                    projectId, item.roleCode().trim(), item.userId());
+
+            audit.log("PROJECT_ROLE_ASSIGNED", "project_role_assignee", projectId,
+                    "{\"roleCode\":\"" + item.roleCode().trim().toUpperCase() +
+                    "\",\"userId\":\"" + item.userId() + "\"}");
+        }
+
+        return listRoleAssignees(auth, projectId);
+    }
+
+    /** DELETE — drop a single mapping (e.g. "remove the FINANCE → userA override"). */
+    @Transactional
+    public void deleteRoleAssignee(Authentication auth, UUID projectId, String roleCode) {
+        AppUser me = currentUser(auth);
+        requireProjectAccess(me, projectId);
+        requireProjectAdminOrOwner(me, projectId);
+
+        if (roleCode == null || roleCode.isBlank()) {
+            throw new BadRequestException("ROLE_CODE_REQUIRED", "Le code rôle est obligatoire");
+        }
+        int rows = jdbc.update(
+                "delete from project_role_assignee where project_id = ? and upper(role_code) = upper(?)",
+                projectId, roleCode.trim());
+        if (rows > 0) {
+            audit.log("PROJECT_ROLE_UNASSIGNED", "project_role_assignee", projectId,
+                    "{\"roleCode\":\"" + roleCode.trim().toUpperCase() + "\"}");
+        }
+    }
+
+    /**
+     * GET — composite view: distinct assignee_role from steps of templates
+     * enabled on this project (or all active org/system templates when no
+     * project_process_template rows exist), each carrying the current assignee
+     * (if any) + the candidate users the owner can pick from.
+     *
+     * Designed for the UI: a single round-trip returns the whole "Qui valide
+     * quoi" table. No N+1 — candidates are resolved once per call (not per role).
+     */
+    public List<RoleNeeded> listRolesNeeded(Authentication auth, UUID projectId) {
+        AppUser me = currentUser(auth);
+        UUID orgId = me.getOrgId();
+        requireProjectAccess(me, projectId);
+
+        // ── (1) distinct assignee_role from steps of enabled templates ──
+        // If project_process_template has rows for this project, restrict to
+        // those that are enabled=true; otherwise all active org/system templates.
+        Integer pptCount = jdbc.queryForObject(
+                "select count(*) from project_process_template where project_id = ?",
+                Integer.class, projectId);
+        boolean hasProjectConfig = pptCount != null && pptCount > 0;
+
+        String roleSql = hasProjectConfig
+                ? """
+                  select distinct pts.assignee_role
+                  from process_template_step pts
+                  join process_template pt on pt.id = pts.template_id
+                  join project_process_template ppt
+                       on ppt.template_id = pt.id and ppt.project_id = ?
+                  where pt.active = true and ppt.enabled = true
+                     and (pt.org_id = ? or pt.org_id is null)
+                  order by pts.assignee_role asc
+                  """
+                : """
+                  select distinct pts.assignee_role
+                  from process_template_step pts
+                  join process_template pt on pt.id = pts.template_id
+                  where pt.active = true
+                     and (pt.org_id = ? or pt.org_id is null)
+                  order by pts.assignee_role asc
+                  """;
+        List<String> roleCodes = hasProjectConfig
+                ? jdbc.queryForList(roleSql, String.class, projectId, orgId)
+                : jdbc.queryForList(roleSql, String.class, orgId);
+
+        if (roleCodes.isEmpty()) {
+            return List.of();
+        }
+
+        // ── (2) current mappings for this project (single query) ──
+        Map<String, RoleAssigneeResponse> current = new HashMap<>();
+        for (Map<String, Object> r : jdbc.queryForList(
+                """
+                select pra.role_code, pra.user_id, u.full_name as user_name, u.email as user_email
+                from project_role_assignee pra
+                join app_user u on u.id = pra.user_id
+                where pra.project_id = ?
+                """, projectId)) {
+            current.put(
+                    String.valueOf(r.get("role_code")).toUpperCase(),
+                    new RoleAssigneeResponse(
+                            (String) r.get("role_code"),
+                            (UUID) r.get("user_id"),
+                            (String) r.get("user_name"),
+                            (String) r.get("user_email")));
+        }
+
+        // ── (3) candidate users — project members + org owner (single query) ──
+        // The owner picks any project_member for any role; for OWNER role the
+        // org owner is also a candidate. We deduplicate on user_id.
+        List<RoleCandidate> allCandidates = jdbc.queryForList(
+                """
+                select u.id, u.full_name, u.email, u.is_owner,
+                       (pm.user_id is not null) as is_project_member
+                from app_user u
+                left join project_member pm on pm.project_id = ? and pm.user_id = u.id
+                where u.org_id = ?
+                  and (u.is_owner = true or pm.user_id is not null)
+                  and coalesce(u.is_active, true) = true
+                order by u.full_name asc
+                """,
+                projectId, orgId)
+                .stream()
+                .map(r -> new RoleCandidate(
+                        (UUID) r.get("id"),
+                        (String) r.get("full_name"),
+                        (String) r.get("email"),
+                        Boolean.TRUE.equals(r.get("is_owner")),
+                        Boolean.TRUE.equals(r.get("is_project_member"))))
+                .toList();
+
+        // ── (4) assemble per role ──
+        // For OWNER role, candidates include the org owner + project_members.
+        // For other roles, candidates = project_members only (the OWNER role
+        // explicitly allows non-member org owners; other roles require project
+        // membership — enforced at upsert time).
+        List<RoleNeeded> out = new ArrayList<>();
+        for (String roleCode : roleCodes) {
+            RoleAssigneeResponse currentAssignee = current.get(roleCode.toUpperCase());
+            List<RoleCandidate> candidates = "OWNER".equalsIgnoreCase(roleCode)
+                    ? allCandidates
+                    : allCandidates.stream().filter(RoleCandidate::isProjectMember).toList();
+            out.add(new RoleNeeded(roleCode, currentAssignee, candidates));
+        }
+        return out;
+    }
+
+    /**
+     * Write-guard: caller must be org owner OR project_member with
+     * project_role='ADMIN'. Mirrors STANDING RULE 5: "Only project admin /
+     * org owner may set mappings." Project MANAGER is not enough — config
+     * changes should require ADMIN (mirrors the existing assignTemplateToProject
+     * which uses requireOwner).
+     */
+    private void requireProjectAdminOrOwner(AppUser me, UUID projectId) {
+        if (Boolean.TRUE.equals(me.getIsOwner())) return;
+        String role = jdbc.queryForObject(
+                "select project_role from project_member where project_id = ? and user_id = ?",
+                String.class, projectId, me.getId());
+        if (!"ADMIN".equalsIgnoreCase(role)) {
+            throw new BusinessRuleException("FORBIDDEN",
+                    "Seul le gérant ou un administrateur du projet peut configurer les responsables processus");
+        }
     }
 }

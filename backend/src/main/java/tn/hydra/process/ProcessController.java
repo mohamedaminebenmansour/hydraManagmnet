@@ -230,4 +230,65 @@ public class ProcessController {
         Authentication auth = SecurityContextHolder.getContext().getAuthentication();
         return ResponseEntity.ok(svc.listProcessesByProject(auth, projectId, status));
     }
+
+    // ══════════════════════════════════════════════════════════════
+    //  V27 (TASK 1) — PROJECT ROLE ASSIGNEES
+    //  Per-project business role → user mapping. Powers the "Qui valide quoi"
+    //  UI section: the owner configures, for this project, who plays FINANCE,
+    //  who is the OWNER approver, who is ACHAT, etc.
+    // ══════════════════════════════════════════════════════════════
+
+    /**
+     * GET /api/projects/{projectId}/process-role-assignees
+     * Returns the current role→user mappings for this project.
+     */
+    @GetMapping("/api/projects/{projectId}/process-role-assignees")
+    public ResponseEntity<List<ProcessService.RoleAssigneeResponse>> listRoleAssignees(
+            @PathVariable UUID projectId) {
+        Authentication auth = SecurityContextHolder.getContext().getAuthentication();
+        return ResponseEntity.ok(svc.listRoleAssignees(auth, projectId));
+    }
+
+    /**
+     * PUT /api/projects/{projectId}/process-role-assignees
+     * Body: { items: [ { roleCode, userId } ] } — upsert batch.
+     * Auth: org owner OR project ADMIN.
+     * Returns the full updated mapping list.
+     */
+    @PutMapping("/api/projects/{projectId}/process-role-assignees")
+    public ResponseEntity<List<ProcessService.RoleAssigneeResponse>> upsertRoleAssignees(
+            @PathVariable UUID projectId,
+            @RequestBody ProcessService.UpsertRoleAssigneesRequest req) {
+        Authentication auth = SecurityContextHolder.getContext().getAuthentication();
+        return ResponseEntity.ok(svc.upsertRoleAssignees(auth, projectId, req));
+    }
+
+    /**
+     * DELETE /api/projects/{projectId}/process-role-assignees/{roleCode}
+     * Drops a single mapping (e.g. "remove the FINANCE → userA override").
+     * Auth: org owner OR project ADMIN.
+     */
+    @DeleteMapping("/api/projects/{projectId}/process-role-assignees/{roleCode}")
+    public ResponseEntity<Void> deleteRoleAssignee(
+            @PathVariable UUID projectId,
+            @PathVariable String roleCode) {
+        Authentication auth = SecurityContextHolder.getContext().getAuthentication();
+        svc.deleteRoleAssignee(auth, projectId, roleCode);
+        return ResponseEntity.noContent().build();
+    }
+
+    /**
+     * GET /api/projects/{projectId}/process-roles-needed
+     * Composite view for the "Qui valide quoi" UI: distinct assignee_role
+     * from steps of templates enabled on this project (or all active
+     * org/system templates when no project_process_template rows exist),
+     * each with the current assignee (if any) + the candidate users
+     * the owner can pick from.
+     */
+    @GetMapping("/api/projects/{projectId}/process-roles-needed")
+    public ResponseEntity<List<ProcessService.RoleNeeded>> listRolesNeeded(
+            @PathVariable UUID projectId) {
+        Authentication auth = SecurityContextHolder.getContext().getAuthentication();
+        return ResponseEntity.ok(svc.listRolesNeeded(auth, projectId));
+    }
 }
