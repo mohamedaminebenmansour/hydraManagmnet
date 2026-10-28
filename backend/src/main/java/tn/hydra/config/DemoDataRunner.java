@@ -67,6 +67,23 @@ public class DemoDataRunner implements CommandLineRunner {
 
     @Override
     public void run(String... args) {
+        // ─────────────────────────────────────────────────────────────
+        // 0. ALWAYS reset demo user passwords to the documented value
+        // (HydraDemo2026!). This runs BEFORE the early-return check below
+        // so that even when the demo seed is already complete, demo users
+        // keep working with the documented password — even if an admin
+        // previously used /api/users/{id}/reset-password to change one.
+        //
+        // Safe because: demo users have a deterministic ID prefix
+        // ('aaaaaa00-'); real users added by the admin have random UUIDs
+        // and are NOT touched.
+        // ─────────────────────────────────────────────────────────────
+        jdbc.update("""
+                update app_user
+                set password_hash = ?, must_change_password = false
+                where id::text like 'aaaaaa00-%'
+                """, DEMO_PW_HASH);
+
         // 1. Check if demo data FULLY seeded — process_instance is the LAST entity
         // we insert (we expect 5 with IDs 33333333-0000-0000-0000-00000000000{1..5}).
         // If they exist, the seed is fully complete; if we crashed mid-way, ON
