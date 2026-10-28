@@ -243,6 +243,56 @@ public class CashService {
 
     public record VoidRequest(String reason) {}
 
+    /**
+     * StatementLine — one row of an "état de caisse" (Excel-like statement).
+     *
+     * <p>Single source of truth for both {@code GET /pots/{id}/statement} and
+     * {@code GET /movements/export} — same column set, same order, same field
+     * names so the export API is literally the statement rows serialized as
+     * CSV (or JSON). Designed to match the columns a Tunisian BTP caisse
+     * paper sheet shows per line:
+     * <ul>
+     *   <li>{@code movementDate} — Date du mouvement</li>
+     *   <li>{@code voucherNo}    — Bon N° (petty-cash voucher)</li>
+     *   <li>{@code partyName}    — Tiers (sous-traitant / fournisseur)</li>
+     *   <li>{@code nature}       — Nature (SOUS_TRAITANCE / MATERIEL / …)</li>
+     *   <li>{@code label}        — Désignation (libellé du mouvement)</li>
+     *   <li>{@code movementType} — Type (IN / OUT / TRANSFER)</li>
+     *   <li>{@code paymentMode}  — Mode (ESPECE / CHEQUE / VIREMENT / …)</li>
+     *   <li>{@code paymentRef}   — Réf. (n° chèque / virement / mandat)</li>
+     *   <li>{@code invoiceRef}   — Facture (réf facture / situation)</li>
+     *   <li>{@code amount}       — Montant</li>
+     *   <li>{@code status}       — Statut (Brouillon / En attente / Comptabilisé / Annulé)</li>
+     *   <li>{@code projectName} — Projet</li>
+     *   <li>{@code processInstanceId} — Lien vers le workflow d'approbation (nullable)</li>
+     * </ul>
+     *
+     * <p>POSTED rows are always included; DRAFT + PENDING (movement linked to
+     * an in-progress PAYMENT_APPROVAL process) rows are included with their
+     * status so the caisse can see "what's still pending" alongside what's
+     * already posted. The frontend renders the status as a French chip so the
+     * owner can tell at a glance.
+     */
+    public record StatementLine(
+            UUID id,
+            LocalDate movementDate,
+            String voucherNo,
+            UUID partyId,
+            String partyName,
+            String nature,
+            String label,
+            String movementType,
+            String paymentMode,
+            String paymentRef,
+            String invoiceRef,
+            BigDecimal amount,
+            String currency,
+            String status,
+            UUID projectId,
+            String projectName,
+            UUID processInstanceId
+    ) {}
+
     // ══════════════════════════════════════════════════════════════
     //  AUTH HELPERS — proper permission checks via PERM_* authorities
     //  (seeded in V22__cash_permissions.sql). Owner auto-gets all perms
@@ -1078,6 +1128,169 @@ public class CashService {
                 .map(CashService::toMovementDetailResponse)
                 .filter(m -> m.projectId() == null || accessible.contains(m.projectId()))
                 .toList();
+    }
+
+    // ══════════════════════════════════════════════════════════════
+    //  ÉTAT DE CAISSE — statement + export (TASK 2)
+    //  Single JOINed query; same column set for both statement + export.
+    //  POSTED always included; DRAFT + (PENDING = DRAFT with a linked in-progress
+    //  PAYMENT_APPROVAL process instance) included with their status flag.
+    //  No N+1: pot names / party / project resolved in the same SELECT.
+    // ══════════════════════════════════════════════════════════════
+
+    /**
+     * GET /api/cash/pots/{potId}/statement?from=&to=&projectId=
+     *
+     * <p>Returns the "état de caisse" for a single pot — ordered lines that
+     * match what an Excel caisse sheet shows. POSTED rows always; DRAFT +
+     * PENDING (DRAFT with linked in-progress process) included with their
+     * status so the caisse sees pending lines alongside posted ones.
+     *
+     * <p>Access: caller must be able to read the pot (owner OR PERM_CASH_READ
+     * + project membership if PROJECT pot). Reuses {@link #getPot} for the
+     * access check so it stays consistent with the rest of the cash domain.
+     */
+    public List<StatementLine> getPotStatement(Authentication auth, UUID potId,
+                                                LocalDate from, LocalDate to, UUID projectId) {
+        AppUser me = currentUser(auth);
+        // getPot validates: pot in caller's org + project access if PROJECT pot
+        getPot(auth, potId);
+
+        List<Object> args = new ArrayList<>();
+        args.add(me.getOrgId());
+        StringBuilder sql = new StringBuilder("""
+                select m.id, m.movement_date, m.voucher_no,
+                       m.party_id,    py.name  as party_name,
+                       m.nature, m.label, m.movement_type,
+                       m.payment_mode, m.payment_ref, m.invoice_ref,
+                       m.amount, m.currency, m.status,
+                       m.project_id,  p.name   as project_name,
+                       m.process_instance_id
+                from cash_movement m
+                left join party   py on py.id  = m.party_id
+                left join project p  on p.id   = m.project_id
+                where m.org_id = ?
+                  and (m.from_pot_id = ? or m.to_pot_id = ?)
+                """);
+        args.add(potId);
+        args.add(potId);
+
+        if (projectId != null) {
+            sql.append(" and m.project_id = ?");
+            args.add(projectId);
+        }
+        if (from != null) {
+            sql.append(" and m.movement_date >= ?");
+            args.add(Date.valueOf(from));
+        }
+        if (to != null) {
+            sql.append(" and m.movement_date <= ?");
+            args.add(Date.valueOf(to));
+        }
+        // Order: chronological by movement_date, then by created_at (stable
+        // tie-break so multiple lines on the same date keep their entry order).
+        sql.append(" order by m.movement_date asc, m.created_at asc");
+
+        // Filter out movements on PROJECT pots the caller can't access (one
+        // membership query up front — same no-N+1 pattern as listMovements).
+        Set<UUID> accessible = accessibleProjectIds(me);
+        return jdbc.queryForList(sql.toString(), args.toArray())
+                .stream()
+                .map(CashService::toStatementLine)
+                .filter(s -> s.projectId() == null || accessible.contains(s.projectId()))
+                .toList();
+    }
+
+    /**
+     * GET /api/cash/movements/export?from=&to=&potId=&projectId=&status=
+     *
+     * <p>Same shape + ordering as {@link #getPotStatement} but org-wide
+     * (potId optional). Designed for the monthly cabinet/comptable export —
+     * the controller serializes the rows as JSON (default) or CSV (when the
+     * caller sends {@code Accept: text/csv}).
+     *
+     * <p>{@code status} filter accepts the raw codes: DRAFT, POSTED, VOID.
+     * The frontend maps PENDING → filter on (status=DRAFT + process_instance_id
+     * not null) client-side; we don't add a PENDING pseudo-status server-side
+     * because it would diverge from the DB column vocabulary.
+     */
+    public List<StatementLine> exportMovements(Authentication auth,
+                                                LocalDate from, LocalDate to,
+                                                UUID potId, UUID projectId, String status) {
+        AppUser me = currentUser(auth);
+        if (projectId != null) requireProjectAccess(me, projectId);
+
+        List<Object> args = new ArrayList<>();
+        args.add(me.getOrgId());
+        StringBuilder sql = new StringBuilder("""
+                select m.id, m.movement_date, m.voucher_no,
+                       m.party_id,    py.name  as party_name,
+                       m.nature, m.label, m.movement_type,
+                       m.payment_mode, m.payment_ref, m.invoice_ref,
+                       m.amount, m.currency, m.status,
+                       m.project_id,  p.name   as project_name,
+                       m.process_instance_id
+                from cash_movement m
+                left join party   py on py.id  = m.party_id
+                left join project p  on p.id   = m.project_id
+                where m.org_id = ?
+                """);
+
+        if (potId != null) {
+            sql.append(" and (m.from_pot_id = ? or m.to_pot_id = ?)");
+            args.add(potId); args.add(potId);
+        }
+        if (projectId != null) {
+            sql.append(" and m.project_id = ?");
+            args.add(projectId);
+        }
+        if (status != null && !status.isBlank()) {
+            sql.append(" and m.status = ?");
+            args.add(status.trim().toUpperCase());
+        }
+        if (from != null) {
+            sql.append(" and m.movement_date >= ?");
+            args.add(Date.valueOf(from));
+        }
+        if (to != null) {
+            sql.append(" and m.movement_date <= ?");
+            args.add(Date.valueOf(to));
+        }
+        sql.append(" order by m.movement_date asc, m.created_at asc");
+
+        Set<UUID> accessible = accessibleProjectIds(me);
+        return jdbc.queryForList(sql.toString(), args.toArray())
+                .stream()
+                .map(CashService::toStatementLine)
+                .filter(s -> s.projectId() == null || accessible.contains(s.projectId()))
+                .toList();
+    }
+
+    /** Mapper for StatementLine — joins resolved as columns in the SELECT. */
+    private static StatementLine toStatementLine(Map<String, Object> row) {
+        Object dateObj = row.get("movement_date");
+        LocalDate movementDate = dateObj == null ? null
+                : (dateObj instanceof Date d ? d.toLocalDate()
+                    : LocalDate.parse(dateObj.toString()));
+        return new StatementLine(
+                (UUID) row.get("id"),
+                movementDate,
+                (String) row.get("voucher_no"),
+                (UUID) row.get("party_id"),
+                (String) row.get("party_name"),
+                (String) row.get("nature"),
+                (String) row.get("label"),
+                (String) row.get("movement_type"),
+                (String) row.get("payment_mode"),
+                (String) row.get("payment_ref"),
+                (String) row.get("invoice_ref"),
+                (BigDecimal) row.get("amount"),
+                (String) row.get("currency"),
+                (String) row.get("status"),
+                (UUID) row.get("project_id"),
+                (String) row.get("project_name"),
+                (UUID) row.get("process_instance_id")
+        );
     }
 
     // ══════════════════════════════════════════════════════════════

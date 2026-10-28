@@ -46,6 +46,22 @@ public class PartyController {
         return ResponseEntity.ok(svc.get(auth, id));
     }
 
+    /**
+     * GET /api/parties/{id}/cash-summary?projectId=optional — fiche tiers money side.
+     *
+     * <p>Returns: totalPaid (SUM POSTED OUT amount), movementCount,
+     * lastMovementDate, and a list of the 10 most recent POSTED OUT
+     * movements to this party (deep-linkable to movement detail).
+     */
+    @GetMapping("/{id}/cash-summary")
+    @PreAuthorize("hasAuthority('PERM_CASH_READ')")
+    public ResponseEntity<PartyService.CashSummary> cashSummary(
+            @PathVariable UUID id,
+            @RequestParam(required = false) UUID projectId,
+            Authentication auth) {
+        return ResponseEntity.ok(svc.cashSummary(auth, id, projectId));
+    }
+
     /** POST /api/parties — body: { name, type, phone } */
     @PostMapping
     @PreAuthorize("hasAuthority('PERM_PARTY_MANAGE')")

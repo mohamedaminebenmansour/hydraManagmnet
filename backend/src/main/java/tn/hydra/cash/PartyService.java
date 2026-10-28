@@ -11,7 +11,10 @@ import tn.hydra.exception.ResourceNotFoundException;
 import tn.hydra.user.AppUser;
 import tn.hydra.user.AppUserRepository;
 
+import java.math.BigDecimal;
+import java.sql.Date;
 import java.time.Instant;
+import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -47,6 +50,43 @@ public class PartyService {
 
     public record CreatePartyRequest(String name, String type, String phone) {}
     public record UpdatePartyRequest(String name, String type, String phone, Boolean active) {}
+
+    /**
+     * Fiche tiers — money summary for one party.
+     *
+     * <p>Mirrors what the owner sees when opening a sous-traitant / fournisseur
+     * in the caisse UI: how much has been paid to them total (sum of POSTED
+     * OUT movements), how many movements, the last payment date, and a short
+     * list of recent movements (deep-linkable to the movement detail view).
+     *
+     * <p>Single round-trip: one COUNT + SUM + MAX query, then one paginated
+     * SELECT for the recent list. No client-side N+1.
+     */
+    public record CashSummary(
+            UUID partyId,
+            String partyName,
+            String partyType,
+            BigDecimal totalPaid,       // sum OUT POSTED amount (what the company actually paid)
+            int movementCount,          // count of OUT POSTED movements
+            LocalDate lastMovementDate, // max(movement_date) among OUT POSTED
+            List<CashSummaryLine> recent // last 10 POSTED OUT movements, ordered desc
+    ) {}
+
+    /** One line of the recent-movements list inside {@link CashSummary}. */
+    public record CashSummaryLine(
+            UUID id,
+            LocalDate movementDate,
+            BigDecimal amount,
+            String movementType,
+            String status,
+            String paymentMode,
+            String voucherNo,
+            String label,
+            UUID projectId,
+            String projectName,
+            UUID potId,
+            String potName
+    ) {}
 
     // ══════════════════════════════════════════════════════════════
     //  AUTH HELPERS — uses PERM_PARTY_MANAGE for writes.
@@ -121,6 +161,136 @@ public class PartyService {
             throw new ResourceNotFoundException("PARTY_NOT_FOUND", "Tiers introuvable");
         }
         return toResponse(rows.get(0));
+    }
+
+    // ══════════════════════════════════════════════════════════════
+    //  CASH SUMMARY — fiche tiers (TASK 2)
+    //  Total paid (POSTED OUT) + count + last date + recent movements.
+    //  All in 2 queries (1 aggregate + 1 list) — no client-side N+1.
+    // ══════════════════════════════════════════════════════════════
+
+    /**
+     * GET /api/parties/{id}/cash-summary?projectId=optional
+     *
+     * <p>"Fiche tiers" — the money side of a sous-traitant / fournisseur:
+     * <ul>
+     *   <li>{@code totalPaid} — SUM(POSTED OUT amount) for this party
+     *       (the money the company actually handed out);</li>
+     *   <li>{@code movementCount} — how many POSTED OUT movements to this party;</li>
+     *   <li>{@code lastMovementDate} — most recent POSTED OUT date (when did we
+     *       last pay them);</li>
+     *   <li>{@code recent} — last 10 POSTED OUT movements, deep-linkable to the
+     *       movement detail view.</li>
+     * </ul>
+     *
+     * <p>Optional {@code projectId} scopes the summary to a single project
+     * (useful when a sous-traitant works on several chantiers).
+     *
+     * <p>Access: caller must own the party (party.org_id == caller.org_id).
+     * Reads are gated by PERM_CASH_READ at the controller level (same as the
+     * rest of the cash domain).
+     */
+    public CashSummary cashSummary(Authentication auth, UUID partyId, UUID projectId) {
+        AppUser me = currentUser(auth);
+
+        // (1) Aggregate query — COUNT + SUM + MAX in one round-trip
+        StringBuilder aggSql = new StringBuilder("""
+                select py.id   as party_id,
+                       py.name as party_name,
+                       py.type as party_type,
+                       coalesce(sum(case when m.status = 'POSTED' and m.movement_type = 'OUT'
+                                         then m.amount else 0 end), 0) as total_paid,
+                       count(case when m.status = 'POSTED' and m.movement_type = 'OUT'
+                                  then 1 end) as movement_count,
+                       max(case when m.status = 'POSTED' and m.movement_type = 'OUT'
+                                then m.movement_date end) as last_date
+                from party py
+                left join cash_movement m on m.party_id = py.id and m.org_id = py.org_id
+                where py.id = ? and py.org_id = ?
+                """);
+        List<Object> aggArgs = new ArrayList<>();
+        aggArgs.add(partyId);
+        aggArgs.add(me.getOrgId());
+        if (projectId != null) {
+            aggSql.append(" and m.project_id = ?");
+            aggArgs.add(projectId);
+        }
+        aggSql.append(" group by py.id, py.name, py.type");
+
+        Map<String, Object> agg;
+        try {
+            agg = jdbc.queryForMap(aggSql.toString(), aggArgs.toArray());
+        } catch (org.springframework.dao.EmptyResultDataAccessException e) {
+            throw new ResourceNotFoundException("PARTY_NOT_FOUND", "Tiers introuvable");
+        }
+
+        BigDecimal totalPaid = agg.get("total_paid") == null ? BigDecimal.ZERO
+                : (BigDecimal) agg.get("total_paid");
+        // count() returns Long in PostgreSQL via JDBC; cast safely
+        int movementCount = ((Number) agg.get("movement_count")).intValue();
+        Object lastDateObj = agg.get("last_date");
+        LocalDate lastDate = lastDateObj == null ? null
+                : (lastDateObj instanceof Date d ? d.toLocalDate()
+                    : LocalDate.parse(lastDateObj.toString()));
+
+        // (2) Recent list — last 10 POSTED OUT movements, JOINed with project + pot names
+        //     (single query; no per-row lookup)
+        StringBuilder recentSql = new StringBuilder("""
+                select m.id, m.movement_date, m.amount, m.movement_type, m.status,
+                       m.payment_mode, m.voucher_no, m.label,
+                       m.project_id, p.name as project_name,
+                       m.from_pot_id as pot_id, fp.name as pot_name
+                from cash_movement m
+                left join project  p  on p.id  = m.project_id
+                left join cash_pot fp on fp.id = m.from_pot_id
+                where m.party_id = ? and m.org_id = ?
+                  and m.movement_type = 'OUT' and m.status = 'POSTED'
+                """);
+        List<Object> recentArgs = new ArrayList<>();
+        recentArgs.add(partyId);
+        recentArgs.add(me.getOrgId());
+        if (projectId != null) {
+            recentSql.append(" and m.project_id = ?");
+            recentArgs.add(projectId);
+        }
+        recentSql.append(" order by m.movement_date desc, m.created_at desc limit 10");
+
+        List<CashSummaryLine> recent = jdbc.queryForList(recentSql.toString(), recentArgs.toArray())
+                .stream()
+                .map(PartyService::toCashSummaryLine)
+                .toList();
+
+        return new CashSummary(
+                partyId,
+                (String) agg.get("party_name"),
+                (String) agg.get("party_type"),
+                totalPaid,
+                movementCount,
+                lastDate,
+                recent
+        );
+    }
+
+    /** Mapper for CashSummaryLine. */
+    private static CashSummaryLine toCashSummaryLine(Map<String, Object> row) {
+        Object dateObj = row.get("movement_date");
+        LocalDate movementDate = dateObj == null ? null
+                : (dateObj instanceof Date d ? d.toLocalDate()
+                    : LocalDate.parse(dateObj.toString()));
+        return new CashSummaryLine(
+                (UUID) row.get("id"),
+                movementDate,
+                (BigDecimal) row.get("amount"),
+                (String) row.get("movement_type"),
+                (String) row.get("status"),
+                (String) row.get("payment_mode"),
+                (String) row.get("voucher_no"),
+                (String) row.get("label"),
+                (UUID) row.get("project_id"),
+                (String) row.get("project_name"),
+                (UUID) row.get("pot_id"),
+                (String) row.get("pot_name")
+        );
     }
 
     // ══════════════════════════════════════════════════════════════
