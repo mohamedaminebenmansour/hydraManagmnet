@@ -4,10 +4,12 @@ import { FormsModule } from '@angular/forms';
 import { ActivatedRoute, RouterLink } from '@angular/router';
 import { ButtonModule } from 'primeng/button';
 import { DatePickerModule } from 'primeng/datepicker';
+import { TooltipModule } from 'primeng/tooltip';
 import { CashService } from '@app/core/services/cash.service';
 import { PartyService } from '@app/core/services/party.service';
 import { AuthService } from '@app/core/auth.service';
 import { PERM } from '@app/core/permissions';
+import { ViewModeService } from '@app/core/view-mode.service';
 import {
   CashMovement, CashPot, StatementLine,
   PaymentMode, PAYMENT_MODE_LABEL, PAYMENT_MODE_ICON, NATURE_LABEL,
@@ -28,7 +30,7 @@ import {
 @Component({
   selector: 'app-pot-detail',
   standalone: true,
-  imports: [ButtonModule, RouterLink, DatePipe, CommonModule, FormsModule, DatePickerModule],
+  imports: [ButtonModule, RouterLink, DatePipe, CommonModule, FormsModule, DatePickerModule, TooltipModule],
   styleUrl: './pot-detail.component.scss',
   template: `
     <section class="pot-detail">
@@ -160,11 +162,23 @@ import {
           }
         </section>
 
-        <!-- Movement history (card list — quick scan) -->
+        <!-- Movement history — DUAL VIEW: table (Excel-like) or cards -->
         <section class="pd-movements">
           <header class="pdm-head">
             <h2><i class="pi pi-list"></i> Historique des opérations</h2>
-            <span class="pdm-count">{{ movements().length }} opération(s)</span>
+            <div class="pdm-head-right">
+              <span class="pdm-count">{{ movements().length }} opération(s)</span>
+              <div class="view-toggle">
+                <button pButton [text]="true" [outlined]="mvViewMode() !== 'table'"
+                        icon="pi pi-list" pTooltip="Tableau" tooltipPosition="top"
+                        (click)="viewModeService.set('movements', 'table')"
+                        [style.class]="mvViewMode() === 'table' ? 'vt-active' : ''"></button>
+                <button pButton [text]="true" [outlined]="mvViewMode() !== 'cards'"
+                        icon="pi pi-th-large" pTooltip="Cartes" tooltipPosition="top"
+                        (click)="viewModeService.set('movements', 'cards')"
+                        [style.class]="mvViewMode() === 'cards' ? 'vt-active' : ''"></button>
+              </div>
+            </div>
           </header>
 
           @if (movementsLoading()) {
@@ -176,41 +190,94 @@ import {
               <small>Encaissez ou payez pour voir l'historique ici.</small>
             </div>
           } @else {
-            <div class="pdm-list">
-              @for (m of movements(); track m.id) {
-                <a [routerLink]="['/tresorerie/operations', m.id]" class="mv-row"
-                   [style.--mv-color]="tv(m.movementType).color">
-                  <div class="mv-icon">
-                    <i class="pi" [class]="tv(m.movementType).icon"></i>
-                  </div>
-                  <div class="mv-body">
-                    <div class="mv-label">{{ m.label || tv(m.movementType).label }}</div>
-                    <div class="mv-meta">
-                      <span class="mv-date">{{ formatDate(m.movementDate) }}</span>
-                      @if (partyName(m.partyId)) {
-                        <span class="mv-party">
-                          <i class="pi pi-user"></i> {{ partyName(m.partyId) }}
-                        </span>
-                      }
-                      @if (potName(m.fromPotId) && m.fromPotId !== p.id) {
-                        <span class="mv-pot">← {{ potName(m.fromPotId) }}</span>
-                      }
-                      @if (potName(m.toPotId) && m.toPotId !== p.id) {
-                        <span class="mv-pot">→ {{ potName(m.toPotId) }}</span>
-                      }
+            <!-- TABLE VIEW (Excel-like dense rows) -->
+            @if (mvViewMode() === 'table') {
+              <div class="pdm-table-wrap">
+                <table class="pdm-table">
+                  <thead>
+                    <tr>
+                      <th>Date</th>
+                      <th>Libellé</th>
+                      <th>Tiers</th>
+                      <th>Type</th>
+                      <th>Mode</th>
+                      <th class="num">Montant</th>
+                      <th>Statut</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    @for (m of movements(); track m.id) {
+                      <tr [routerLink]="['/tresorerie/operations', m.id]"
+                          [class.row-posted]="m.status === 'POSTED'"
+                          [class.row-draft]="m.status === 'DRAFT'">
+                        <td class="c-date">{{ formatDate(m.movementDate) }}</td>
+                        <td class="c-label">{{ m.label || tv(m.movementType).label }}</td>
+                        <td class="c-party">{{ partyName(m.partyId) || '—' }}</td>
+                        <td class="c-type">
+                          <i class="pi" [class]="tv(m.movementType).icon"
+                             [style.color]="tv(m.movementType).color"></i>
+                        </td>
+                        <td class="c-mode">
+                          @if (m.paymentMode) {
+                            <span class="mode-chip">{{ modeLabel(m.paymentMode) }}</span>
+                          } @else { — }
+                        </td>
+                        <td class="c-amt num"
+                            [class.in]="m.movementType === 'IN'"
+                            [class.out]="m.movementType === 'OUT'">
+                          {{ mvSign(m) }}{{ fmt(m.amount) }}
+                        </td>
+                        <td class="c-status">
+                          <span class="mv-status"
+                                [style.--st-color]="sv(m.status, pd(m)).color"
+                                [style.--st-soft]="sv(m.status, pd(m)).soft">
+                            <i class="pi" [class]="sv(m.status, pd(m)).icon"></i>
+                            {{ sv(m.status, pd(m)).label }}
+                          </span>
+                        </td>
+                      </tr>
+                    }
+                  </tbody>
+                </table>
+              </div>
+            } @else {
+              <!-- CARDS VIEW (visual summary) -->
+              <div class="pdm-list">
+                @for (m of movements(); track m.id) {
+                  <a [routerLink]="['/tresorerie/operations', m.id]" class="mv-row"
+                     [style.--mv-color]="tv(m.movementType).color">
+                    <div class="mv-icon">
+                      <i class="pi" [class]="tv(m.movementType).icon"></i>
                     </div>
-                  </div>
-                  <div class="mv-right">
-                    <div class="mv-amount" [class.in]="m.movementType === 'IN'" [class.out]="m.movementType === 'OUT'">
-                      {{ mvSign(m) }}{{ fmt(m.amount) }}
+                    <div class="mv-body">
+                      <div class="mv-label">{{ m.label || tv(m.movementType).label }}</div>
+                      <div class="mv-meta">
+                        <span class="mv-date">{{ formatDate(m.movementDate) }}</span>
+                        @if (partyName(m.partyId)) {
+                          <span class="mv-party">
+                            <i class="pi pi-user"></i> {{ partyName(m.partyId) }}
+                          </span>
+                        }
+                        @if (potName(m.fromPotId) && m.fromPotId !== p.id) {
+                          <span class="mv-pot">← {{ potName(m.fromPotId) }}</span>
+                        }
+                        @if (potName(m.toPotId) && m.toPotId !== p.id) {
+                          <span class="mv-pot">→ {{ potName(m.toPotId) }}</span>
+                        }
+                      </div>
                     </div>
-                    <span class="mv-status" [style.--st-color]="sv(m.status, pd(m)).color" [style.--st-soft]="sv(m.status, pd(m)).soft">
-                      <i class="pi" [class]="sv(m.status, pd(m)).icon"></i> {{ sv(m.status, pd(m)).label }}
-                    </span>
-                  </div>
-                </a>
-              }
-            </div>
+                    <div class="mv-right">
+                      <div class="mv-amount" [class.in]="m.movementType === 'IN'" [class.out]="m.movementType === 'OUT'">
+                        {{ mvSign(m) }}{{ fmt(m.amount) }}
+                      </div>
+                      <span class="mv-status" [style.--st-color]="sv(m.status, pd(m)).color" [style.--st-soft]="sv(m.status, pd(m)).soft">
+                        <i class="pi" [class]="sv(m.status, pd(m)).icon"></i> {{ sv(m.status, pd(m)).label }}
+                      </span>
+                    </div>
+                  </a>
+                }
+              </div>
+            }
           }
         </section>
       }
@@ -223,6 +290,7 @@ export class PotDetailComponent implements OnInit {
   private cashService = inject(CashService);
   private partyService = inject(PartyService);
   private auth = inject(AuthService);
+  viewModeService = inject(ViewModeService);
 
   // Route only requires CASH_READ — creating operations needs CASH_DRAFT
   canDraft = this.auth.can(PERM.CASH_DRAFT);
@@ -233,6 +301,9 @@ export class PotDetailComponent implements OnInit {
 
   movements = signal<CashMovement[]>([]);
   movementsLoading = signal(true);
+
+  // Dual view toggle — defaults to 'table' (Excel mental model for BTP users)
+  mvViewMode = this.viewModeService.forPage('movements', 'table');
 
   // TASK 4 — État de caisse
   statement = signal<StatementLine[]>([]);

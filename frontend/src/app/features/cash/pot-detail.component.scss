@@ -255,3 +255,88 @@
     i { font-size: 9px; color: var(--st-color, #64748b); }
   }
 }
+
+// ═══════════════════════════════════════════════════════════════
+// DUAL VIEW (table + cards) — Excel-like dense rows for BTP users
+// ═══════════════════════════════════════════════════════════════
+
+.pdm-head-right {
+  display: flex; align-items: center; gap: 10px;
+}
+
+.view-toggle {
+  display: inline-flex; gap: 2px;
+  background: #f1f5f9; border-radius: 8px; padding: 2px;
+  button { padding: 6px 10px; border-radius: 6px;
+    &.vt-active, &:host(.vt-active) { background: #fff; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
+  }
+  ::ng-deep .vt-active { background: #fff !important; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
+  ::ng-deep .p-button-text { color: #64748b; }
+  ::ng-deep .p-button-text.vt-active { color: #0d9488; }
+}
+
+.pdm-table-wrap {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+}
+
+.pdm-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+  min-width: 760px;
+
+  thead th {
+    text-align: left;
+    padding: 10px 12px;
+    font-weight: 700; color: #475569;
+    background: #f8fafc;
+    border-bottom: 2px solid #e2e8f0;
+    white-space: nowrap;
+    &.num { text-align: right; }
+  }
+
+  tbody tr {
+    cursor: pointer;
+    border-bottom: 1px solid #f1f5f9;
+    transition: background 0.1s ease;
+    &:hover { background: #f8fafc; }
+    &.row-draft { background: #fffbeb; }
+    &.row-draft:hover { background: #fef3c7; }
+    td {
+      padding: 9px 12px;
+      color: #0f172a;
+      vertical-align: middle;
+      white-space: nowrap;
+      &.num { text-align: right; font-variant-numeric: tabular-nums; }
+      &.c-label { white-space: normal; max-width: 220px; overflow: hidden; text-overflow: ellipsis; }
+      &.c-amt {
+        font-weight: 700;
+        color: #64748b;
+        &.in { color: #16a34a; }
+        &.out { color: #dc2626; }
+      }
+      &.c-date { color: #64748b; font-size: 12px; }
+      &.c-party { color: #475569; }
+    }
+  }
+
+  .mode-chip {
+    display: inline-block;
+    padding: 2px 7px; border-radius: 999px;
+    background: #f1f5f9; color: #475569;
+    font-size: 11px; font-weight: 600;
+  }
+
+  .mv-status {
+    font-size: 10px; font-weight: 700;
+    padding: 2px 7px; border-radius: 999px;
+    background: var(--st-soft, #f1f5f9);
+    color: var(--st-color, #64748b);
+    display: inline-flex; align-items: center; gap: 4px;
+    white-space: nowrap;
+    i { font-size: 9px; color: var(--st-color, #64748b); }
+  }
+}
