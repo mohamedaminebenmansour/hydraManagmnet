@@ -330,6 +330,23 @@ public class CashController {
     }
 
     /**
+     * POST /api/cash/movements/{id}/request-void — TASK 6: finance requests
+     * a void (cannot void alone). Sets void_requested_at + void_request_reason
+     * on the movement + audits CASH_VOID_REQUESTED. Owner sees the request on
+     * the movement detail and calls the existing void endpoint.
+     *
+     * Permission: CASH_DRAFT (finance has it; owner too).
+     */
+    @PostMapping("/movements/{id}/request-void")
+    @PreAuthorize("hasAuthority('PERM_CASH_DRAFT')")
+    public ResponseEntity<CashService.MovementResponse> requestVoid(
+            @PathVariable UUID id,
+            @RequestBody CashService.VoidRequestRequest req,
+            Authentication auth) {
+        return ResponseEntity.ok(svc.requestVoid(auth, id, req));
+    }
+
+    /**
      * POST /api/cash/movements/{id}/attachment — TASK 3: attach the payment
      * proof (facture / BL / situation) to a DRAFT movement.
      *

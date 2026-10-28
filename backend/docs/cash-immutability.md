@@ -147,3 +147,42 @@ psql -c "select details from event_log where entity_id='$MOVEMENT' and action='C
 - **No void of a movement linked to a RUNNING process**: the process must be
   COMPLETED or REJECTED first. A RUNNING process means the movement is still
   DRAFT (not yet POSTED), so void is impossible (it's not POSTED yet).
+
+## TASK 6 — Request void (finance asks, owner voids)
+
+### Endpoint
+
+`POST /api/cash/movements/{id}/request-void`
+
+**Body**: `{ "reason": "required non-blank" }`
+
+**Permission**: `PERM_CASH_DRAFT` (finance has it; owner too).
+
+**What it does**:
+- Sets `void_requested_at` + `void_request_reason` on the movement.
+- Audits `CASH_VOID_REQUESTED` with `{reason, requestedBy, movementStatus}`.
+- Does NOT void the movement — the owner still calls the existing void endpoint.
+
+**Guards**:
+- `400 REASON_REQUIRED` if reason is blank.
+- `409 MOVEMENT_NOT_POSTED` if status ≠ POSTED.
+
+**Movement detail response** now includes `voidRequestedAt` + `voidRequestReason`
+so the owner sees the request on the movement detail page.
+
+### Full correction flow
+
+1. Finance creates + posts a payment (POSTED).
+2. Finance discovers an error (wrong amount).
+3. Finance calls `POST /api/cash/movements/{id}/request-void` with reason.
+4. Owner opens movement detail → sees "Demande d'annulation" badge + reason.
+5. Owner calls `POST /api/cash/movements/{id}/void` with their own reason.
+6. Movement is VOID → balance updates.
+7. Finance creates a new DRAFT movement with the correct amount.
+
+### Audit actions
+
+| Action | When | Details JSON |
+|--------|------|-------------|
+| `CASH_VOID_REQUESTED` | Finance requests void | `{reason, requestedBy, movementStatus}` |
+| `CASH_MOVEMENT_VOIDED` | Owner voids | `{reason, voidedBy, amount, movementType, fromPotId, partyId, projectId}` |

@@ -160,7 +160,9 @@ public class CashService {
             UUID documentId, String documentName,
             // V26 enriched fields — Tunisian état de caisse (all nullable)
             String paymentMode, String paymentRef,
-            String voucherNo, String nature, String invoiceRef) {}
+            String voucherNo, String nature, String invoiceRef,
+            // V28 (TASK 6) — void request flag (finance asks, owner voids)
+            Instant voidRequestedAt, String voidRequestReason) {}
 
     /** One event in the movement timeline. */
     public record MovementTimelineEvent(
@@ -242,6 +244,9 @@ public class CashService {
     public record PostResponse(UUID id, String status, BigDecimal fromPotBalanceAfter) {}
 
     public record VoidRequest(String reason) {}
+
+    /** TASK 6 — body for POST /api/cash/movements/{id}/request-void. */
+    public record VoidRequestRequest(String reason) {}
 
     /**
      * StatementLine — one row of an "état de caisse" (Excel-like statement).
@@ -719,7 +724,7 @@ public class CashService {
                        m.created_by,  m.created_at,
                        m.posted_by,   pbu.full_name as posted_by_name,  m.posted_at,
                        m.voided_by,   vu.full_name as voided_by_name,   m.voided_at,
-                       m.void_reason,
+                       m.void_reason, m.void_requested_at, m.void_request_reason,
                        m.payment_mode, m.payment_ref, m.voucher_no, m.nature, m.invoice_ref
                 from cash_movement m
                 left join cash_pot fp  on fp.id = m.from_pot_id
@@ -1092,7 +1097,7 @@ public class CashService {
                        m.created_by,  m.created_at,
                        m.posted_by,   pbu.full_name as posted_by_name,  m.posted_at,
                        m.voided_by,   vu.full_name as voided_by_name,   m.voided_at,
-                       m.void_reason,
+                       m.void_reason, m.void_requested_at, m.void_request_reason,
                        m.payment_mode, m.payment_ref, m.voucher_no, m.nature, m.invoice_ref
                 from cash_movement m
                 left join cash_pot fp  on fp.id = m.from_pot_id
@@ -1452,6 +1457,58 @@ public class CashService {
                 (partyId != null ? ",\"partyId\":\"" + partyId + "\"" : "") +
                 (projectId != null ? ",\"projectId\":\"" + projectId + "\"" : "") +
                 "}");
+
+        return getMovement(auth, id);
+    }
+
+    // ══════════════════════════════════════════════════════════════
+    //  TASK 6 — REQUEST VOID (finance asks, owner voids)
+    // ══════════════════════════════════════════════════════════════
+
+    /**
+     * POST /api/cash/movements/{id}/request-void
+     *
+     * <p>Finance (who can POST but NOT VOID) can request a void. This:
+     * <ul>
+     *   <li>Sets void_requested_at + void_request_reason on the movement;</li>
+     *   <li>Audits CASH_VOID_REQUESTED with the reason + who requested;</li>
+     *   <li>Does NOT void the movement — the owner still calls the existing
+     *       void endpoint with their own reason.</li>
+     * </ul>
+     *
+     * <p>Only works on POSTED movements (can't request void on a DRAFT or
+     * already-VOID movement).
+     *
+     * <p>Permission: anyone with CASH_DRAFT can request (finance has it).
+     * The owner sees the request on the movement detail and decides.
+     */
+    @Transactional
+    public MovementResponse requestVoid(Authentication auth, UUID id, VoidRequestRequest req) {
+        AppUser me = currentUser(auth);
+        if (req == null || req.reason() == null || req.reason().isBlank()) {
+            throw new BadRequestException("REASON_REQUIRED",
+                    "Un motif de demande d'annulation est obligatoire");
+        }
+
+        Map<String, Object> row = fetchMovementForUpdate(id, me.getOrgId());
+        String status = (String) row.get("status");
+        if (!"POSTED".equals(status)) {
+            throw new BusinessRuleException("MOVEMENT_NOT_POSTED",
+                    "Une demande d'annulation ne peut être faite que sur un mouvement POSTED. Statut actuel: " + status);
+        }
+
+        // Already requested? Allow re-request (updates the reason + timestamp).
+        jdbc.update("""
+                update cash_movement set
+                  void_requested_at = now(),
+                  void_request_reason = ?
+                where id = ? and org_id = ?
+                """, req.reason().trim(), id, me.getOrgId());
+
+        audit.log("CASH_VOID_REQUESTED", "cash_movement", id,
+                "{\"reason\":\"" + jsonEscape(req.reason().trim()) + "\"" +
+                ",\"requestedBy\":\"" + me.getId() + "\"" +
+                ",\"movementStatus\":\"POSTED\"}");
 
         return getMovement(auth, id);
     }
@@ -1848,7 +1905,10 @@ public class CashService {
                 (String) row.get("payment_ref"),
                 (String) row.get("voucher_no"),
                 (String) row.get("nature"),
-                (String) row.get("invoice_ref")
+                (String) row.get("invoice_ref"),
+                // V28 (TASK 6) — void request flag
+                toInstant(row.get("void_requested_at")),
+                (String) row.get("void_request_reason")
         );
     }
 
