@@ -38,6 +38,7 @@ import {
   avatarGradient, initials,
 } from '@app/shared/hydra-design';
 import { FolderAccessDialogComponent } from './folder-access-dialog.component';
+import { ProjectRoleAssigneesComponent } from './project-role-assignees.component';
 
 @Component({
   selector: 'app-project-detail',
@@ -58,7 +59,8 @@ import { FolderAccessDialogComponent } from './folder-access-dialog.component';
     RouterLink,
     DatePipe,
     EmptyStateComponent,
-    FolderAccessDialogComponent
+    FolderAccessDialogComponent,
+    ProjectRoleAssigneesComponent
   ],
   templateUrl: './project-detail.component.html',
   styleUrl: './project-detail.component.scss'

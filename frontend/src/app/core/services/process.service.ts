@@ -16,6 +16,8 @@ import {
   UpdateTemplateBody,
   CreateStepBody,
   UpdateStepBody,
+  RoleAssignee, RoleNeeded, UpsertRoleAssigneesBody,
+  mapRoleAssignee, mapRoleNeeded,
 } from '@app/core/models/process.model';
 
 import { MessageService } from 'primeng/api';
@@ -303,6 +305,91 @@ export class ProcessService {
             detail: err?.error?.message ?? 'Impossible d\u2019annuler le processus',
           });
           return of({ instanceId });
+        })
+      );
+  }
+
+  // ══════════════════════════════════════════════════════════════
+  //  V27 (TASK 1 backend) — PROJECT ROLE ASSIGNEES
+  //  Per-project business role → user mapping. Powers the "Qui valide quoi"
+  //  UI on the project detail page.
+  // ══════════════════════════════════════════════════════════════
+
+  /**
+   * GET /api/projects/{projectId}/process-roles-needed — composite view for
+   * the UI: distinct assignee_role from steps of templates enabled on this
+   * project, each with current assignee (if any) + candidate users.
+   * Single round-trip; no N+1.
+   */
+  listRolesNeeded(projectId: string): Observable<RoleNeeded[]> {
+    return this.http
+      .get<AnyRaw[]>(`/api/projects/${projectId}/process-roles-needed`)
+      .pipe(
+        map(list => (Array.isArray(list) ? list : []).map(mapRoleNeeded)),
+        catchError(err => {
+          this.msgs.add({
+            severity: 'error',
+            summary: 'Erreur',
+            detail: err?.error?.message ?? 'Impossible de charger les rôles processus',
+          });
+          return of([]);
+        })
+      );
+  }
+
+  /** GET /api/projects/{projectId}/process-role-assignees — list current mappings. */
+  listRoleAssignees(projectId: string): Observable<RoleAssignee[]> {
+    return this.http
+      .get<AnyRaw[]>(`/api/projects/${projectId}/process-role-assignees`)
+      .pipe(
+        map(list => (Array.isArray(list) ? list : []).map(mapRoleAssignee)),
+        catchError(err => {
+          this.msgs.add({
+            severity: 'error',
+            summary: 'Erreur',
+            detail: err?.error?.message ?? 'Impossible de charger les affectations',
+          });
+          return of([]);
+        })
+      );
+  }
+
+  /**
+   * PUT /api/projects/{projectId}/process-role-assignees — upsert batch.
+   * Body: { items: [{ roleCode, userId }] }. Returns the full updated list.
+   * Auth: org owner OR project ADMIN.
+   */
+  upsertRoleAssignees(projectId: string, body: UpsertRoleAssigneesBody): Observable<RoleAssignee[] | null> {
+    return this.http
+      .put<AnyRaw[]>(`/api/projects/${projectId}/process-role-assignees`, body)
+      .pipe(
+        map(list => (Array.isArray(list) ? list : []).map(mapRoleAssignee)),
+        catchError(err => {
+          this.msgs.add({
+            severity: 'error',
+            summary: 'Erreur',
+            detail: err?.error?.message ?? 'Impossible d\u2019enregistrer les affectations',
+          });
+          return of(null);
+        })
+      );
+  }
+
+  /** DELETE /api/projects/{projectId}/process-role-assignees/{roleCode} — drop a single mapping. */
+  deleteRoleAssignee(projectId: string, roleCode: string): Observable<boolean> {
+    return this.http
+      .delete(`/api/projects/${projectId}/process-role-assignees/${encodeURIComponent(roleCode)}`, {
+        observe: 'response',
+      })
+      .pipe(
+        map(resp => resp.status === 204),
+        catchError(err => {
+          this.msgs.add({
+            severity: 'error',
+            summary: 'Erreur',
+            detail: err?.error?.message ?? 'Impossible de supprimer l\u2019affectation',
+          });
+          return of(false);
         })
       );
   }

@@ -224,6 +224,9 @@
                       (onClick)="startProcess()" [disabled]="processesLoading()" />
           </div>
 
+          <!-- TASK 2 — Qui valide quoi: per-project business role → user mapping -->
+          <app-project-role-assignees [projectId]="proj?.id || ''" />
+
           @if (processesLoading()) {
             <div class="proc-loading"><i class="pi pi-spin pi-spinner"></i> Chargement…</div>
           } @else if (processes().length === 0) {

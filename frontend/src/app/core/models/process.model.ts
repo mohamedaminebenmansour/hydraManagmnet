@@ -269,3 +269,90 @@ export function mapTemplateDetail(raw: any): TemplateDetail {
 }
 
 
+
+// ============================================================================
+//  V27 (TASK 1 backend) — PROJECT ROLE ASSIGNEES (per-project business role
+//  → user mapping). Powers the "Qui valide quoi" UI on the project detail.
+// ============================================================================
+
+/** A role → user mapping as stored in project_role_assignee. */
+export interface RoleAssignee {
+  roleCode: string;
+  userId: string;
+  userName: string;
+  userEmail: string;
+}
+
+/** Body for PUT /api/projects/:id/process-role-assignees — upsert batch. */
+export interface UpsertRoleAssigneesBody {
+  items: { roleCode: string; userId: string }[];
+}
+
+/** One candidate user the owner can pick from. */
+export interface RoleCandidate {
+  userId: string;
+  userName: string;
+  userEmail: string;
+  isOwner: boolean;
+  isProjectMember: boolean;
+}
+
+/** Composite view returned by GET /process-roles-needed. */
+export interface RoleNeeded {
+  roleCode: string;
+  currentAssignee: RoleAssignee | null;
+  candidates: RoleCandidate[];
+}
+
+/** Mapper for RoleAssignee (defensive — backend may omit fields). */
+export function mapRoleAssignee(raw: any): RoleAssignee {
+  return {
+    roleCode: String(raw?.roleCode ?? raw?.role_code ?? ''),
+    userId: String(raw?.userId ?? raw?.user_id ?? ''),
+    userName: String(raw?.userName ?? raw?.user_name ?? ''),
+    userEmail: String(raw?.userEmail ?? raw?.user_email ?? ''),
+  };
+}
+
+/** Mapper for RoleNeeded (with currentAssignee + candidates). */
+export function mapRoleNeeded(raw: any): RoleNeeded {
+  const candidatesRaw: any[] = Array.isArray(raw?.candidates) ? raw.candidates : [];
+  return {
+    roleCode: String(raw?.roleCode ?? raw?.role_code ?? ''),
+    currentAssignee: raw?.currentAssignee
+      ? mapRoleAssignee(raw.currentAssignee)
+      : null,
+    candidates: candidatesRaw.map((c: any) => ({
+      userId: String(c?.userId ?? c?.user_id ?? ''),
+      userName: String(c?.userName ?? c?.user_name ?? ''),
+      userEmail: String(c?.userEmail ?? c?.user_email ?? ''),
+      isOwner: Boolean(c?.isOwner ?? c?.is_owner ?? false),
+      isProjectMember: Boolean(c?.isProjectMember ?? c?.is_project_member ?? false),
+    })),
+  };
+}
+
+/**
+ * Business role code → French label + icon for the UI. Codes are an open
+ * vocabulary (any template step can introduce a new one), so the map is
+ * best-effort: unknown codes fall back to the raw code with a generic icon.
+ */
+export const ROLE_LABEL: Record<string, string> = {
+  FINANCE: 'Finance',
+  OWNER: 'Gérant',
+  ACHAT: 'Achats',
+  CHEF_CHANTIER: 'Chef de chantier',
+  CHEF_PROJET: 'Chef de projet',
+  CONDUCTEUR: 'Conducteur de travaux',
+  BUREAU: 'Bureau d\u2019études',
+  QA: 'Qualité',
+  APPRO: 'Approvisionnement',
+  MAGASIN: 'Magasin',
+  COMPTE: 'Comptabilité',
+  DAF: 'Direction financière',
+};
+
+export function roleLabel(code: string | null | undefined): string {
+  if (!code) return '';
+  return ROLE_LABEL[code.toUpperCase()] ?? code;
+}
