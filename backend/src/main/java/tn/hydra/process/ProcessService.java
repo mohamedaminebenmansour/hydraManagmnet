@@ -672,14 +672,22 @@ public class ProcessService {
         boolean hasMovementDoc = false;
         BigDecimal assessedAmount = null;
         if ("CASH_MOVEMENT".equals(subjectType) && subjectId != null) {
-            Map<String, Object> mv = jdbc.queryForMap(
+            // queryForList (not queryForMap) so a missing movement doesn't
+            // throw EmptyResultDataAccessException → 500. A missing movement
+            // is unusual but possible (e.g. orphaned process instance from a
+            // deleted test movement) — we degrade gracefully: no attachment
+            // detected, no assessedAmount in the audit.
+            List<Map<String, Object>> mvRows = jdbc.queryForList(
                     """
                     select document_id, amount from cash_movement
                     where id = ? and org_id = ?
                     """,
                     subjectId, orgId);
-            hasMovementDoc = mv.get("document_id") != null;
-            assessedAmount = (BigDecimal) mv.get("amount");
+            if (!mvRows.isEmpty()) {
+                Map<String, Object> mv = mvRows.get(0);
+                hasMovementDoc = mv.get("document_id") != null;
+                assessedAmount = (BigDecimal) mv.get("amount");
+            }
         }
         boolean hasAttachment = hasStepDocs || hasMovementDoc;
         if (requiresAttachment && !hasAttachment) {
@@ -846,15 +854,20 @@ public class ProcessService {
         requireStepAccess(me, stepInstanceId, assigneeUserId, assigneeRole, projectId);
 
         // ── TASK 3: hasAttachment + assessedAmount for the audit (cash subjects) ──
+        // queryForList (not queryForMap) so a missing movement doesn't throw
+        // EmptyResultDataAccessException → 500. Same null-safe pattern as completeStep.
         boolean hasAttachment = false;
         BigDecimal assessedAmount = null;
         if ("CASH_MOVEMENT".equals(subjectType) && subjectId != null) {
-            Map<String, Object> mv = jdbc.queryForMap(
+            List<Map<String, Object>> mvRows = jdbc.queryForList(
                     "select document_id, amount from cash_movement where id = ? and org_id = ?",
                     subjectId, orgId);
-            hasAttachment = mv.get("document_id") != null
-                    || countStepDocuments(stepInstanceId) > 0;
-            assessedAmount = (BigDecimal) mv.get("amount");
+            if (!mvRows.isEmpty()) {
+                Map<String, Object> mv = mvRows.get(0);
+                hasAttachment = mv.get("document_id") != null
+                        || countStepDocuments(stepInstanceId) > 0;
+                assessedAmount = (BigDecimal) mv.get("amount");
+            }
         }
 
         jdbc.update(
