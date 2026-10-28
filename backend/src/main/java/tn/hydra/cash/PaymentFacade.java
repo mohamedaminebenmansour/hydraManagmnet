@@ -68,6 +68,14 @@ public class PaymentFacade {
      *     DB check chk_cm_variance_reason is the safety net);
      *   - amount stays accepted for backward compatibility with the B5 short
      *     form: when claimed/assessed are omitted, amount IS the assessed value.
+     *
+     * V26 enriched fields (Tunisian état de caisse — all optional):
+     *   - paymentMode : ESPECE | CHEQUE | VIREMENT | VERSEMENT | MANDAT | AUTRE
+     *   - paymentRef  : n° chèque / réf virement / réf mandat (free text)
+     *   - voucherNo   : Bon N° (petty-cash voucher best practice)
+     *   - nature      : ALIM_CAISSE | SOUS_TRAITANCE | MATERIEL | TRANSPORT |
+     *                   MAIN_OEUVRE | LOCATION | LABO | CARBURANT | DIVERS
+     *   - invoiceRef  : réf facture / situation du tiers (optional)
      */
     public record SubmitPaymentRequest(
             UUID fromPotId,
@@ -79,7 +87,13 @@ public class PaymentFacade {
             String note,
             java.math.BigDecimal claimedAmount,
             java.math.BigDecimal assessedAmount,
-            String varianceReason
+            String varianceReason,
+            // V26 enriched fields — Tunisian état de caisse (all optional)
+            String paymentMode,
+            String paymentRef,
+            String voucherNo,
+            String nature,
+            String invoiceRef
     ) {}
 
     /**
@@ -125,7 +139,13 @@ public class PaymentFacade {
                 null,                           // processInstanceId set in step (c)
                 req.claimedAmount(),
                 req.assessedAmount(),
-                req.varianceReason()
+                req.varianceReason(),
+                // V26 enriched fields — Tunisian état de caisse (pass-through; CashService validates)
+                req.paymentMode(),
+                req.paymentRef(),
+                req.voucherNo(),
+                req.nature(),
+                req.invoiceRef()
         );
         CashService.MovementResponse movement = cashService.createMovement(auth, draftReq);
 
@@ -165,6 +185,9 @@ public class PaymentFacade {
                 (movement.claimedAmount() != null ? ",\"claimedAmount\":" + movement.claimedAmount() : "") +
                 (movement.assessedAmount() != null ? ",\"assessedAmount\":" + movement.assessedAmount() : "") +
                 (movement.varianceReason() != null ? ",\"varianceReason\":\"" + variance + "\"" : "") +
+                (movement.paymentMode()   != null ? ",\"paymentMode\":\""   + movement.paymentMode()   + "\"" : "") +
+                (movement.nature()        != null ? ",\"nature\":\""          + movement.nature()        + "\"" : "") +
+                (movement.voucherNo()     != null ? ",\"voucherNo\":\""       + movement.voucherNo().replace("\\", "\\\\").replace("\"", "\\\"") + "\"" : "") +
                 ",\"fromPot\":\"" + movement.fromPotId() + "\"}");
 
         // (e) Return — refetch the movement so processInstanceId is populated

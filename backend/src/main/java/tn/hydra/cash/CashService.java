@@ -132,7 +132,10 @@ public class CashService {
                                     UUID postedBy, Instant postedAt,
                                     UUID voidedBy, Instant voidedAt, String voidReason,
                                     BigDecimal claimedAmount, BigDecimal assessedAmount,
-                                    String varianceReason, UUID documentId) {}
+                                    String varianceReason, UUID documentId,
+                                    // V26 enriched fields — Tunisian état de caisse (all nullable)
+                                    String paymentMode, String paymentRef,
+                                    String voucherNo, String nature, String invoiceRef) {}
 
     /**
      * Richer movement response — includes the human-readable names of the
@@ -154,7 +157,10 @@ public class CashService {
             UUID postedBy, String postedByName, Instant postedAt,
             UUID voidedBy, String voidedByName, Instant voidedAt, String voidReason,
             BigDecimal claimedAmount, BigDecimal assessedAmount, String varianceReason,
-            UUID documentId, String documentName) {}
+            UUID documentId, String documentName,
+            // V26 enriched fields — Tunisian état de caisse (all nullable)
+            String paymentMode, String paymentRef,
+            String voucherNo, String nature, String invoiceRef) {}
 
     /** One event in the movement timeline. */
     public record MovementTimelineEvent(
@@ -182,6 +188,11 @@ public class CashService {
             String projectName,
             UUID processInstanceId,
             UUID documentId, String documentName,
+            // V26 enriched fields — cheap to include in the snapshot since the
+            // detail fetch already SELECTs them; lets the timeline surface
+            // "paid by CHEQUE / voucher 0142 / nature SOUS_TRAITANCE" at a glance.
+            String paymentMode, String paymentRef,
+            String voucherNo, String nature, String invoiceRef,
             List<MovementTimelineEvent> events) {}
 
     /**
@@ -191,6 +202,16 @@ public class CashService {
      * assessed amount). claimedAmount alone defaults assessed to the same value.
      * If claimed != assessed, varianceReason is REQUIRED (service-enforced +
      * DB check chk_cm_variance_reason).
+     *
+     * V26 enriched fields (Tunisian état de caisse — all optional):
+     *   - paymentMode : ESPECE | CHEQUE | VIREMENT | VERSEMENT | MANDAT | AUTRE
+     *   - paymentRef  : n° chèque / réf virement / réf mandat (free text)
+     *   - voucherNo   : Bon N° (petty-cash voucher best practice)
+     *   - nature      : ALIM_CAISSE | SOUS_TRAITANCE | MATERIEL | TRANSPORT |
+     *                   MAIN_OEUVRE | LOCATION | LABO | CARBURANT | DIVERS
+     *   - invoiceRef  : réf facture / situation du tiers (optional)
+     * NULL-safe: any combination may be omitted. The service normalizes blanks
+     * to null and rejects unknown enum codes with a French 400.
      */
     public record CreateMovementRequest(String movementType, BigDecimal amount,
                                          LocalDate movementDate, UUID fromPotId, UUID toPotId,
@@ -198,12 +219,25 @@ public class CashService {
                                          String label, String note,
                                          UUID processInstanceId,
                                          BigDecimal claimedAmount, BigDecimal assessedAmount,
-                                         String varianceReason) {}
+                                         String varianceReason,
+                                         String paymentMode, String paymentRef,
+                                         String voucherNo, String nature, String invoiceRef) {}
 
+    /**
+     * Update DRAFT movement. Same shape as create minus processInstanceId
+     * (the workflow link is set by PaymentFacade only). V26 enriched fields
+     * are accepted here so a DRAFT can be enriched after creation.
+     */
     public record UpdateMovementRequest(String movementType, BigDecimal amount,
                                          LocalDate movementDate, UUID fromPotId, UUID toPotId,
                                          UUID projectId, UUID partyId,
-                                         String label, String note) {}
+                                         String label, String note,
+                                         // V26 enriched fields — allowed on DRAFT update only
+                                         String paymentMode, String paymentRef,
+                                         String voucherNo, String nature, String invoiceRef,
+                                         // TASK 1 — claimed/assessed/variance allowed on DRAFT update
+                                         BigDecimal claimedAmount, BigDecimal assessedAmount,
+                                         String varianceReason) {}
 
     public record PostResponse(UUID id, String status, BigDecimal fromPotBalanceAfter) {}
 
@@ -470,6 +504,12 @@ public class CashService {
         validateMovementInput(req.movementType(), effectiveAmount, req.movementDate(),
                 req.fromPotId(), req.toPotId());
         validateClaimedAssessed(claimed, assessed, varianceReason);
+        // V26 enriched fields — normalize + validate enums (returns null for blank)
+        String paymentMode = validatePaymentMode(req.paymentMode());
+        String nature      = validateNature(req.nature());
+        String paymentRef  = blankToNull(req.paymentRef());
+        String voucherNo   = blankToNull(req.voucherNo());
+        String invoiceRef  = blankToNull(req.invoiceRef());
 
         // Resolve project_id: from request, or from PROJECT pot (when from/to is project pot)
         UUID resolvedProjectId = req.projectId();
@@ -495,13 +535,18 @@ public class CashService {
                   (id, org_id, movement_type, amount, currency, movement_date,
                    from_pot_id, to_pot_id, project_id, party_id, label, note,
                    claimed_amount, assessed_amount, variance_reason,
+                   payment_mode, payment_ref, voucher_no, nature, invoice_ref,
                    status, process_instance_id, created_by, created_at)
-                values (?, ?, ?, ?, 'TND', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'DRAFT', ?, ?, now())
+                values (?, ?, ?, ?, 'TND', ?, ?, ?, ?, ?, ?, ?,
+                        ?, ?, ?,
+                        ?, ?, ?, ?, ?,
+                        'DRAFT', ?, ?, now())
                 """, id, me.getOrgId(), normalizeType(req.movementType()), effectiveAmount,
                 Date.valueOf(req.movementDate()),
                 req.fromPotId(), req.toPotId(), resolvedProjectId, req.partyId(),
                 blankToNull(req.label()), blankToNull(req.note()),
                 claimed, assessed, varianceReason,
+                paymentMode, paymentRef, voucherNo, nature, invoiceRef,
                 req.processInstanceId(),
                 me.getId());
 
@@ -511,6 +556,9 @@ public class CashService {
                 (claimed != null ? ",\"claimedAmount\":" + claimed : "") +
                 (assessed != null ? ",\"assessedAmount\":" + assessed : "") +
                 (varianceReason != null ? ",\"varianceReason\":\"" + jsonEscape(varianceReason) + "\"" : "") +
+                (paymentMode != null ? ",\"paymentMode\":\"" + paymentMode + "\"" : "") +
+                (nature      != null ? ",\"nature\":\"" + nature + "\"" : "") +
+                (voucherNo   != null ? ",\"voucherNo\":\"" + jsonEscape(voucherNo) + "\"" : "") +
                 ",\"status\":\"DRAFT\"}");
 
         return getMovement(auth, id);
@@ -538,16 +586,45 @@ public class CashService {
         UUID resolvedProjectId = req.projectId() != null ? req.projectId() : projectId;
         if (resolvedProjectId != null) requireProjectAccess(me, resolvedProjectId);
 
+        // V26 enriched fields — only DRAFT accepts updates (already checked above).
+        // paymentMode / nature: validate via enum (reject unknown codes with French 400).
+        String paymentMode = validatePaymentMode(req.paymentMode());
+        String nature      = validateNature(req.nature());
+        String paymentRef  = blankToNull(req.paymentRef());
+        String voucherNo   = blankToNull(req.voucherNo());
+        String invoiceRef  = blankToNull(req.invoiceRef());
+
+        // TASK 1 — claimed/assessed/variance allowed on DRAFT update (so the
+        // caisse can correct a wrong facture amount before posting). Same
+        // normalization + validation as createMovement.
+        BigDecimal claimed = req.claimedAmount();
+        BigDecimal assessed = req.assessedAmount();
+        String varianceReason = blankToNull(req.varianceReason());
+        if (claimed != null && assessed == null) {
+            assessed = claimed;
+        }
+        BigDecimal effectiveAmount = assessed != null ? assessed : req.amount();
+        validateClaimedAssessed(claimed, assessed, varianceReason);
+        // Re-run validateMovementInput with the effective amount so OUT/IN/TRANSFER
+        // pot rules + positivity still hold after the claimed/assessed normalization.
+        validateMovementInput(req.movementType(), effectiveAmount, req.movementDate(),
+                req.fromPotId(), req.toPotId());
+
         jdbc.update("""
                 update cash_movement set
                   movement_type = ?, amount = ?, movement_date = ?,
                   from_pot_id = ?, to_pot_id = ?, project_id = ?, party_id = ?,
-                  label = ?, note = ?
+                  label = ?, note = ?,
+                  claimed_amount = ?, assessed_amount = ?, variance_reason = ?,
+                  payment_mode = ?, payment_ref = ?, voucher_no = ?,
+                  nature = ?, invoice_ref = ?
                 where id = ? and org_id = ?
                 """,
-                normalizeType(req.movementType()), req.amount(), Date.valueOf(req.movementDate()),
+                normalizeType(req.movementType()), effectiveAmount, Date.valueOf(req.movementDate()),
                 req.fromPotId(), req.toPotId(), resolvedProjectId, req.partyId(),
                 blankToNull(req.label()), blankToNull(req.note()),
+                claimed, assessed, varianceReason,
+                paymentMode, paymentRef, voucherNo, nature, invoiceRef,
                 id, me.getOrgId());
 
         return getMovement(auth, id);
@@ -580,7 +657,8 @@ public class CashService {
                        m.created_by,  m.created_at,
                        m.posted_by,   pbu.full_name as posted_by_name,  m.posted_at,
                        m.voided_by,   vu.full_name as voided_by_name,   m.voided_at,
-                       m.void_reason
+                       m.void_reason,
+                       m.payment_mode, m.payment_ref, m.voucher_no, m.nature, m.invoice_ref
                 from cash_movement m
                 left join cash_pot fp  on fp.id = m.from_pot_id
                 left join cash_pot tp  on tp.id = m.to_pot_id
@@ -709,6 +787,12 @@ public class CashService {
                 snapshot.processInstanceId(),
                 snapshot.documentId(),
                 snapshot.documentName(),
+                // V26 enriched fields (snapshot from getMovementDetail above)
+                snapshot.paymentMode(),
+                snapshot.paymentRef(),
+                snapshot.voucherNo(),
+                snapshot.nature(),
+                snapshot.invoiceRef(),
                 events
         );
     }
@@ -862,7 +946,8 @@ public class CashService {
                        from_pot_id, to_pot_id, project_id, party_id, label, note, status,
                        process_instance_id, created_by, created_at, posted_by, posted_at,
                        voided_by, voided_at, void_reason,
-                       claimed_amount, assessed_amount, variance_reason, document_id
+                       claimed_amount, assessed_amount, variance_reason, document_id,
+                       payment_mode, payment_ref, voucher_no, nature, invoice_ref
                 from cash_movement
                 where org_id = ?
                 """);
@@ -945,7 +1030,8 @@ public class CashService {
                        m.created_by,  m.created_at,
                        m.posted_by,   pbu.full_name as posted_by_name,  m.posted_at,
                        m.voided_by,   vu.full_name as voided_by_name,   m.voided_at,
-                       m.void_reason
+                       m.void_reason,
+                       m.payment_mode, m.payment_ref, m.voucher_no, m.nature, m.invoice_ref
                 from cash_movement m
                 left join cash_pot fp  on fp.id = m.from_pot_id
                 left join cash_pot tp  on tp.id = m.to_pot_id
@@ -1320,6 +1406,40 @@ public class CashService {
         }
     }
 
+    /**
+     * V26 — validate payment_mode against the Tunisia v1 whitelist.
+     * Returns the normalized uppercase code, or {@code null} for blank input
+     * (so the DB column stays NULL — legacy-safe). Throws a French 400 for
+     * unknown codes; the DB CHECK (chk_cm_payment_mode) is the safety net.
+     */
+    private String validatePaymentMode(String raw) {
+        if (raw == null || raw.isBlank()) return null;
+        try {
+            return PaymentMode.from(raw).name();
+        } catch (IllegalArgumentException e) {
+            throw new BadRequestException("INVALID_PAYMENT_MODE",
+                    "Mode de règlement invalide: " + raw +
+                    " — valeurs acceptées : ESPECE, CHEQUE, VIREMENT, VERSEMENT, MANDAT, AUTRE");
+        }
+    }
+
+    /**
+     * V26 — validate nature against the Tunisia v1 whitelist.
+     * Same contract as {@link #validatePaymentMode}: null for blank, French 400
+     * for unknown. DB CHECK (chk_cm_nature) is the safety net.
+     */
+    private String validateNature(String raw) {
+        if (raw == null || raw.isBlank()) return null;
+        try {
+            return MovementNature.from(raw).name();
+        } catch (IllegalArgumentException e) {
+            throw new BadRequestException("INVALID_NATURE",
+                    "Nature invalide: " + raw +
+                    " — valeurs acceptées : ALIM_CAISSE, SOUS_TRAITANCE, MATERIEL, TRANSPORT, " +
+                    "MAIN_OEUVRE, LOCATION, LABO, CARBURANT, DIVERS");
+        }
+    }
+
     private void validatePotInOrg(UUID potId, UUID orgId) {
         if (potId == null) return;
         Integer cnt = jdbc.queryForObject(
@@ -1350,7 +1470,8 @@ public class CashService {
                        from_pot_id, to_pot_id, project_id, party_id, label, note, status,
                        process_instance_id, created_by, created_at, posted_by, posted_at,
                        voided_by, voided_at, void_reason,
-                       claimed_amount, assessed_amount, variance_reason, document_id
+                       claimed_amount, assessed_amount, variance_reason, document_id,
+                       payment_mode, payment_ref, voucher_no, nature, invoice_ref
                 from cash_movement
                 where id = ? and org_id = ?
                 for update
@@ -1369,7 +1490,8 @@ public class CashService {
                        from_pot_id, to_pot_id, project_id, party_id, label, note, status,
                        process_instance_id, created_by, created_at, posted_by, posted_at,
                        voided_by, voided_at, void_reason,
-                       claimed_amount, assessed_amount, variance_reason, document_id
+                       claimed_amount, assessed_amount, variance_reason, document_id,
+                       payment_mode, payment_ref, voucher_no, nature, invoice_ref
                 from cash_movement
                 where id = ? and org_id = ?
                 """, id, orgId);
@@ -1419,7 +1541,13 @@ public class CashService {
                 (BigDecimal) row.get("claimed_amount"),
                 (BigDecimal) row.get("assessed_amount"),
                 (String) row.get("variance_reason"),
-                (UUID) row.get("document_id")
+                (UUID) row.get("document_id"),
+                // V26 enriched fields
+                (String) row.get("payment_mode"),
+                (String) row.get("payment_ref"),
+                (String) row.get("voucher_no"),
+                (String) row.get("nature"),
+                (String) row.get("invoice_ref")
         );
     }
 
@@ -1462,7 +1590,13 @@ public class CashService {
                 (BigDecimal) row.get("assessed_amount"),
                 (String) row.get("variance_reason"),
                 (UUID) row.get("document_id"),
-                (String) row.get("document_name")
+                (String) row.get("document_name"),
+                // V26 enriched fields
+                (String) row.get("payment_mode"),
+                (String) row.get("payment_ref"),
+                (String) row.get("voucher_no"),
+                (String) row.get("nature"),
+                (String) row.get("invoice_ref")
         );
     }
 
