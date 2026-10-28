@@ -49,6 +49,10 @@ export const routes: Routes = [
       // CASH_DRAFT to save drafts, CASH_POST to post, CASH_VOID to void, PARTY_MANAGE for parties)
       { path: 'tresorerie', canActivate: [permGuard(PERM.CASH_READ)],
         loadComponent: () => import('./features/cash/cash-hub.component').then(m => m.CashHubComponent) },
+      // TASK 5 — Espace Finance: caisses + pending + monthly CSV export.
+      // Visible to anyone with CASH_READ (FINANCE + OWNER both have it).
+      { path: 'tresorerie/finance', canActivate: [permGuard(PERM.CASH_READ)],
+        loadComponent: () => import('./features/cash/finance-hub.component').then(m => m.FinanceHubComponent) },
       { path: 'tresorerie/caisses', canActivate: [permGuard(PERM.CASH_READ)],
         loadComponent: () => import('./features/cash/pot-list.component').then(m => m.PotListComponent) },
       { path: 'tresorerie/caisses/:potId', canActivate: [permGuard(PERM.CASH_READ)],

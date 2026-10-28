@@ -22,6 +22,9 @@ const NAV: NavItem[] = [
   { label: 'Accueil',        icon: 'pi-home',          path: '/',           perm: '',           color: '#0ea5e9' },
   { label: 'Mes tâches',     icon: 'pi-check-square', path: '/mes-taches',  perm: '',           color: '#f59e0b', badge: 'count' },
   { label: 'Trésorerie',     icon: 'pi-wallet',       path: '/tresorerie',  perm: PERM.CASH_READ, color: '#0d9488' },
+  // TASK 5 — Espace Finance: caisses + paiements en attente + export mensuel CSV.
+  // Same CASH_READ perm (FINANCE + OWNER both have it); sits under Trésorerie in the nav.
+  { label: 'Espace Finance', icon: 'pi-briefcase',    path: '/tresorerie/finance', perm: PERM.CASH_READ, color: '#0891b2' },
   { label: 'Processus',      icon: 'pi-sitemap',      path: '/processus',   perm: '',           color: '#7c3aed' },
   { label: 'Chantiers',      icon: 'pi-briefcase',    path: '/projects',    perm: PERM.PROJECT_READ, color: '#0d9488' },
   // Tickets = tâches / signalements simples (assignation, statut, photo) — PAS les validations

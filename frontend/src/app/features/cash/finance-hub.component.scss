@@ -1,0 +1,229 @@
+/**
+ * FinanceHubComponent — styles for /tresorerie/finance
+ * One-screen-one-purpose: caisses + pending + export. No accounting jargon.
+ */
+.finance-hub {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 18px 18px 40px;
+
+  .fh-bc {
+    display: flex; align-items: center; gap: 6px;
+    font-size: 12px; color: #64748b;
+    margin-bottom: 14px;
+    a { color: #475569; text-decoration: none; &:hover { color: #0d9488; } }
+    .pi { font-size: 10px;
+      &.pi-angle-right { color: #cbd5e1; }
+    }
+  }
+}
+
+// ── Hero ──────────────────────────────────────────────────────────────
+.fh-hero {
+  display: flex; align-items: center; gap: 16px;
+  background: linear-gradient(135deg, #0d9488 0%, #0891b2 100%);
+  color: #fff;
+  border-radius: 16px;
+  padding: 18px 22px;
+  margin-bottom: 22px;
+  box-shadow: 0 6px 20px rgba(8, 145, 178, 0.18);
+
+  .hero-icon {
+    width: 56px; height: 56px;
+    background: rgba(255, 255, 255, 0.18);
+    border-radius: 50%;
+    display: flex; align-items: center; justify-content: center;
+    i { font-size: 26px; }
+  }
+  .hero-text {
+    flex: 1;
+    h1 { margin: 0 0 2px; font-size: 22px; font-weight: 800; }
+    p { margin: 0; font-size: 13px; opacity: 0.9; }
+  }
+  .hero-cta {
+    @media (max-width: 640px) {
+      width: 100%;
+      button { width: 100%; }
+    }
+  }
+}
+
+// ── Caisses cards ─────────────────────────────────────────────────────
+.fh-pots {
+  margin-bottom: 26px;
+
+  .fhp-head {
+    display: flex; justify-content: space-between; align-items: center;
+    margin-bottom: 12px;
+    h2 {
+      font-size: 16px; font-weight: 700; color: #0f172a; margin: 0;
+      display: inline-flex; align-items: center; gap: 8px;
+      i { color: #0d9488; font-size: 18px; }
+    }
+    .fhp-link {
+      color: #0d9488; font-size: 12px; font-weight: 600; text-decoration: none;
+      display: inline-flex; align-items: center; gap: 3px;
+      &:hover { color: #0891b2; }
+    }
+  }
+
+  .fhp-empty {
+    background: #ffffff; border: 1px dashed #cbd5e1; border-radius: 12px;
+    padding: 22px; text-align: center; color: #64748b;
+    i { font-size: 22px; display: block; margin-bottom: 6px; color: #94a3b8; }
+  }
+
+  .fhp-grid {
+    display: grid; gap: 12px;
+    grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  }
+  .pot-card {
+    background: #ffffff;
+    border: 1px solid #e2e8f0;
+    border-left: 4px solid var(--pot-color, #0d9488);
+    border-radius: 12px;
+    padding: 14px 16px;
+    text-decoration: none;
+    transition: transform 0.12s ease, box-shadow 0.12s ease;
+    &:hover {
+      transform: translateY(-1px);
+      box-shadow: 0 4px 12px rgba(15, 23, 42, 0.08);
+    }
+
+    .pc-head {
+      display: flex; align-items: center; gap: 6px;
+      color: var(--pot-color, #0d9488);
+      font-size: 11px; font-weight: 700; text-transform: uppercase;
+      margin-bottom: 6px;
+      i { font-size: 12px; }
+    }
+    .pc-name {
+      font-size: 14px; font-weight: 600; color: #0f172a;
+      margin-bottom: 6px;
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
+    .pc-balance {
+      font-size: 22px; font-weight: 800;
+      color: #0f172a;
+      font-variant-numeric: tabular-nums;
+      line-height: 1;
+      &.neg { color: #dc2626; }
+    }
+    .pc-currency {
+      font-size: 11px; color: #94a3b8; font-weight: 600;
+      letter-spacing: 0.04em;
+      margin-top: 2px;
+    }
+  }
+}
+
+// ── Pending payments ──────────────────────────────────────────────────
+.fh-pending {
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
+  border-radius: 14px;
+  padding: 16px 18px;
+  margin-bottom: 22px;
+
+  .fhpen-head {
+    display: flex; align-items: center; gap: 8px;
+    margin-bottom: 12px;
+    h2 {
+      font-size: 16px; font-weight: 700; color: #0f172a; margin: 0;
+      display: inline-flex; align-items: center; gap: 8px;
+      i { color: #d97706; font-size: 18px; }
+    }
+    .fhpen-count {
+      background: #fef3c7; color: #92400e;
+      font-size: 11px; font-weight: 700;
+      padding: 2px 8px; border-radius: 999px;
+    }
+  }
+
+  .fhpen-empty {
+    text-align: center; color: #64748b; padding: 16px;
+    i { font-size: 20px; color: #16a34a; display: block; margin-bottom: 6px; }
+    p { margin: 0; }
+  }
+
+  .fhpen-list {
+    display: flex; flex-direction: column; gap: 8px;
+  }
+  .pen-row {
+    display: flex; align-items: center; gap: 12px;
+    padding: 10px 12px;
+    background: #fffbeb;
+    border: 1px solid #fde68a;
+    border-radius: 10px;
+    text-decoration: none;
+    transition: background 0.12s ease;
+    &:hover { background: #fef3c7; }
+
+    .pen-icon {
+      width: 36px; height: 36px;
+      border-radius: 50%;
+      background: var(--mv-color, #d97706);
+      color: #fff;
+      display: flex; align-items: center; justify-content: center;
+      i { font-size: 16px; }
+    }
+    .pen-body { flex: 1; min-width: 0;
+      .pen-label {
+        font-size: 14px; font-weight: 600; color: #0f172a;
+        overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+      }
+      .pen-meta {
+        font-size: 12px; color: #64748b; margin-top: 2px;
+        span { white-space: nowrap; }
+      }
+    }
+    .pen-right { text-align: right;
+      .pen-amount {
+        font-size: 14px; font-weight: 700; color: #b45309;
+        font-variant-numeric: tabular-nums;
+      }
+      .pen-status {
+        display: inline-flex; align-items: center; gap: 3px;
+        font-size: 10px; font-weight: 700;
+        padding: 2px 7px; border-radius: 999px;
+        background: var(--st-soft, #fffbeb);
+        color: var(--st-color, #d97706);
+        margin-top: 2px;
+        i { font-size: 9px; color: var(--st-color, #d97706); }
+      }
+    }
+  }
+
+  .fhpen-link-row {
+    margin-top: 12px; text-align: center;
+    .fhpen-tasks-link {
+      color: #475569; font-size: 12px; font-weight: 600; text-decoration: none;
+      display: inline-flex; align-items: center; gap: 4px;
+      &:hover { color: #0d9488; }
+      i { font-size: 11px; }
+    }
+  }
+}
+
+// ── Export dialog ─────────────────────────────────────────────────────
+.exp-form {
+  display: flex; flex-direction: column; gap: 12px;
+  padding-top: 4px;
+
+  .exp-row {
+    display: grid; grid-template-columns: 1fr 1fr; gap: 12px;
+    @media (max-width: 480px) { grid-template-columns: 1fr; }
+  }
+  .exp-field {
+    display: flex; flex-direction: column; gap: 4px;
+    label {
+      font-size: 12px; font-weight: 600; color: #475569;
+      small { color: #94a3b8; font-weight: 400; }
+    }
+  }
+  .exp-hint {
+    display: block;
+    font-size: 11px; color: #94a3b8;
+    margin-top: 4px; line-height: 1.4;
+  }
+}
