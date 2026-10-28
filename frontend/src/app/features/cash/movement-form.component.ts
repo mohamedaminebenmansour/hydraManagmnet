@@ -15,6 +15,10 @@ import { AuthService } from '@app/core/auth.service';
 import { PERM } from '@app/core/permissions';
 import {
   CashMovement, MovementBody, MovementType,
+  PaymentMode, MovementNature,
+  PAYMENT_MODE_OPTIONS, NATURE_OPTIONS,
+  PAYMENT_MODE_LABEL, NATURE_LABEL,
+  paymentModeNeedsRef,
   formatAmount, movementTypeVisual, MOVEMENT_TYPE_VISUAL,
 } from '@app/core/models/cash.model';
 
@@ -154,6 +158,61 @@ import {
           </div>
         </div>
 
+        <!-- V26 (TASK 3) — Mode de règlement / Bon / Nature / Réf facture -->
+        <div class="mf-section">
+          <h2><span class="s-num">4</span> Mode et nature</h2>
+          <div class="field-row">
+            <div class="field">
+              <label>Mode de règlement <span class="req">*</span></label>
+              <p-select [options]="paymentModeOptions" optionValue="value" optionLabel="label"
+                        [(ngModel)]="paymentMode" placeholder="Comment payez-vous ?"
+                        filter styleClass="w-100" [showClear]="true" />
+              <small class="field-hint">
+                @if (paymentMode) {
+                  @if (needsRef()) {
+                    {{ paymentModeLabel() }} — indiquez le n° de référence ci-dessous.
+                  } @else {
+                    {{ paymentModeLabel() }} — mode sans référence obligatoire.
+                  }
+                } @else {
+                  Espèces, chèque, virement, versement, mandat ou autre.
+                }
+              </small>
+            </div>
+            <div class="field">
+              <label>Bon N° <small>(recommandé)</small></label>
+              <input pInputText [(ngModel)]="voucherNo" maxlength="60"
+                     placeholder="Ex: BON-0142" />
+              <small class="field-hint">Numéro du bon de caisse (petty-cash voucher).</small>
+            </div>
+          </div>
+          <div class="field-row">
+            <div class="field">
+              <label>Nature</label>
+              <p-select [options]="natureOptions" optionValue="value" optionLabel="label"
+                        [(ngModel)]="nature" placeholder="Sélectionner une nature"
+                        filter styleClass="w-100" [showClear]="true" />
+              <small class="field-hint">Sous-traitance, matériel, transport, main d'œuvre…</small>
+            </div>
+            <div class="field">
+              <label>Réf. facture / situation <small>(facultatif)</small></label>
+              <input pInputText [(ngModel)]="invoiceRef" maxlength="80"
+                     placeholder="Ex: FACT-2026-018" />
+              <small class="field-hint">Pour le rapprochement avec la pièce justificative.</small>
+            </div>
+          </div>
+          @if (needsRef()) {
+            <div class="field">
+              <label>Référence du règlement <span class="req">*</span></label>
+              <input pInputText [(ngModel)]="paymentRef" maxlength="100"
+                     [placeholder]="paymentMode === 'CHEQUE' ? 'N° de chèque' :
+                                    paymentMode === 'VIREMENT' ? 'Réf. virement' :
+                                    paymentMode === 'MANDAT' ? 'Réf. mandat' : 'Référence'" />
+              <small class="field-hint">{{ paymentModeLabel() }} — saisissez le n° visible sur le document bancaire.</small>
+            </div>
+          }
+        </div>
+
         <details class="mf-more">
           <summary><i class="pi pi-chevron-down"></i> Plus d'options</summary>
           <div class="mf-more-body">
@@ -210,6 +269,12 @@ import {
               <div class="mf-warn" style="width: 100%">
                 <i class="pi pi-exclamation-triangle"></i>
                 Vous payez un montant différent de celui réclamé — indiquez le motif de l'écart.
+              </div>
+            }
+            @if (!paymentMode) {
+              <div class="mf-warn" style="width: 100%">
+                <i class="pi pi-info-circle"></i>
+                Sélectionnez un mode de règlement (espèces, chèque, virement…) pour valider.
               </div>
             }
           }
@@ -294,6 +359,48 @@ import {
         </div>
       </div>
 
+      <!-- V26 (TASK 3) — Mode + nature + bon (optional for IN / TRANSFER) -->
+      <div class="mf-section">
+        <h2><span class="s-num">5</span> Mode et nature <small>(optionnel)</small></h2>
+        <div class="field-row">
+          <div class="field">
+            <label>Mode de règlement <small>(facultatif)</small></label>
+            <p-select [options]="paymentModeOptions" optionValue="value" optionLabel="label"
+                      [(ngModel)]="paymentMode" placeholder="Aucun"
+                      filter styleClass="w-100" [showClear]="true" />
+            <small class="field-hint">Comment l'argent a été reçu / versé.</small>
+          </div>
+          <div class="field">
+            <label>Nature</label>
+            <p-select [options]="natureOptions" optionValue="value" optionLabel="label"
+                      [(ngModel)]="nature" placeholder="Sélectionner une nature"
+                      filter styleClass="w-100" [showClear]="true" />
+            <small class="field-hint">Sous-traitance, matériel, transport…</small>
+          </div>
+        </div>
+        <div class="field-row">
+          <div class="field">
+            <label>Bon N° <small>(recommandé)</small></label>
+            <input pInputText [(ngModel)]="voucherNo" maxlength="60"
+                   placeholder="Ex: BON-0142" />
+          </div>
+          <div class="field">
+            <label>Réf. facture / situation <small>(facultatif)</small></label>
+            <input pInputText [(ngModel)]="invoiceRef" maxlength="80"
+                   placeholder="Ex: FACT-2026-018" />
+          </div>
+        </div>
+        @if (needsRef()) {
+          <div class="field">
+            <label>Référence du règlement</label>
+            <input pInputText [(ngModel)]="paymentRef" maxlength="100"
+                   [placeholder]="paymentMode === 'CHEQUE' ? 'N° de chèque' :
+                                  paymentMode === 'VIREMENT' ? 'Réf. virement' :
+                                  paymentMode === 'MANDAT' ? 'Réf. mandat' : 'Référence'" />
+          </div>
+        }
+      </div>
+
       <!-- Actions -->
       <div class="mf-actions">
         @if (!canDraft) {
@@ -361,6 +468,25 @@ export class MovementFormComponent implements OnInit {
   partyId: string | null = null;
   label = '';
   note = '';
+
+  // V26 (TASK 3) — Tunisian état de caisse enriched fields
+  paymentMode: PaymentMode | null = null; // required for OUT short form
+  paymentRef = '';                        // n° chèque / réf virement (shown when mode needs it)
+  voucherNo = '';                         // Bon N°
+  nature: MovementNature | null = null;   // SOUS_TRAITANCE / MATERIEL / …
+  invoiceRef = '';                        // réf facture / situation (optional)
+
+  /** Select option lists for the form (French labels). */
+  readonly paymentModeOptions = PAYMENT_MODE_OPTIONS;
+  readonly natureOptions = NATURE_OPTIONS;
+
+  /** Whether the chosen paymentMode usually needs a payment_ref (cheque / virement / …). */
+  needsRef = computed(() => paymentModeNeedsRef(this.paymentMode));
+
+  /** Friendly French label for the selected paymentMode (used in hints). */
+  paymentModeLabel(): string {
+    return this.paymentMode ? (PAYMENT_MODE_LABEL[this.paymentMode as PaymentMode] ?? this.paymentMode) : '';
+  }
 
   /** Optional payment proof (facture / BL / situation) — TASK 3 upload after submit. */
   private attachment = signal<File | null>(null);
@@ -435,6 +561,16 @@ export class MovementFormComponent implements OnInit {
         this.partyId = m.partyId ?? null;
         this.label = m.label ?? '';
         this.note = m.note ?? '';
+        // V26 — prefill enriched fields on edit (preserves them when the user
+        // saved them once and is now correcting another field).
+        this.paymentMode = (m.paymentMode as PaymentMode | null) ?? null;
+        this.paymentRef = m.paymentRef ?? '';
+        this.voucherNo = m.voucherNo ?? '';
+        this.nature = (m.nature as MovementNature | null) ?? null;
+        this.invoiceRef = m.invoiceRef ?? '';
+        // TASK 1 — prefill claimed/assessed/variance too (DRAFT can be enriched)
+        this.claimedAmount = m.claimedAmount ?? null;
+        this.varianceReason = m.varianceReason ?? '';
       });
     } else {
       // Prefill from query params (deep link from pot detail / party detail)
@@ -488,6 +624,12 @@ export class MovementFormComponent implements OnInit {
     if (!this.amount || this.amount <= 0) return false;
     if (this.hasVariance() && !this.varianceReason.trim()) return false; // TASK 5
     if (!this.movementDate) return false;
+    // V26 — OUT short form requires paymentMode (how was it paid?). The other
+    // V26 fields (voucherNo / paymentRef / nature / invoiceRef) are optional
+    // or conditionally shown (paymentRef appears when mode needs a ref).
+    if (!this.isEdit() && this.movementType === 'OUT' && !this.paymentMode) {
+      return false;
+    }
     switch (this.movementType) {
       case 'IN': return !!this.toPotId;
       case 'OUT': return !!this.fromPotId;
@@ -518,6 +660,15 @@ export class MovementFormComponent implements OnInit {
         assessedAmount: this.amount ?? undefined,
         varianceReason: this.hasVariance() ? this.varianceReason.trim() : undefined,
       } : {}),
+      // V26 — Tunisian état de caisse enriched fields ride along on every
+      // save (OUT short form + IN/TRANSFER full form). paymentMode is only
+      // required for OUT short form (isValid enforces it); the others stay
+      // optional so the user can fill them progressively.
+      paymentMode: this.paymentMode ?? undefined,
+      paymentRef: this.paymentRef.trim() || undefined,
+      voucherNo: this.voucherNo.trim() || undefined,
+      nature: this.nature ?? undefined,
+      invoiceRef: this.invoiceRef.trim() || undefined,
     };
 
     if (this.isEdit() && this.editId) {
@@ -596,6 +747,12 @@ export class MovementFormComponent implements OnInit {
       claimedAmount: this.effectiveClaimed(),
       assessedAmount: this.amount ?? undefined,
       varianceReason: this.hasVariance() ? this.varianceReason.trim() : undefined,
+      // V26 — Tunisian état de caisse enriched fields ride along on submit-payment
+      paymentMode: this.paymentMode ?? undefined,
+      paymentRef: this.paymentRef.trim() || undefined,
+      voucherNo: this.voucherNo.trim() || undefined,
+      nature: this.nature ?? undefined,
+      invoiceRef: this.invoiceRef.trim() || undefined,
     }).subscribe(res => {
       if (!res) {
         this.saving.set(false);

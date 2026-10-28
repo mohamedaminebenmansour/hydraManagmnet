@@ -12,6 +12,64 @@ export type MovementType = 'IN' | 'OUT' | 'TRANSFER';
 export type MovementStatus = 'DRAFT' | 'POSTED' | 'VOID';
 export type PartyType = 'SUB' | 'SUPPLIER' | 'OTHER';
 
+/**
+ * V26 (TASK 1) — Tunisian caisse vocabularies (defaults; extensible).
+ * Codes = stable API + DB values; labels = French for the UI.
+ */
+export type PaymentMode = 'ESPECE' | 'CHEQUE' | 'VIREMENT' | 'VERSEMENT' | 'MANDAT' | 'AUTRE';
+export type MovementNature =
+  | 'ALIM_CAISSE' | 'SOUS_TRAITANCE' | 'MATERIEL' | 'TRANSPORT'
+  | 'MAIN_OEUVRE' | 'LOCATION' | 'LABO' | 'CARBURANT' | 'DIVERS';
+
+/** paymentMode → French label + PrimeNG icon. */
+export const PAYMENT_MODE_LABEL: Record<PaymentMode, string> = {
+  ESPECE:   'Espèces',
+  CHEQUE:   'Chèque',
+  VIREMENT: 'Virement',
+  VERSEMENT:'Versement',
+  MANDAT:   'Mandat',
+  AUTRE:    'Autre',
+};
+
+export const PAYMENT_MODE_ICON: Record<PaymentMode, string> = {
+  ESPECE:   'pi-wallet',
+  CHEQUE:   'pi-ticket',
+  VIREMENT: 'pi-arrow-right-arrow-left',
+  VERSEMENT:'pi-download',
+  MANDAT:   'pi-envelope',
+  AUTRE:    'pi-ellipsis-h',
+};
+
+/** nature → French label. */
+export const NATURE_LABEL: Record<MovementNature, string> = {
+  ALIM_CAISSE:    'Alimentation caisse',
+  SOUS_TRAITANCE: 'Sous-traitance',
+  MATERIEL:       'Matériel',
+  TRANSPORT:      'Transport',
+  MAIN_OEUVRE:    'Main d\u2019œuvre',
+  LOCATION:       'Location',
+  LABO:           'Laboratoire',
+  CARBURANT:      'Carburant',
+  DIVERS:         'Divers',
+};
+
+/** Select options for PrimeNG <p-select>. */
+export const PAYMENT_MODE_OPTIONS: { value: PaymentMode; label: string }[] =
+  (Object.keys(PAYMENT_MODE_LABEL) as PaymentMode[]).map(v => ({
+    value: v, label: PAYMENT_MODE_LABEL[v],
+  }));
+
+export const NATURE_OPTIONS: { value: MovementNature; label: string }[] =
+  (Object.keys(NATURE_LABEL) as MovementNature[]).map(v => ({
+    value: v, label: NATURE_LABEL[v],
+  }));
+
+/** Whether a paymentMode usually needs a payment_ref (n° chèque / réf virement). */
+export function paymentModeNeedsRef(mode: PaymentMode | string | null | undefined): boolean {
+  const m = String(mode ?? '').toUpperCase();
+  return m === 'CHEQUE' || m === 'VIREMENT' || m === 'VERSEMENT' || m === 'MANDAT';
+}
+
 /** A caisse — either the company's central one or a project's chantier one. */
 export interface CashPot {
   id: string;
@@ -54,6 +112,12 @@ export interface CashMovement {
   /** TASK 3 — proof document attached to this movement (Finance folder). */
   documentId?: string | null;
   documentName?: string | null;
+  /** V26 — Tunisian état de caisse enriched fields (all optional, legacy-safe). */
+  paymentMode?: PaymentMode | string | null;
+  paymentRef?: string | null;
+  voucherNo?: string | null;
+  nature?: MovementNature | string | null;
+  invoiceRef?: string | null;
 }
 
 /** Create/edit body for POST/PUT /api/cash/movements. */
@@ -72,6 +136,12 @@ export interface MovementBody {
   claimedAmount?: number;
   assessedAmount?: number;
   varianceReason?: string;
+  /** V26 — Tunisian état de caisse enriched fields (all optional). */
+  paymentMode?: PaymentMode | string | null;
+  paymentRef?: string | null;
+  voucherNo?: string | null;
+  nature?: MovementNature | string | null;
+  invoiceRef?: string | null;
 }
 
 /** GET /api/cash/pots/{id}/balance response. */
@@ -103,6 +173,12 @@ export interface SubmitPaymentBody {
   claimedAmount?: number;
   assessedAmount?: number;
   varianceReason?: string;
+  /** V26 — Tunisian état de caisse enriched fields (all optional). */
+  paymentMode?: PaymentMode | string | null;
+  paymentRef?: string | null;
+  voucherNo?: string | null;
+  nature?: MovementNature | string | null;
+  invoiceRef?: string | null;
 }
 
 /** Response of submit-payment: the new DRAFT movement + the running process. */
@@ -368,5 +444,115 @@ export function mapMovement(raw: any): CashMovement {
     varianceReason: raw?.varianceReason ?? raw?.variance_reason ?? null,
     documentId: raw?.documentId ?? raw?.document_id ?? null,
     documentName: raw?.documentName ?? raw?.document_name ?? null,
+    // V26 — Tunisian état de caisse enriched fields
+    paymentMode: raw?.paymentMode ?? raw?.payment_mode ?? null,
+    paymentRef: raw?.paymentRef ?? raw?.payment_ref ?? null,
+    voucherNo: raw?.voucherNo ?? raw?.voucher_no ?? null,
+    nature: raw?.nature ?? null,
+    invoiceRef: raw?.invoiceRef ?? raw?.invoice_ref ?? null,
+  };
+}
+
+/**
+ * StatementLine — one row of an "état de caisse" (TASK 2 backend API).
+ * Mirrors CashService.StatementLine. Used by the pot statement UI (TASK 4)
+ * and the monthly export (TASK 5).
+ */
+export interface StatementLine {
+  id: string;
+  movementDate: string;
+  voucherNo?: string | null;
+  partyId?: string | null;
+  partyName?: string | null;
+  nature?: MovementNature | string | null;
+  label?: string | null;
+  movementType: MovementType | string;
+  paymentMode?: PaymentMode | string | null;
+  paymentRef?: string | null;
+  invoiceRef?: string | null;
+  amount: number;
+  currency: string;
+  status: MovementStatus | string;
+  projectId?: string | null;
+  projectName?: string | null;
+  processInstanceId?: string | null;
+}
+
+/** Map any raw backend row defensively into a StatementLine. */
+export function mapStatementLine(raw: any): StatementLine {
+  return {
+    id: String(raw?.id ?? ''),
+    movementDate: String(raw?.movementDate ?? raw?.movement_date ?? ''),
+    voucherNo: raw?.voucherNo ?? raw?.voucher_no ?? null,
+    partyId: raw?.partyId ?? raw?.party_id ?? null,
+    partyName: raw?.partyName ?? raw?.party_name ?? null,
+    nature: raw?.nature ?? null,
+    label: raw?.label ?? null,
+    movementType: String(raw?.movementType ?? raw?.movement_type ?? '').toUpperCase(),
+    paymentMode: raw?.paymentMode ?? raw?.payment_mode ?? null,
+    paymentRef: raw?.paymentRef ?? raw?.payment_ref ?? null,
+    invoiceRef: raw?.invoiceRef ?? raw?.invoice_ref ?? null,
+    amount: Number(raw?.amount ?? 0),
+    currency: String(raw?.currency ?? 'TND'),
+    status: String(raw?.status ?? 'DRAFT').toUpperCase(),
+    projectId: raw?.projectId ?? raw?.project_id ?? null,
+    projectName: raw?.projectName ?? raw?.project_name ?? null,
+    processInstanceId: raw?.processInstanceId ?? raw?.process_instance_id ?? null,
+  };
+}
+
+/**
+ * CashSummary — "fiche tiers" money side (TASK 2 backend API).
+ * Mirrors PartyService.CashSummary.
+ */
+export interface CashSummaryLine {
+  id: string;
+  movementDate: string;
+  amount: number;
+  movementType: MovementType | string;
+  status: MovementStatus | string;
+  paymentMode?: PaymentMode | string | null;
+  voucherNo?: string | null;
+  label?: string | null;
+  projectId?: string | null;
+  projectName?: string | null;
+  potId?: string | null;
+  potName?: string | null;
+}
+
+export interface CashSummary {
+  partyId: string;
+  partyName: string;
+  partyType: PartyType | string;
+  totalPaid: number;
+  movementCount: number;
+  lastMovementDate?: string | null;
+  recent: CashSummaryLine[];
+}
+
+/** Map a raw backend row into a CashSummary (with its recent lines). */
+export function mapCashSummary(raw: any): CashSummary {
+  const recentRaw: any[] = Array.isArray(raw?.recent) ? raw.recent : [];
+  return {
+    partyId: String(raw?.partyId ?? raw?.party_id ?? ''),
+    partyName: String(raw?.partyName ?? raw?.party_name ?? '—'),
+    partyType: String(raw?.partyType ?? raw?.party_type ?? 'OTHER').toUpperCase(),
+    totalPaid: Number(raw?.totalPaid ?? raw?.total_paid ?? 0),
+    movementCount: Number(raw?.movementCount ?? raw?.movement_count ?? 0),
+    lastMovementDate: raw?.lastMovementDate ?? raw?.last_date ?? null,
+    recent: recentRaw.map(r => ({
+      id: String(r?.id ?? ''),
+      movementDate: String(r?.movementDate ?? r?.movement_date ?? ''),
+      amount: Number(r?.amount ?? 0),
+      movementType: String(r?.movementType ?? r?.movement_type ?? '').toUpperCase(),
+      status: String(r?.status ?? 'DRAFT').toUpperCase(),
+      paymentMode: r?.paymentMode ?? r?.payment_mode ?? null,
+      voucherNo: r?.voucherNo ?? r?.voucher_no ?? null,
+      label: r?.label ?? null,
+      projectId: r?.projectId ?? r?.project_id ?? null,
+      projectName: r?.projectName ?? r?.project_name ?? null,
+      potId: r?.potId ?? r?.pot_id ?? null,
+      potName: r?.potName ?? r?.pot_name ?? null,
+    })),
   };
 }

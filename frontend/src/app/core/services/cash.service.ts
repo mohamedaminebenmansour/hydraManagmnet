@@ -6,7 +6,9 @@ import { MessageService } from 'primeng/api';
 import {
   CashPot, CashMovement, MovementBody, BalanceResponse, PostResponse,
   SubmitPaymentBody, SubmitPaymentResponse, MovementTimeline,
-  mapPot, mapMovement, formatAmount,
+  StatementLine, CashSummary,
+  mapPot, mapMovement, mapStatementLine, mapCashSummary,
+  formatAmount,
 } from '@app/core/models/cash.model';
 
 type AnyRaw = Record<string, any>;
@@ -267,6 +269,91 @@ export class CashService {
         return of(null);
       })
     );
+  }
+
+  // ── ÉTAT DE CAISSE / PARTY SUMMARY / EXPORT (TASK 2 backend) ─────
+
+  /**
+   * GET /api/cash/pots/{id}/statement?from=&to=&projectId= — Excel-like
+   * "état de caisse" for one pot: ordered lines (POSTED + DRAFT/PENDING),
+   * each carrying date / bon / tiers / nature / désignation / mode / réf /
+   * facture / montant / statut / projet. Single JOINed query on backend.
+   */
+  getStatement(potId: string, filters?: {
+    from?: string; to?: string; projectId?: string;
+  }): Observable<StatementLine[]> {
+    let params: Record<string, string> = {};
+    if (filters?.from) params['from'] = filters.from;
+    if (filters?.to) params['to'] = filters.to;
+    if (filters?.projectId) params['projectId'] = filters.projectId;
+    return this.http.get<AnyRaw[]>(`/api/cash/pots/${potId}/statement`, { params }).pipe(
+      map(list => (Array.isArray(list) ? list : []).map(mapStatementLine)),
+      catchError(err => {
+        this.toastError(err, 'État de caisse indisponible');
+        return of([]);
+      })
+    );
+  }
+
+  /**
+   * GET /api/parties/{id}/cash-summary?projectId=optional — fiche tiers money
+   * side: totalPaid (SUM POSTED OUT), movementCount, lastMovementDate, and
+   * the 10 most recent POSTED OUT movements (deep-linkable to detail view).
+   */
+  getCashSummary(partyId: string, projectId?: string): Observable<CashSummary | null> {
+    let params: Record<string, string> = {};
+    if (projectId) params['projectId'] = projectId;
+    return this.http.get<AnyRaw>(`/api/parties/${partyId}/cash-summary`, { params }).pipe(
+      map(raw => mapCashSummary(raw)),
+      catchError(err => {
+        this.toastError(err, 'Fiche tiers indisponible');
+        return of(null);
+      })
+    );
+  }
+
+  /**
+   * GET /api/cash/movements/export — monthly cabinet/comptable export.
+   *
+   * Returns the raw CSV text (string) so the caller can trigger a browser
+   * download (anchor + Blob). Same shape as the statement table; UTF-8 with
+   * BOM so Excel FR/EN reads accents correctly on Windows.
+   *
+   * Pass responseType 'text' so HttpClient doesn't try to JSON-parse the CSV.
+   */
+  exportMovementsCsv(filters: {
+    from?: string; to?: string;
+    potId?: string; projectId?: string; status?: string;
+  }): Observable<string | null> {
+    let params: Record<string, string> = {};
+    if (filters.from) params['from'] = filters.from;
+    if (filters.to) params['to'] = filters.to;
+    if (filters.potId) params['potId'] = filters.potId;
+    if (filters.projectId) params['projectId'] = filters.projectId;
+    if (filters.status) params['status'] = filters.status;
+    return this.http.get('/api/cash/movements/export', {
+      params,
+      responseType: 'text',
+      headers: { 'Accept': 'text/csv' },
+    }).pipe(
+      catchError(err => {
+        this.toastError(err, 'Export CSV indisponible');
+        return of(null);
+      })
+    );
+  }
+
+  /** Trigger a browser download of a CSV string (used by export UI). */
+  static downloadCsv(csv: string, filename = 'hydra-export-caisse.csv'): void {
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(() => URL.revokeObjectURL(url), 0);
   }
 
   // ── CACHE HELPERS ──────────────────────────────────────────────
