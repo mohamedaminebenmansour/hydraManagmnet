@@ -12,6 +12,7 @@ import tn.hydra.user.AppUser;
 import tn.hydra.user.AppUserRepository;
 
 import java.sql.Timestamp;
+import java.math.BigDecimal;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -97,6 +98,91 @@ public class ProcessService {
             String createdByName,
             int currentStepOrder,
             List<StepView> steps) {}
+
+    // ═══════════════════════════════════════════════════════════════
+    // APPROVAL DESK (TASK 1) — single payload for an approver to decide
+    // on a CASH_MOVEMENT-linked process step. One JOINed query + one
+    // step-list query — no per-field N+1.
+    // ═══════════════════════════════════════════════════════════════
+
+    /** One previous/completed step shown in the desk's mini-timeline. */
+    public record DeskStepView(
+            int stepOrder,
+            String stepKey,
+            String name,
+            String status,
+            String assigneeRole,
+            String assigneeName,
+            Instant completedAt,
+            String comment) {}
+
+    /**
+     * Approval desk response — everything an approver needs to decide on a
+     * CASH_MOVEMENT-linked payment step, in a single round-trip.
+     *
+     * <p>Flags:
+     * <ul>
+     *   <li>{@code canComplete} / {@code canReject} — true only if the caller
+     *       is the step's assignee (or owner, or holds the business role on
+     *       the project). Mirrors {@link #requireStepAccess}.</li>
+     *   <li>{@code requiresAttachment} — copied from the step template flag.</li>
+     *   <li>{@code hasAttachment} — true if the linked movement has a
+     *       document_id set (the payment-proof uploaded via the movement
+     *       attachment endpoint) OR a process_step_document row exists.</li>
+     * </ul>
+     *
+     * <p>Cash fields are populated only when {@code subjectType == CASH_MOVEMENT};
+     * for other subjects the endpoint returns 400 SUBJECT_NOT_SUPPORTED_FOR_DESK.
+     */
+    public record ApprovalDeskResponse(
+            // ── process step + instance context ──
+            UUID stepInstanceId,
+            UUID instanceId,
+            String templateKey,
+            String templateName,
+            String instanceStatus,
+            int currentStepOrder,
+            String currentStepKey,
+            String currentStepName,
+            String currentStepRole,
+            UUID assigneeUserId,
+            String assigneeName,
+            boolean requiresAttachment,
+            // ── subject identification ──
+            String subjectType,
+            UUID subjectId,
+            // ── cash movement payload (CASH_MOVEMENT only) ──
+            UUID movementId,
+            String movementLabel,
+            String movementDate,
+            String movementType,
+            String movementStatus,
+            BigDecimal assessedAmount,
+            BigDecimal claimedAmount,
+            BigDecimal varianceAmount,
+            String varianceReason,
+            String paymentMode,
+            String paymentRef,
+            String voucherNo,
+            String nature,
+            String invoiceRef,
+            // ── linked entities (names — JOINed, no N+1) ──
+            UUID projectId,
+            String projectName,
+            UUID partyId,
+            String partyName,
+            String partyType,
+            UUID fromPotId,
+            String fromPotName,
+            // ── proof document ──
+            UUID documentId,
+            String documentName,
+            // ── flags ──
+            boolean canComplete,
+            boolean canReject,
+            boolean hasAttachment,
+            // ── mini-timeline (previous steps) ──
+            List<DeskStepView> steps) {}
 
     /** Minimal result returned after complete / reject. */
     public record StepResult(UUID stepInstanceId, String newStatus) {}
@@ -567,15 +653,40 @@ public class ProcessService {
         UUID assigneeUserId = (UUID) step.get("assignee_user_id");
         String assigneeRole = (String) step.get("assignee_role");
         boolean requiresAttachment = Boolean.TRUE.equals(step.get("requires_attachment"));
+        String subjectType = (String) step.get("subject_type");
+        UUID subjectId = (UUID) step.get("subject_id");
+        UUID orgId = (UUID) step.get("org_id");
+        String stepKey = (String) step.get("step_key");
 
         // Permission
         requireStepAccess(me, stepInstanceId, assigneeUserId, assigneeRole, projectId);
 
-        // Attachment guard
-        if (requiresAttachment &&
-                (req.documentIds() == null || req.documentIds().isEmpty())) {
+        // ── TASK 1: Attachment guard ──────────────────────────────────
+        // The step requires a proof document. The proof may be:
+        //   (a) a document linked on this step via process_step_document
+        //       (req.documentIds) — the approver attaches at decision time;
+        //   (b) the payment-proof document already on the linked movement
+        //       (movement.document_id, uploaded via the cash attachment endpoint).
+        // Either counts. If neither is present → French 400 ATTACHMENT_REQUIRED.
+        boolean hasStepDocs = req.documentIds() != null && !req.documentIds().isEmpty();
+        boolean hasMovementDoc = false;
+        BigDecimal assessedAmount = null;
+        if ("CASH_MOVEMENT".equals(subjectType) && subjectId != null) {
+            Map<String, Object> mv = jdbc.queryForMap(
+                    """
+                    select document_id, amount from cash_movement
+                    where id = ? and org_id = ?
+                    """,
+                    subjectId, orgId);
+            hasMovementDoc = mv.get("document_id") != null;
+            assessedAmount = (BigDecimal) mv.get("amount");
+        }
+        boolean hasAttachment = hasStepDocs || hasMovementDoc;
+        if (requiresAttachment && !hasAttachment) {
             throw new BadRequestException("ATTACHMENT_REQUIRED",
-                    "Cette étape requiert au moins un document joint");
+                    "Cette étape requiert une pièce justificative. " +
+                    "Joignez la facture / le bon de livraison sur le mouvement " +
+                    "ou téléversez-la ici avant d'approuver.");
         }
 
         // Mark step DONE
@@ -615,10 +726,18 @@ public class ProcessService {
                 """,
                 templateId, currentOrder);
 
+        // ── TASK 3: Enriched audit — stepKey, comment, subjectType, subjectId,
+        // hasAttachment, assessedAmount (cash subjects only). Lets the movement
+        // timeline answer "who approved, with which document, on what amount".
         audit.log("STEP_COMPLETED", "process_step_instance", stepInstanceId,
                 "{\"instanceId\":\"" + instanceId +
-                "\",\"stepKey\":\"" + jsonEscape(currentKey) +
-                "\",\"comment\":\"" + jsonEscape(req.comment()) + "\"}");
+                "\",\"stepKey\":\"" + jsonEscape(stepKey) +
+                "\",\"comment\":\"" + jsonEscape(req.comment()) + "\"" +
+                (subjectType != null ? ",\"subjectType\":\"" + jsonEscape(subjectType) + "\"" : "") +
+                (subjectId != null ? ",\"subjectId\":\"" + subjectId + "\"" : "") +
+                ",\"hasAttachment\":" + hasAttachment +
+                (assessedAmount != null ? ",\"assessedAmount\":" + assessedAmount : "") +
+                "}");
 
         if (!nextSteps.isEmpty()) {
             Map<String, Object> next = nextSteps.get(0);
@@ -666,9 +785,7 @@ public class ProcessService {
             // on negative-balance guard failure; this bubbles up and rolls back
             // the entire @Transactional (step DONE + instance COMPLETED).
             // ──────────────────────────────────────────────────────────────
-            String subjectType = (String) step.get("subject_type");
-            UUID subjectId = (UUID) step.get("subject_id");
-            UUID orgId = (UUID) step.get("org_id");
+            // subjectType / subjectId / orgId already declared above (TASK 1/3 hoist)
             if ("CASH_MOVEMENT".equals(subjectType) && subjectId != null) {
                 cashService.onProcessCompletedPostMovement(subjectId, me.getId());
             }
@@ -728,6 +845,18 @@ public class ProcessService {
 
         requireStepAccess(me, stepInstanceId, assigneeUserId, assigneeRole, projectId);
 
+        // ── TASK 3: hasAttachment + assessedAmount for the audit (cash subjects) ──
+        boolean hasAttachment = false;
+        BigDecimal assessedAmount = null;
+        if ("CASH_MOVEMENT".equals(subjectType) && subjectId != null) {
+            Map<String, Object> mv = jdbc.queryForMap(
+                    "select document_id, amount from cash_movement where id = ? and org_id = ?",
+                    subjectId, orgId);
+            hasAttachment = mv.get("document_id") != null
+                    || countStepDocuments(stepInstanceId) > 0;
+            assessedAmount = (BigDecimal) mv.get("amount");
+        }
+
         jdbc.update(
                 """
                 update process_step_instance
@@ -740,10 +869,16 @@ public class ProcessService {
                 "update process_instance set status = 'REJECTED', updated_at = now() where id = ?",
                 instanceId);
 
+        // ── TASK 3: Enriched audit — same shape as STEP_COMPLETED ──
         audit.log("STEP_REJECTED", "process_step_instance", stepInstanceId,
                 "{\"instanceId\":\"" + instanceId +
                 "\",\"stepKey\":\"" + jsonEscape(stepKey) +
-                "\",\"comment\":\"" + jsonEscape(req.comment()) + "\"}");
+                "\",\"comment\":\"" + jsonEscape(req.comment()) + "\"" +
+                (subjectType != null ? ",\"subjectType\":\"" + jsonEscape(subjectType) + "\"" : "") +
+                (subjectId != null ? ",\"subjectId\":\"" + subjectId + "\"" : "") +
+                ",\"hasAttachment\":" + hasAttachment +
+                (assessedAmount != null ? ",\"assessedAmount\":" + assessedAmount : "") +
+                "}");
 
         audit.log("PROCESS_REJECTED", "process_instance", instanceId,
                 "{\"rejectedBy\":\"" + me.getId() +
@@ -888,6 +1023,225 @@ public class ProcessService {
                 inst.get("current_step_order") == null
                         ? 0 : ((Number) inst.get("current_step_order")).intValue(),
                 steps);
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // 3.7b  APPROVAL DESK (TASK 1) — single payload for an approver
+    // ═══════════════════════════════════════════════════════════════
+
+    /**
+     * GET /api/process/steps/{stepInstanceId}/approval-desk
+     *
+     * <p>Returns everything an approver needs to decide on a CASH_MOVEMENT-
+     * linked payment step in a single round-trip:
+     * <ul>
+     *   <li>process step + instance context (template, current step, assignee)</li>
+     *   <li>cash movement payload (assessed vs claimed + variance, paymentMode,
+     *       voucher, nature, label, date, status, from-pot name)</li>
+     *   <li>linked entities (project name, party name, document name) — JOINed</li>
+     *   <li>flags: canComplete / canReject / requiresAttachment / hasAttachment</li>
+     *   <li>mini-timeline of previous steps (DONE/REJECTED with who/when/comment)</li>
+     * </ul>
+     *
+     * <p>Two queries total (1 main JOIN + 1 step list) — no per-field N+1.
+     *
+     * <p>Access: caller must be the step assignee OR hold the business role
+     * on the project OR be org owner. Non-assignees who pass the access check
+     * still get the payload but with {@code canComplete=false, canReject=false}
+     * (read-only — useful for oversight roles like BUREAU/QA). The brief says
+     * "others can read if project member (or same rules as timeline)".
+     *
+     * <p>If the subject is not CASH_MOVEMENT, returns 400
+     * SUBJECT_NOT_SUPPORTED_FOR_DESK — the desk is purpose-built for payment
+     * approvals; other subjects would need a different payload shape.
+     */
+    public ApprovalDeskResponse getApprovalDesk(Authentication auth, UUID stepInstanceId) {
+        AppUser me = currentUser(auth);
+
+        // ── (1) Main JOIN: step + instance + movement + party + project + pot + document ──
+        // Single query pulls every field the desk needs. LEFT JOINs so a step
+        // with no movement (shouldn't happen for CASH_MOVEMENT, but defensive)
+        // still returns the process context.
+        List<Map<String, Object>> rows = jdbc.queryForList(
+                """
+                select psi.id as step_id, psi.step_order, psi.step_key as current_step_key,
+                       psi.name as current_step_name, psi.status as step_status,
+                       psi.assignee_user_id, psi.assignee_role,
+                       psi.requires_attachment,
+                       pi.id as instance_id, pi.status as instance_status,
+                       pi.current_step_order, pi.subject_type, pi.subject_id,
+                       pt.key as template_key, pt.name as template_name,
+                       au.full_name as assignee_name,
+                       -- cash movement fields (CASH_MOVEMENT subject only)
+                       m.id as movement_id, m.label as movement_label,
+                       m.movement_date, m.movement_type, m.status as movement_status,
+                       m.amount as assessed_amount, m.claimed_amount,
+                       m.variance_reason,
+                       m.payment_mode, m.payment_ref, m.voucher_no, m.nature, m.invoice_ref,
+                       -- linked entities (names)
+                       p.id as project_id, p.name as project_name,
+                       py.id as party_id, py.name as party_name, py.type as party_type,
+                       fp.id as from_pot_id, fp.name as from_pot_name,
+                       d.id as document_id, d.title as document_name
+                from process_step_instance psi
+                join process_instance pi on pi.id = psi.instance_id
+                left join process_template pt on pt.id = pi.template_id
+                left join app_user au on au.id = psi.assignee_user_id
+                left join cash_movement m on m.id = pi.subject_id and pi.subject_type = 'CASH_MOVEMENT'
+                left join project p on p.id = pi.project_id
+                left join party py on py.id = m.party_id
+                left join cash_pot fp on fp.id = m.from_pot_id
+                left join document d on d.id = m.document_id
+                where psi.id = ?
+                """,
+                stepInstanceId);
+
+        if (rows.isEmpty()) {
+            throw new ResourceNotFoundException("STEP_NOT_FOUND", "Étape introuvable");
+        }
+        Map<String, Object> row = rows.get(0);
+
+        String subjectType = (String) row.get("subject_type");
+        if (!"CASH_MOVEMENT".equalsIgnoreCase(subjectType)) {
+            throw new BadRequestException("SUBJECT_NOT_SUPPORTED_FOR_DESK",
+                    "Le bureau de validation ne supporte que les paiements (sujet CASH_MOVEMENT). " +
+                    "Sujet actuel: " + subjectType);
+        }
+
+        UUID projectId = (UUID) row.get("project_id");
+        UUID assigneeUserId = (UUID) row.get("assignee_user_id");
+        String assigneeRole = (String) row.get("assignee_role");
+
+        // ── (2) Access check — read for project members, write for assignees ──
+        // requireProjectAccess for the read (404 if not a member and not owner).
+        if (projectId != null) requireProjectAccess(me, projectId);
+        boolean canAct = canActOnStep(me, assigneeUserId, assigneeRole, projectId);
+        boolean stepPending = "PENDING".equalsIgnoreCase((String) row.get("step_status"));
+        boolean instanceRunning = "RUNNING".equalsIgnoreCase((String) row.get("instance_status"));
+        boolean canComplete = canAct && stepPending && instanceRunning;
+        boolean canReject = canAct && stepPending && instanceRunning;
+
+        // ── (3) hasAttachment: movement.document_id OR process_step_document row ──
+        boolean hasAttachment = row.get("document_id") != null
+                || countStepDocuments(stepInstanceId) > 0;
+
+        // ── (4) varianceAmount = claimed - assessed (null-safe) ──
+        BigDecimal assessed = (BigDecimal) row.get("assessed_amount");
+        BigDecimal claimed = (BigDecimal) row.get("claimed_amount");
+        BigDecimal variance = null;
+        if (claimed != null && assessed != null) {
+            variance = claimed.subtract(assessed);
+        }
+
+        // ── (5) Mini-timeline: all steps of this instance (DONE + current + future PENDING) ──
+        // Single query — names JOINed for the assignee.
+        List<DeskStepView> steps = jdbc.queryForList(
+                """
+                select psi.step_order, psi.step_key, psi.name, psi.status,
+                       psi.assignee_role, au.full_name as assignee_name,
+                       psi.completed_at, psi.comment
+                from process_step_instance psi
+                left join app_user au on au.id = psi.completed_by
+                where psi.instance_id = ?
+                order by psi.step_order asc
+                """,
+                row.get("instance_id"))
+                .stream()
+                .map(r -> new DeskStepView(
+                        r.get("step_order") == null ? 0
+                                : ((Number) r.get("step_order")).intValue(),
+                        (String) r.get("step_key"),
+                        (String) r.get("name"),
+                        (String) r.get("status"),
+                        (String) r.get("assignee_role"),
+                        (String) r.get("assignee_name"),
+                        toInstant(r.get("completed_at") instanceof Timestamp t ? t : null),
+                        (String) r.get("comment")))
+                .toList();
+
+        // ── (6) movementDate as ISO string (yyyy-MM-dd) for the front-end ──
+        Object dateObj = row.get("movement_date");
+        String movementDate = null;
+        if (dateObj instanceof java.sql.Date d) {
+            movementDate = d.toLocalDate().toString();
+        } else if (dateObj != null) {
+            movementDate = dateObj.toString();
+        }
+
+        return new ApprovalDeskResponse(
+                stepInstanceId,
+                (UUID) row.get("instance_id"),
+                (String) row.get("template_key"),
+                (String) row.get("template_name"),
+                (String) row.get("instance_status"),
+                row.get("current_step_order") == null ? 0
+                        : ((Number) row.get("current_step_order")).intValue(),
+                (String) row.get("current_step_key"),
+                (String) row.get("current_step_name"),
+                assigneeRole,
+                assigneeUserId,
+                (String) row.get("assignee_name"),
+                Boolean.TRUE.equals(row.get("requires_attachment")),
+                subjectType,
+                (UUID) row.get("subject_id"),
+                (UUID) row.get("movement_id"),
+                (String) row.get("movement_label"),
+                movementDate,
+                (String) row.get("movement_type"),
+                (String) row.get("movement_status"),
+                assessed,
+                claimed,
+                variance,
+                (String) row.get("variance_reason"),
+                (String) row.get("payment_mode"),
+                (String) row.get("payment_ref"),
+                (String) row.get("voucher_no"),
+                (String) row.get("nature"),
+                (String) row.get("invoice_ref"),
+                projectId,
+                (String) row.get("project_name"),
+                (UUID) row.get("party_id"),
+                (String) row.get("party_name"),
+                (String) row.get("party_type"),
+                (UUID) row.get("from_pot_id"),
+                (String) row.get("from_pot_name"),
+                (UUID) row.get("document_id"),
+                (String) row.get("document_name"),
+                canComplete,
+                canReject,
+                hasAttachment,
+                steps);
+    }
+
+    /** Count documents linked directly to a step instance (process_step_document). */
+    private int countStepDocuments(UUID stepInstanceId) {
+        Integer cnt = jdbc.queryForObject(
+                "select count(*) from process_step_document where step_instance_id = ?",
+                Integer.class, stepInstanceId);
+        return cnt == null ? 0 : cnt;
+    }
+
+    /**
+     * Non-throwing variant of {@link #requireStepAccess} — returns true if the
+     * caller can act on the step (assignee / owner / holds business role on
+     * the project), false otherwise. Used by the desk to compute canComplete /
+     * canReject WITHOUT throwing for read-only viewers.
+     */
+    private boolean canActOnStep(AppUser me, UUID assigneeUserId, String assigneeRole, UUID projectId) {
+        if (Boolean.TRUE.equals(me.getIsOwner())) return true;
+        if (Objects.equals(me.getId(), assigneeUserId)) return true;
+        if (projectId == null || assigneeRole == null) return false;
+        // role-based fallback: I'm a project member AND I hold the business role
+        List<UUID> roleMatch = jdbc.queryForList(
+                """
+                select pm.user_id from project_member pm
+                join user_role ur on ur.user_id = pm.user_id
+                join role r on r.id = ur.role_id
+                where pm.project_id = ? and pm.user_id = ? and r.code = ?
+                limit 1
+                """,
+                UUID.class, projectId, me.getId(), assigneeRole);
+        return !roleMatch.isEmpty();
     }
 
     // ═══════════════════════════════════════════════════════════════

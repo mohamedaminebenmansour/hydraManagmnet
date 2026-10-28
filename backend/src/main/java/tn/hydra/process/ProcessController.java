@@ -211,6 +211,21 @@ public class ProcessController {
         return ResponseEntity.ok(result);
     }
 
+    /**
+     * TASK 1 — Approval desk: single payload for an approver to decide on a
+     * CASH_MOVEMENT-linked payment step. One round-trip, no N+1.
+     * GET /api/process/steps/{stepInstanceId}/approval-desk
+     *
+     * Returns 400 SUBJECT_NOT_SUPPORTED_FOR_DESK if the step's process subject
+     * is not CASH_MOVEMENT (the desk is purpose-built for payment approvals).
+     */
+    @GetMapping("/api/process/steps/{stepInstanceId}/approval-desk")
+    public ResponseEntity<ProcessService.ApprovalDeskResponse> getApprovalDesk(
+            @PathVariable UUID stepInstanceId) {
+        Authentication auth = SecurityContextHolder.getContext().getAuthentication();
+        return ResponseEntity.ok(svc.getApprovalDesk(auth, stepInstanceId));
+    }
+
     // ══════════════════════════════════════════════════════════════
     //  READ / QUERY ENDPOINTS
     // ══════════════════════════════════════════════════════════════
