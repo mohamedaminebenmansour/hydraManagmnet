@@ -7,7 +7,9 @@ import { CashService } from '@app/core/services/cash.service';
 import { AuthService } from '@app/core/auth.service';
 import { PERM } from '@app/core/permissions';
 import {
-  Party, formatAmount, formatDate,
+  Party, CashSummary,
+  PaymentMode, PAYMENT_MODE_LABEL, PAYMENT_MODE_ICON,
+  formatAmount, formatDate,
   movementTypeVisual, movementStatusVisual, movementPending, partyTypeVisual,
 } from '@app/core/models/cash.model';
 import { avatarGradient, initials } from '@app/shared/hydra-design';
@@ -15,7 +17,12 @@ import { avatarGradient, initials } from '@app/shared/hydra-design';
 /**
  * PartyDetailComponent — /tresorerie/parties/:id
  * Fiche tiers: avatar + type + téléphone + "Payer ce sous-traitant" CTA
- * + historique de tous les mouvements liés (GET movements?partyId=).
+ * + total payé (POSTED OUT) + count + lastDate + table of recent movements
+ * linked to the movement detail view.
+ *
+ * TASK 4 — uses the new /api/parties/{id}/cash-summary endpoint (single
+ * round-trip: aggregate + 10 recent POSTED OUT). Falls back to listMovements
+ * for the broader history view (showing more than 10 lines).
  */
 @Component({
   selector: 'app-party-detail',
@@ -59,19 +66,26 @@ import { avatarGradient, initials } from '@app/shared/hydra-design';
           }
         </header>
 
-        <!-- Total paid -->
-        <div class="pd-stats">
-          <div class="stat">
-            <span class="s-n">{{ fmt(totalPaid()) }}</span>
-            <span class="s-l">Total payé (hors annulations)</span>
+        <!-- TASK 4 — total paid + count + lastDate (from cash-summary endpoint) -->
+        @if (summary()) {
+          @let s = summary()!;
+          <div class="pd-stats">
+            <div class="stat stat-paid">
+              <span class="s-n">{{ fmt(s.totalPaid) }}</span>
+              <span class="s-l">Total payé (comptabilisé)</span>
+            </div>
+            <div class="stat">
+              <span class="s-n">{{ s.movementCount }}</span>
+              <span class="s-l">Paiement(s)</span>
+            </div>
+            <div class="stat">
+              <span class="s-n">{{ s.lastMovementDate ? formatDate(s.lastMovementDate) : '—' }}</span>
+              <span class="s-l">Dernier paiement</span>
+            </div>
           </div>
-          <div class="stat">
-            <span class="s-n">{{ movements().length }}</span>
-            <span class="s-l">Opération(s)</span>
-          </div>
-        </div>
+        }
 
-        <!-- Movement history -->
+        <!-- Movement history (full list — broader than cash-summary recent) -->
         <section class="pd-movements">
           <header class="pdm-head">
             <h2><i class="pi pi-list"></i> Historique des paiements</h2>
@@ -97,6 +111,12 @@ import { avatarGradient, initials } from '@app/shared/hydra-design';
                       <span>{{ formatDate(m.movementDate) }}</span>
                       @if (potName(m.fromPotId)) {
                         <span><i class="pi pi-building"></i> {{ potName(m.fromPotId) }}</span>
+                      }
+                      @if (m.voucherNo) {
+                        <span class="mv-bon"><i class="pi pi-ticket"></i> {{ m.voucherNo }}</span>
+                      }
+                      @if (m.paymentMode) {
+                        <span class="mv-mode"><i class="pi" [class]="modeIcon(m.paymentMode)"></i> {{ modeLabel(m.paymentMode) }}</span>
                       }
                     </div>
                   </div>
@@ -128,6 +148,7 @@ export class PartyDetailComponent implements OnInit {
   canDraft = this.auth.can(PERM.CASH_DRAFT);
 
   party = signal<Party | null>(null);
+  summary = signal<CashSummary | null>(null);
   movements = signal<any[]>([]);
   loading = signal(true);
   movementsLoading = signal(true);
@@ -144,7 +165,15 @@ export class PartyDetailComponent implements OnInit {
   grad = (p: Party) => avatarGradient(p.id);
   init = (p: Party) => initials(p.name);
 
-  totalPaid = signal(0);
+  // V26 label helpers
+  modeLabel(m: string | null | undefined): string {
+    if (!m) return '';
+    return PAYMENT_MODE_LABEL[m as PaymentMode] ?? m;
+  }
+  modeIcon(m: string | null | undefined): string {
+    if (!m) return 'pi-circle';
+    return PAYMENT_MODE_ICON[m as PaymentMode] ?? 'pi-circle';
+  }
 
   ngOnInit(): void {
     this.id = this.route.snapshot.paramMap.get('id') ?? '';
@@ -157,14 +186,17 @@ export class PartyDetailComponent implements OnInit {
       this.loading.set(false);
     });
 
-    // Load movements for this party + compute total paid (POSTED OUT only)
+    // TASK 4 — load the cash-summary (total paid + count + last date +
+    // 10 recent POSTED OUT). Single round-trip via the new endpoint.
+    this.cashService.getCashSummary(this.id).subscribe(s => {
+      this.summary.set(s);
+    });
+
+    // Also load the broader movement list (DRAFT + POSTED + VOID, all OUT
+    // and IN to this party) for the full history view below the stats.
     this.cashService.listMovements({ partyId: this.id }).subscribe(list => {
       this.movements.set(list);
       this.movementsLoading.set(false);
-      const total = list
-        .filter(m => m.status === 'POSTED' && m.movementType === 'OUT')
-        .reduce((sum, m) => sum + (m.amount ?? 0), 0);
-      this.totalPaid.set(total);
     });
 
     this.cashService.loadPots().subscribe();

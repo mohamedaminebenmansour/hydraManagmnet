@@ -151,3 +151,107 @@
   display: inline-flex; align-items: center; gap: 4px;
   i { font-size: 9px; color: var(--st-color, #64748b); }
 }
+
+// ============================================================================
+//  ÉTAT DE CAISSE (TASK 4) — Excel-like statement table
+// ============================================================================
+.pd-statement {
+  margin-top: 18px;
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
+  border-radius: 14px;
+  padding: 16px 18px 18px;
+  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.04);
+
+  .pds-head {
+    display: flex; flex-wrap: wrap; gap: 10px;
+    align-items: center; justify-content: space-between;
+    margin-bottom: 12px;
+    h2 {
+      font-size: 16px; font-weight: 700; color: #0f172a;
+      display: inline-flex; align-items: center; gap: 8px;
+      margin: 0;
+      i { color: #0891b2; font-size: 18px; }
+    }
+    .pds-filters {
+      display: inline-flex; align-items: center; gap: 8px; flex-wrap: wrap;
+    }
+  }
+
+  .pds-loading, .pds-empty {
+    padding: 22px; text-align: center; color: #64748b;
+    i { font-size: 22px; display: block; margin-bottom: 6px; color: #94a3b8; }
+    p { margin: 0 0 2px; font-weight: 600; }
+    small { color: #94a3b8; }
+  }
+
+  .pds-table-wrap {
+    overflow-x: auto;  // mobile horizontal scroll — design rule
+    -webkit-overflow-scrolling: touch;
+    border: 1px solid #e2e8f0;
+    border-radius: 10px;
+  }
+  .pds-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 13px;
+    min-width: 880px;  // forces horizontal scroll on mobile, not ugly squish
+
+    thead th {
+      text-align: left;
+      padding: 9px 10px;
+      font-weight: 700; color: #475569;
+      background: #f8fafc;
+      border-bottom: 1px solid #e2e8f0;
+      white-space: nowrap;
+      &.num { text-align: right; }
+    }
+    tbody tr {
+      cursor: pointer;
+      border-bottom: 1px solid #f1f5f9;
+      transition: background 0.12s ease;
+      &:hover { background: #f8fafc; }
+      &.row-draft { background: #fffbeb; }
+      &.row-draft:hover { background: #fef3c7; }
+      td {
+        padding: 9px 10px;
+        color: #0f172a;
+        vertical-align: middle;
+        white-space: nowrap;
+        &.num { text-align: right; font-variant-numeric: tabular-nums; }
+        &.c-label { white-space: normal; max-width: 280px; color: #1e293b; }
+        &.c-amt {
+          font-weight: 700;
+          color: #64748b;
+          &.in { color: #16a34a; }
+          &.out { color: #dc2626; }
+        }
+        &.c-bon { font-family: 'Sarasa Mono SC', monospace; color: #64748b; font-size: 12px; }
+      }
+    }
+  }
+
+  // Visual chips inside cells
+  .nat-chip {
+    display: inline-block;
+    padding: 2px 8px; border-radius: 999px;
+    background: #ecfeff; color: #0e7490;
+    font-size: 11px; font-weight: 600;
+  }
+  .mode-chip {
+    display: inline-flex; align-items: center; gap: 4px;
+    padding: 2px 7px; border-radius: 999px;
+    background: #f1f5f9; color: #475569;
+    font-size: 11px; font-weight: 600;
+    i { font-size: 10px; color: #64748b; }
+  }
+  .mv-status {
+    font-size: 10px; font-weight: 700;
+    padding: 2px 7px; border-radius: 999px;
+    background: var(--st-soft, #f1f5f9);
+    color: var(--st-color, #64748b);
+    display: inline-flex; align-items: center; gap: 4px;
+    white-space: nowrap;
+    i { font-size: 9px; color: var(--st-color, #64748b); }
+  }
+}

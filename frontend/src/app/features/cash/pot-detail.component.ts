@@ -1,27 +1,34 @@
 import { Component, OnInit, computed, inject, signal } from '@angular/core';
 import { CommonModule, DatePipe } from '@angular/common';
+import { FormsModule } from '@angular/forms';
 import { ActivatedRoute, RouterLink } from '@angular/router';
 import { ButtonModule } from 'primeng/button';
+import { DatePickerModule } from 'primeng/datepicker';
 import { CashService } from '@app/core/services/cash.service';
 import { PartyService } from '@app/core/services/party.service';
 import { AuthService } from '@app/core/auth.service';
 import { PERM } from '@app/core/permissions';
 import {
-  CashMovement, CashPot, formatAmount, formatDate,
+  CashMovement, CashPot, StatementLine,
+  PaymentMode, PAYMENT_MODE_LABEL, PAYMENT_MODE_ICON, NATURE_LABEL,
+  formatAmount, formatDate,
   movementTypeVisual, movementStatusVisual, movementPending, potTypeVisual,
 } from '@app/core/models/cash.model';
 
 /**
  * PotDetailComponent — /tresorerie/caisses/:potId
  *
- * Shows the caisse: name + big balance + movement history.
- * Each movement row shows type icon + colored amount + date + label + status + party name.
- * CTAs: Nouvelle sortie / Nouvelle entrée (prefilled with this pot).
+ * Shows the caisse: name + big balance + movement history (card list) +
+ * an Excel-like "État de caisse" table (TASK 4) calling the statement API
+ * with optional from/to filters. Each row carries Date / Bon / Tiers /
+ * Nature / Désignation / Mode / Montant / Statut — the same columns as a
+ * paper caisse sheet. Status chips are French (Brouillon / En attente /
+ * Comptabilisé / Annulé).
  */
 @Component({
   selector: 'app-pot-detail',
   standalone: true,
-  imports: [ButtonModule, RouterLink, DatePipe, CommonModule],
+  imports: [ButtonModule, RouterLink, DatePipe, CommonModule, FormsModule, DatePickerModule],
   styleUrl: './pot-detail.component.scss',
   template: `
     <section class="pot-detail">
@@ -73,7 +80,87 @@ import {
           </div>
         }
 
-        <!-- Movement history -->
+        <!-- ÉTAT DE CAISSE (TASK 4) — Excel-like statement table -->
+        <section class="pd-statement">
+          <header class="pds-head">
+            <h2><i class="pi pi-table"></i> État de caisse</h2>
+            <div class="pds-filters">
+              <p-datepicker [(ngModel)]="stmtFrom" dateFormat="dd/mm/yy"
+                            [showIcon]="true" placeholder="Du" appendTo="body"
+                            (onSelect)="reloadStatement()" (onClear)="reloadStatement()" />
+              <p-datepicker [(ngModel)]="stmtTo" dateFormat="dd/mm/yy"
+                            [showIcon]="true" placeholder="Au" appendTo="body"
+                            (onSelect)="reloadStatement()" (onClear)="reloadStatement()" />
+              <button pButton label="Actualiser" icon="pi pi-refresh" severity="secondary"
+                      [text]="true" (click)="reloadStatement()"></button>
+            </div>
+          </header>
+
+          @if (stmtLoading()) {
+            <div class="pds-loading"><i class="pi pi-spin pi-spinner"></i> Chargement de l'état…</div>
+          } @else if (statement().length === 0) {
+            <div class="pds-empty">
+              <i class="pi pi-inbox"></i>
+              <p>Aucune opération sur la période sélectionnée.</p>
+            </div>
+          } @else {
+            <div class="pds-table-wrap">
+              <table class="pds-table">
+                <thead>
+                  <tr>
+                    <th>Date</th>
+                    <th>Bon</th>
+                    <th>Tiers</th>
+                    <th>Nature</th>
+                    <th>Désignation</th>
+                    <th>Mode</th>
+                    <th class="num">Montant</th>
+                    <th>Statut</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  @for (s of statement(); track s.id) {
+                    <tr [routerLink]="['/tresorerie/operations', s.id]"
+                        [class.row-posted]="s.status === 'POSTED'"
+                        [class.row-draft]="s.status === 'DRAFT'">
+                      <td class="c-date">{{ formatDate(s.movementDate) }}</td>
+                      <td class="c-bon">{{ s.voucherNo || '—' }}</td>
+                      <td class="c-party">{{ s.partyName || '—' }}</td>
+                      <td class="c-nat">
+                        @if (s.nature) {
+                          <span class="nat-chip">{{ natureLabel(s.nature) }}</span>
+                        } @else { — }
+                      </td>
+                      <td class="c-label">{{ s.label || '—' }}</td>
+                      <td class="c-mode">
+                        @if (s.paymentMode) {
+                          <span class="mode-chip" [title]="modeLabel(s.paymentMode)">
+                            <i class="pi" [class]="modeIcon(s.paymentMode)"></i>
+                            {{ modeLabel(s.paymentMode) }}
+                          </span>
+                        } @else { — }
+                      </td>
+                      <td class="c-amt num"
+                          [class.in]="s.movementType === 'IN'"
+                          [class.out]="s.movementType === 'OUT'">
+                        {{ mvSign(s) }}{{ fmt(s.amount) }}
+                      </td>
+                      <td class="c-status">
+                        <span class="mv-status" [style.--st-color]="sv(s.status, false).color"
+                              [style.--st-soft]="sv(s.status, false).soft">
+                          <i class="pi" [class]="sv(s.status, false).icon"></i>
+                          {{ sv(s.status, false).label }}
+                        </span>
+                      </td>
+                    </tr>
+                  }
+                </tbody>
+              </table>
+            </div>
+          }
+        </section>
+
+        <!-- Movement history (card list — quick scan) -->
         <section class="pd-movements">
           <header class="pdm-head">
             <h2><i class="pi pi-list"></i> Historique des opérations</h2>
@@ -147,6 +234,12 @@ export class PotDetailComponent implements OnInit {
   movements = signal<CashMovement[]>([]);
   movementsLoading = signal(true);
 
+  // TASK 4 — État de caisse
+  statement = signal<StatementLine[]>([]);
+  stmtLoading = signal(false);
+  stmtFrom: Date | null = null;
+  stmtTo: Date | null = null;
+
   potId = '';
 
   // Template helpers
@@ -178,6 +271,7 @@ export class PotDetailComponent implements OnInit {
 
     this.partyService.loadParties().subscribe();
     this.loadMovements();
+    this.reloadStatement();
   }
 
   loadMovements(): void {
@@ -186,6 +280,38 @@ export class PotDetailComponent implements OnInit {
       this.movements.set(list);
       this.movementsLoading.set(false);
     });
+  }
+
+  /** (TASK 4) Load the état de caisse from /pots/{id}/statement with date filters. */
+  reloadStatement(): void {
+    if (!this.potId) return;
+    this.stmtLoading.set(true);
+    this.cashService.getStatement(this.potId, {
+      from: this.stmtFrom ? this.toYmd(this.stmtFrom) : undefined,
+      to:   this.stmtTo   ? this.toYmd(this.stmtTo)   : undefined,
+    }).subscribe(lines => {
+      this.statement.set(lines);
+      this.stmtLoading.set(false);
+    });
+  }
+
+  /** Sign prefix for the statement amount column (+ for IN, − for OUT/TRANSFER). */
+  mvSign(s: { movementType: string }): string {
+    return s.movementType === 'IN' ? '+' : '−';
+  }
+
+  // V26 label helpers for the statement table
+  modeLabel(m: string | null | undefined): string {
+    if (!m) return '';
+    return PAYMENT_MODE_LABEL[m as PaymentMode] ?? m;
+  }
+  modeIcon(m: string | null | undefined): string {
+    if (!m) return 'pi-circle';
+    return PAYMENT_MODE_ICON[m as PaymentMode] ?? 'pi-circle';
+  }
+  natureLabel(n: string | null | undefined): string {
+    if (!n) return '';
+    return (NATURE_LABEL as any)[n] ?? n;
   }
 
   partyName(id: string | null | undefined): string {
@@ -198,7 +324,14 @@ export class PotDetailComponent implements OnInit {
     return this.cashService.potById(id)?.name ?? '';
   }
 
-  mvSign(m: CashMovement): string {
+  sign(m: CashMovement): string {
     return m.movementType === 'IN' ? '+' : '−';
+  }
+
+  private toYmd(d: Date): string {
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+    return `${y}-${m}-${day}`;
   }
 }
