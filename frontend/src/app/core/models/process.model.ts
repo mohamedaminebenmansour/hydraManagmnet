@@ -212,6 +212,7 @@ export interface TemplateDetail {
   key: string;
   name: string;
   active: boolean;
+  description?: string | null;
   steps: TemplateStep[];
 }
 
@@ -219,12 +220,14 @@ export interface TemplateDetail {
 export interface CreateTemplateBody {
   key: string;
   name: string;
+  description?: string;
 }
 
 /** Body PUT /api/processes/templates/{id}. */
 export interface UpdateTemplateBody {
   name: string;
   active: boolean;
+  description?: string;
 }
 
 /** Body POST /api/processes/templates/{id}/steps. */
@@ -248,7 +251,7 @@ export interface UpdateStepBody {
 /** Mapper: convertit n'importe quelle réponse backend en TemplateDetail. */
 export function mapTemplateDetail(raw: any): TemplateDetail {
   if (!raw || typeof raw !== 'object') {
-    return { id: '', key: '', name: '', active: false, steps: [] };
+    return { id: '', key: '', name: '', active: false, description: null, steps: [] };
   }
   const stepsRaw = Array.isArray(raw?.steps) ? raw.steps : [];
   const steps: TemplateStep[] = stepsRaw.map((s: any) => ({
@@ -264,6 +267,7 @@ export function mapTemplateDetail(raw: any): TemplateDetail {
     key: String(raw?.key ?? raw?.templateKey ?? ''),
     name: String(raw?.name ?? raw?.templateName ?? ''),
     active: Boolean(raw?.active ?? true),
+    description: raw?.description ?? null,
     steps: steps.sort((a, b) => a.stepOrder - b.stepOrder),
   };
 }

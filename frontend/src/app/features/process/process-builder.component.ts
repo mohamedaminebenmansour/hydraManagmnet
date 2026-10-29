@@ -3,6 +3,7 @@ import { FormBuilder, FormGroup, ReactiveFormsModule, Validators } from '@angula
 import { Router, ActivatedRoute, RouterLink } from '@angular/router';
 import { ButtonModule } from 'primeng/button';
 import { InputTextModule } from 'primeng/inputtext';
+import { TextareaModule } from 'primeng/textarea';
 import { SelectModule } from 'primeng/select';
 import { ToggleSwitchModule } from 'primeng/toggleswitch';
 import { CheckboxModule } from 'primeng/checkbox';
@@ -34,6 +35,7 @@ interface DraftStep {
   imports: [
     ButtonModule,
     InputTextModule,
+    TextareaModule,
     SelectModule,
     ToggleSwitchModule,
     CheckboxModule,
@@ -106,6 +108,12 @@ interface DraftStep {
             <div class="form-row">
               <label>Nom du processus</label>
               <input pInputText formControlName="name" placeholder="Ex: Paiement sous-traitant Tronçon 3" />
+            </div>
+
+            <div class="form-row">
+              <label>Description (optionnel)</label>
+              <textarea pInputTextarea formControlName="description" rows="2"
+                        placeholder="Ex: Finance vérifie puis gérant approuve"></textarea>
             </div>
 
             <div class="form-row">
@@ -351,6 +359,7 @@ export class ProcessBuilderComponent implements OnInit {
   form = this.fb.nonNullable.group({
     key: ['', [Validators.required, Validators.pattern(/^[A-Z][A-Z0-9_]*$/)]],
     name: ['', [Validators.required, Validators.minLength(3)]],
+    description: [''],
     active: [true],
   });
 
@@ -415,16 +424,19 @@ export class ProcessBuilderComponent implements OnInit {
       return;
     }
     this.saving.set(true);
+    const description = this.form.controls.description.value?.trim() || undefined;
     const body = {
       key: this.form.controls.key.value,
       name: this.form.controls.name.value,
+      description,
     };
 
     if (this.templateId()) {
-      // Edit mode — update name/active
+      // Edit mode — update name/active/description
       this.processService.updateTemplate(this.templateId(), {
         name: this.form.controls.name.value,
         active: this.form.controls.active.value,
+        description,
       }).subscribe({
         next: (updated) => {
           this.saving.set(false);
@@ -604,6 +616,7 @@ export class ProcessBuilderComponent implements OnInit {
         if (tpl) {
           this.form.controls.key.setValue(tpl.key);
           this.form.controls.name.setValue(tpl.name);
+          this.form.controls.description.setValue(tpl.description ?? '');
           this.form.controls.active.setValue(tpl.active);
           this.syncStepsFromBackend(tpl);
           this.step.set(2); // Skip directly to steps in edit mode
