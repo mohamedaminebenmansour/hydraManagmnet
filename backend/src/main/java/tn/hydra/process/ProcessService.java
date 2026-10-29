@@ -816,6 +816,21 @@ public class ProcessService {
             if ("CASH_MOVEMENT".equals(subjectType) && subjectId != null) {
                 cashService.onProcessCompletedPostMovement(subjectId, me.getId());
             }
+            // ──────────────────────────────────────────────────────────────
+            // Ticket hook — if subject_type=TICKET, set ticket status to APPROVED.
+            // The ticket table already exists (V1+V6+V13). We do a simple JDBC
+            // update rather than injecting TicketService (avoids a circular dep).
+            // On REJECTED, the rejectStep method below already sets the instance
+            // to REJECTED — the ticket stays in its current status (the caller
+            // can see the process was rejected in the timeline).
+            // ──────────────────────────────────────────────────────────────
+            if ("TICKET".equals(subjectType) && subjectId != null && orgId != null) {
+                jdbc.update(
+                        "update ticket set status = 'APPROVED', updated_at = now() where id = ? and org_id = ?",
+                        subjectId, orgId);
+                audit.log("TICKET_APPROVED_BY_PROCESS", "ticket", subjectId,
+                        "{\"instanceId\":\"" + instanceId + "\",\"approvedBy\":\"" + me.getId() + "\"}");
+            }
         }
 
         return new StepResult(stepInstanceId, "DONE");
