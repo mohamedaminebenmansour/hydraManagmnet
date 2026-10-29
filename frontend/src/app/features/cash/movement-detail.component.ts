@@ -9,8 +9,10 @@ import { TextareaModule } from 'primeng/textarea';
 import { MessageService } from 'primeng/api';
 import { CashService } from '@app/core/services/cash.service';
 import { PartyService } from '@app/core/services/party.service';
+import { ProcessService } from '@app/core/services/process.service';
 import { AuthService } from '@app/core/auth.service';
 import { PERM } from '@app/core/permissions';
+import { ProcessTimeline } from '@app/core/models/process.model';
 import {
   CashMovement, MovementTimeline, formatAmount, formatDate,
   movementTypeVisual, movementStatusVisual, movementPending,
@@ -129,6 +131,29 @@ import {
                 </a>
               </div>
             </div>
+            @if (processTimeline(); as pt) {
+              <div class="process-strip">
+                <div class="ps-label">Progression du processus</div>
+                <div class="ps-steps">
+                  @for (s of pt.steps; track s.stepInstanceId) {
+                    <div class="ps-step {{ s.status.toLowerCase() }}"
+                         [class.ps-current]="s.status === 'PENDING'">
+                      <div class="ps-dot">
+                        @if (s.status === 'DONE') { <i class="pi pi-check"></i> }
+                        @else if (s.status === 'PENDING') { <i class="pi pi-clock"></i> }
+                        @else if (s.status === 'REJECTED') { <i class="pi pi-times"></i> }
+                        @else { <i class="pi pi-circle"></i> }
+                      </div>
+                      <div class="ps-info">
+                        <div class="ps-name">{{ s.name }}</div>
+                        <div class="ps-role">{{ s.assigneeRole }}</div>
+                        @if (s.assigneeName) { <div class="ps-who">{{ s.assigneeName }}</div> }
+                      </div>
+                    </div>
+                  }
+                </div>
+              </div>
+            }
           }
           @if (proofDocumentId()) {
             <!-- TASK 6 — open the payment proof stored in the Finance folder -->
@@ -283,11 +308,13 @@ export class MovementDetailComponent implements OnInit {
   private router = inject(Router);
   private cashService = inject(CashService);
   private partyService = inject(PartyService);
+  private processService = inject(ProcessService);
   private msgs = inject(MessageService);
   private auth = inject(AuthService);
 
   movement = signal<CashMovement | null>(null);
   timeline = signal<MovementTimeline | null>(null);
+  processTimeline = signal<ProcessTimeline | null>(null);
   voidReason = '';
   loading = signal(true);
   acting = signal(false);
@@ -386,6 +413,13 @@ export class MovementDetailComponent implements OnInit {
       this.movement.set(m);
       this.voidReason = '';
       this.loading.set(false);
+      // If the movement has a linked process, fetch the process timeline
+      // to show the step strip (visual progress: done / current / waiting).
+      if (m?.processInstanceId) {
+        this.processService.getTimeline(m.processInstanceId).subscribe(pt => {
+          this.processTimeline.set(pt);
+        });
+      }
     });
     // B6 — audit timeline (independent from the movement fetch)
     this.cashService.getTimeline(this.id).subscribe(t => this.timeline.set(t));
