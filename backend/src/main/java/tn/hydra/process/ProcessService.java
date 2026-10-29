@@ -228,21 +228,40 @@ public class ProcessService {
             int totalSteps) {}
 
     /** Template option for dropdowns / project config. */
-    public record TemplateOption(UUID id, String key, String name, boolean active) {}
+    public record TemplateOption(UUID id, String key, String name, boolean active,
+                                  String description) {
+        /** Backwards-compatible 4-field constructor (description = null). */
+        public TemplateOption(UUID id, String key, String name, boolean active) {
+            this(id, key, name, active, null);
+        }
+    }
 
     /** Full template detail (for admin screens). */
     public record TemplateDetail(
             UUID id, String key, String name, UUID orgId, boolean active,
-            Instant createdAt, List<TemplateStepView> steps) {}
+            String description,
+            Instant createdAt, List<TemplateStepView> steps) {
+        /** Backwards-compatible 7-field constructor (description = null). */
+        public TemplateDetail(UUID id, String key, String name, UUID orgId, boolean active,
+                               Instant createdAt, List<TemplateStepView> steps) {
+            this(id, key, name, orgId, active, null, createdAt, steps);
+        }
+    }
 
     public record TemplateStepView(
             UUID id, int stepOrder, String stepKey, String name,
             String assigneeRole, boolean requiresAttachment) {}
 
     // Template management request records
-    public record CreateTemplateRequest(String key, String name) {}
+    public record CreateTemplateRequest(String key, String name, String description) {
+        /** Backwards-compatible 2-field constructor. */
+        public CreateTemplateRequest(String key, String name) { this(key, name, null); }
+    }
 
-    public record UpdateTemplateRequest(String name, Boolean active) {}
+    public record UpdateTemplateRequest(String name, Boolean active, String description) {
+        /** Backwards-compatible 2-field constructor. */
+        public UpdateTemplateRequest(String name, Boolean active) { this(name, active, null); }
+    }
 
     public record CreateStepRequest(int stepOrder, String stepKey, String name,
                                     String assigneeRole, boolean requiresAttachment) {}
@@ -490,7 +509,7 @@ public class ProcessService {
         // (2) Resolve active template — prefer org-scoped, fall back to system (org_id IS NULL)
         List<Map<String, Object>> tmplRows = jdbc.queryForList(
                 """
-                select id, key, name from process_template
+                select id, key, name, description from process_template
                 where key = ? and active = true
                   and (org_id = ? or org_id is null)
                 order by (org_id = ?) desc nulls last
@@ -1418,7 +1437,7 @@ public class ProcessService {
         UUID orgId = me.getOrgId();
         return jdbc.query(
                 """
-                select id, key, name, active from process_template
+                select id, key, name, active, description from process_template
                 where active = true and (org_id = ? or org_id is null)
                 order by key
                 """,
@@ -1426,7 +1445,8 @@ public class ProcessService {
                         (UUID) rs.getObject("id"),
                         rs.getString("key"),
                         rs.getString("name"),
-                        rs.getBoolean("active")),
+                        rs.getBoolean("active"),
+                        rs.getString("description")),
                 orgId);
     }
 
@@ -1436,7 +1456,7 @@ public class ProcessService {
         UUID orgId = me.getOrgId();
         return jdbc.query(
                 """
-                select id, key, name, active from process_template
+                select id, key, name, active, description from process_template
                 where org_id = ? or org_id is null
                 order by key
                 """,
@@ -1444,7 +1464,8 @@ public class ProcessService {
                         (UUID) rs.getObject("id"),
                         rs.getString("key"),
                         rs.getString("name"),
-                        rs.getBoolean("active")),
+                        rs.getBoolean("active"),
+                        rs.getString("description")),
                 orgId);
     }
 
@@ -1455,7 +1476,7 @@ public class ProcessService {
 
         List<Map<String, Object>> rows = jdbc.queryForList(
                 """
-                select id, key, name, org_id, active, created_at
+                select id, key, name, org_id, active, description, created_at
                 from process_template
                 where id = ? and (org_id = ? or org_id is null)
                 """,
@@ -1488,6 +1509,7 @@ public class ProcessService {
                 (String) t.get("name"),
                 (UUID) t.get("org_id"),
                 Boolean.TRUE.equals(t.get("active")),
+                (String) t.get("description"),
                 toInstant((Timestamp) t.get("created_at")),
                 steps);
     }
@@ -1515,10 +1537,11 @@ public class ProcessService {
         UUID id = UUID.randomUUID();
         jdbc.update(
                 """
-                insert into process_template (id, key, name, org_id, active, created_at, updated_at)
-                values (?, ?, ?, ?, true, now(), now())
+                insert into process_template (id, key, name, org_id, active, description, created_at, updated_at)
+                values (?, ?, ?, ?, true, ?, now(), now())
                 """,
-                id, req.key().toUpperCase().trim(), req.name().trim(), orgId);
+                id, req.key().toUpperCase().trim(), req.name().trim(), orgId,
+                req.description() != null ? req.description().trim() : null);
 
         audit.log("PROCESS_TEMPLATE_CREATED", "process_template", id,
                 "{\"key\":\"" + jsonEscape(req.key()) + "\",\"orgId\":\"" + orgId + "\"}");
@@ -1563,6 +1586,12 @@ public class ProcessService {
                     "update process_template set active = ?, updated_at = now() where id = ?",
                     req.active(), templateId);
         }
+        if (req.description() != null) {
+            jdbc.update(
+                    "update process_template set description = ?, updated_at = now() where id = ?",
+                    req.description().isBlank() ? null : req.description().trim(),
+                    templateId);
+        }
 
         audit.log("PROCESS_TEMPLATE_UPDATED", "process_template", templateId,
                 "{\"active\":\"" + req.active() + "\"}");
@@ -1570,7 +1599,76 @@ public class ProcessService {
         return getTemplate(auth, templateId);
     }
 
-    // ── Template Steps ──────────────────────────────────────────────
+    /**
+     * Delete a template (org-scoped only — system templates with org_id IS NULL
+     * cannot be deleted). Cannot delete if RUNNING instances exist.
+     */
+    @Transactional
+    public void deleteTemplate(Authentication auth, UUID templateId) {
+        AppUser me = currentUser(auth);
+        requireOwner(me);
+        UUID orgId = me.getOrgId();
+
+        List<UUID> owned = jdbc.queryForList(
+                "select id from process_template where id = ? and org_id = ?",
+                UUID.class, templateId, orgId);
+        if (owned.isEmpty()) {
+            throw new ResourceNotFoundException("TEMPLATE_NOT_FOUND",
+                    "Template introuvable ou non supprimable (template système)");
+        }
+
+        Integer runningCnt = jdbc.queryForObject(
+                "select count(*) from process_instance where template_id = ? and status = 'RUNNING'",
+                Integer.class, templateId);
+        if (runningCnt != null && runningCnt > 0) {
+            throw new BusinessRuleException("RUNNING_INSTANCES_EXIST",
+                    "Impossible de supprimer : des instances sont en cours d'exécution");
+        }
+
+        // Cascade: delete steps first, then project_process_template, then template
+        jdbc.update("delete from process_template_step where template_id = ?", templateId);
+        jdbc.update("delete from project_process_template where template_id = ?", templateId);
+        jdbc.update("delete from process_template where id = ?", templateId);
+
+        audit.log("PROCESS_TEMPLATE_DELETED", "process_template", templateId,
+                "{\"orgId\":\"" + orgId + "\"}");
+    }
+
+    /**
+     * Reorder steps within a template. Body: list of { stepId, stepOrder }.
+     * Updates step_order for each step in a single batch.
+     */
+    @Transactional
+    public TemplateDetail reorderSteps(Authentication auth, UUID templateId,
+                                        List<ReorderStepItem> items) {
+        AppUser me = currentUser(auth);
+        requireOwner(me);
+        UUID orgId = me.getOrgId();
+
+        List<UUID> owned = jdbc.queryForList(
+                "select id from process_template where id = ? and org_id = ?",
+                UUID.class, templateId, orgId);
+        if (owned.isEmpty()) {
+            throw new ResourceNotFoundException("TEMPLATE_NOT_FOUND",
+                    "Template introuvable ou non modifiable (template système)");
+        }
+
+        if (items != null) {
+            for (ReorderStepItem item : items) {
+                jdbc.update(
+                        "update process_template_step set step_order = ? where id = ? and template_id = ?",
+                        item.stepOrder(), item.stepId(), templateId);
+            }
+        }
+
+        audit.log("PROCESS_STEPS_REORDERED", "process_template", templateId,
+                "{\"count\":" + (items != null ? items.size() : 0) + "}");
+
+        return getTemplate(auth, templateId);
+    }
+
+    /** One item in the reorder batch. */
+    public record ReorderStepItem(UUID stepId, int stepOrder) {}
 
     @Transactional
     public TemplateDetail addStep(Authentication auth, UUID templateId, CreateStepRequest req) {

@@ -71,6 +71,26 @@ public class ProcessController {
         return ResponseEntity.ok(svc.updateTemplate(auth, id, req));
     }
 
+    /** Delete an org-scoped template (system templates with org_id=NULL cannot be deleted). */
+    @DeleteMapping("/api/processes/templates/{id}")
+    public ResponseEntity<Void> deleteTemplate(@PathVariable UUID id) {
+        Authentication auth = SecurityContextHolder.getContext().getAuthentication();
+        svc.deleteTemplate(auth, id);
+        return ResponseEntity.noContent().build();
+    }
+
+    /**
+     * Reorder steps within a template. Body: list of { stepId, stepOrder }.
+     * Returns the full template detail with reordered steps.
+     */
+    @PutMapping("/api/processes/templates/{id}/steps/reorder")
+    public ResponseEntity<ProcessService.TemplateDetail> reorderSteps(
+            @PathVariable UUID id,
+            @RequestBody List<ProcessService.ReorderStepItem> items) {
+        Authentication auth = SecurityContextHolder.getContext().getAuthentication();
+        return ResponseEntity.ok(svc.reorderSteps(auth, id, items));
+    }
+
     // ── Steps within a template ────────────────────────────────────
 
     /** Add a step to an org-scoped template — owner only. */
