@@ -71,6 +71,20 @@ export const routes: Routes = [
         loadComponent: () => import('./features/cash/party-list.component').then(m => m.PartyListComponent) },
       { path: 'tresorerie/parties/:id', canActivate: [permGuard(PERM.CASH_READ)],
         loadComponent: () => import('./features/cash/party-detail.component').then(m => m.PartyDetailComponent) },
+      // Stock & matériel — read access required (write actions re-checked in
+      // components: STOCK_MOVE to post moves, STOCK_ADMIN for items/locations admin)
+      { path: 'stock', canActivate: [permGuard(PERM.STOCK_VIEW)],
+        loadComponent: () => import('./features/stock/stock-hub.component').then(m => m.StockHubComponent) },
+      { path: 'stock/stocks', canActivate: [permGuard(PERM.STOCK_VIEW)],
+        loadComponent: () => import('./features/stock/stock-list.component').then(m => m.StockListComponent) },
+      { path: 'stock/mouvements', canActivate: [permGuard(PERM.STOCK_VIEW)],
+        loadComponent: () => import('./features/stock/stock-moves.component').then(m => m.StockMovesComponent) },
+      { path: 'stock/mouvements/new', canActivate: [permGuard(PERM.STOCK_VIEW)],
+        loadComponent: () => import('./features/stock/move-form.component').then(m => m.MoveFormComponent) },
+      { path: 'stock/articles', canActivate: [permGuard(PERM.STOCK_VIEW)],
+        loadComponent: () => import('./features/stock/items-admin.component').then(m => m.ItemsAdminComponent) },
+      { path: 'stock/emplacements', canActivate: [permGuard(PERM.STOCK_VIEW)],
+        loadComponent: () => import('./features/stock/locations-admin.component').then(m => m.LocationsAdminComponent) },
     ]
   },
   { path: '**', redirectTo: '' }

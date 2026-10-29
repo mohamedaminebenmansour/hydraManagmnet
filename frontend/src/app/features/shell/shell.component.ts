@@ -27,6 +27,8 @@ const NAV: NavItem[] = [
   { label: 'Espace Finance', icon: 'pi-briefcase',    path: '/tresorerie/finance', perm: PERM.CASH_READ, color: '#0891b2' },
   { label: 'Processus',      icon: 'pi-sitemap',      path: '/processus',   perm: '',           color: '#7c3aed' },
   { label: 'Chantiers',      icon: 'pi-briefcase',    path: '/projects',    perm: PERM.PROJECT_READ, color: '#0d9488' },
+  // Stock & matériel (Part 1.3) — visible to anyone with STOCK_VIEW
+  { label: 'Matériel',       icon: 'pi-box',           path: '/stock',       perm: PERM.STOCK_VIEW,   color: '#0d9488' },
   // Tickets = tâches / signalements simples (assignation, statut, photo) — PAS les validations
   // de paiement, qui passent par Trésorerie → submit-payment → Mes tâches (process inbox).
   { label: 'Tâches / Signalements', icon: 'pi-ticket', path: '/tickets',   perm: PERM.TICKET_READ, color: '#d97706' },

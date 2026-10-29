@@ -23,7 +23,11 @@ export const PERM = {
   CASH_SUBMIT: 'CASH_SUBMIT',
   CASH_POST: 'CASH_POST',
   CASH_VOID: 'CASH_VOID',
-  PARTY_MANAGE: 'PARTY_MANAGE'
+  PARTY_MANAGE: 'PARTY_MANAGE',
+  // Stock & matériel (backend: V30__stock_virtual_v1.sql)
+  STOCK_VIEW: 'STOCK_VIEW',
+  STOCK_MOVE: 'STOCK_MOVE',
+  STOCK_ADMIN: 'STOCK_ADMIN'
 } as const;
 
 export const PERM_LABELS: Record<string, string> = {
@@ -50,7 +54,10 @@ export const PERM_LABELS: Record<string, string> = {
   CASH_SUBMIT: 'Soumettre pour approbation',
   CASH_POST: 'Comptabiliser les opérations',
   CASH_VOID: 'Annuler les opérations',
-  PARTY_MANAGE: 'Gérer les sous-traitants'
+  PARTY_MANAGE: 'Gérer les sous-traitants',
+  STOCK_VIEW: 'Voir le stock',
+  STOCK_MOVE: 'Saisir les mouvements de stock',
+  STOCK_ADMIN: 'Administrer les articles et emplacements',
 };
 
 export const PERM_GROUPS: { key: string; icon: string; title: string; ids: string[] }[] = [
@@ -62,6 +69,8 @@ export const PERM_GROUPS: { key: string; icon: string; title: string; ids: strin
     ids: ['PROJECT_READ','PROJECT_WRITE','PROJECT_ASSIGN','PROJECT_MANAGE'] },
   { key: 'cash',     icon: 'pi pi-wallet',    title: 'Trésorerie',
     ids: ['CASH_READ','CASH_DRAFT','CASH_SUBMIT','CASH_POST','CASH_VOID','PARTY_MANAGE'] },
+  { key: 'stock',    icon: 'pi pi-box',       title: 'Stock',
+    ids: ['STOCK_VIEW','STOCK_MOVE','STOCK_ADMIN'] },
   { key: 'tickets',  icon: 'pi pi-ticket',    title: 'Tickets',
     ids: ['TICKET_READ','TICKET_WRITE','TICKET_ASSIGN'] },
   { key: 'other',    icon: 'pi pi-cog',       title: 'Autres',
