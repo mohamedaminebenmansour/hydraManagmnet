@@ -9,6 +9,7 @@ import org.springframework.stereotype.Service;
 import tn.hydra.user.AppUser;
 import tn.hydra.user.AppUserRepository;
 
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Set;
 
@@ -32,8 +33,15 @@ public class HydraUserDetailsService implements UserDetailsService {
         Set<String> perms = Boolean.TRUE.equals(u.getIsOwner())
                 ? permissions.allPermissions()
                 : permissions.permissionsOf(u.getId());
-        List<SimpleGrantedAuthority> authorities = perms.stream()
-                .map(SimpleGrantedAuthority::new).toList();
+        List<SimpleGrantedAuthority> authorities = new ArrayList<>(
+                perms.stream().map(SimpleGrantedAuthority::new).toList()
+        );
+        // Add a ROLE_OWNER authority for isOwner users so @PreAuthorize("hasRole('OWNER')")
+        // works at the controller layer (defense-in-depth on template CRUD etc.).
+        // Non-owner users don't get this authority → they get 403 on owner-only endpoints.
+        if (Boolean.TRUE.equals(u.getIsOwner())) {
+            authorities.add(new SimpleGrantedAuthority("ROLE_OWNER"));
+        }
         return User.withUsername(u.getEmail())
                 .password(u.getPasswordHash())
                 .authorities(authorities)
