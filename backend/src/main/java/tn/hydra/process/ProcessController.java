@@ -2,6 +2,7 @@ package tn.hydra.process;
 
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.web.bind.annotation.*;
@@ -55,6 +56,7 @@ public class ProcessController {
 
     /** Create a new org-scoped template — owner only. */
     @PostMapping("/api/processes/templates")
+    @PreAuthorize("hasRole('OWNER')")
     public ResponseEntity<ProcessService.TemplateDetail> createTemplate(
             @RequestBody ProcessService.CreateTemplateRequest req) {
         Authentication auth = SecurityContextHolder.getContext().getAuthentication();
@@ -64,6 +66,7 @@ public class ProcessController {
 
     /** Update name / active flag of an org-scoped template — owner only. */
     @PutMapping("/api/processes/templates/{id}")
+    @PreAuthorize("hasRole('OWNER')")
     public ResponseEntity<ProcessService.TemplateDetail> updateTemplate(
             @PathVariable UUID id,
             @RequestBody ProcessService.UpdateTemplateRequest req) {
@@ -73,6 +76,7 @@ public class ProcessController {
 
     /** Delete an org-scoped template (system templates with org_id=NULL cannot be deleted). */
     @DeleteMapping("/api/processes/templates/{id}")
+    @PreAuthorize("hasRole('OWNER')")
     public ResponseEntity<Void> deleteTemplate(@PathVariable UUID id) {
         Authentication auth = SecurityContextHolder.getContext().getAuthentication();
         svc.deleteTemplate(auth, id);
@@ -84,6 +88,7 @@ public class ProcessController {
      * Returns the full template detail with reordered steps.
      */
     @PutMapping("/api/processes/templates/{id}/steps/reorder")
+    @PreAuthorize("hasRole('OWNER')")
     public ResponseEntity<ProcessService.TemplateDetail> reorderSteps(
             @PathVariable UUID id,
             @RequestBody List<ProcessService.ReorderStepItem> items) {
@@ -95,6 +100,7 @@ public class ProcessController {
 
     /** Add a step to an org-scoped template — owner only. */
     @PostMapping("/api/processes/templates/{id}/steps")
+    @PreAuthorize("hasRole('OWNER')")
     public ResponseEntity<ProcessService.TemplateDetail> addStep(
             @PathVariable UUID id,
             @RequestBody ProcessService.CreateStepRequest req) {
@@ -105,6 +111,7 @@ public class ProcessController {
 
     /** Update an existing step — owner only. */
     @PutMapping("/api/processes/templates/{id}/steps/{stepId}")
+    @PreAuthorize("hasRole('OWNER')")
     public ResponseEntity<ProcessService.TemplateDetail> updateStep(
             @PathVariable UUID id,
             @PathVariable UUID stepId,
@@ -118,6 +125,7 @@ public class ProcessController {
      * Rejected if any RUNNING instance uses the template.
      */
     @DeleteMapping("/api/processes/templates/{id}/steps/{stepId}")
+    @PreAuthorize("hasRole('OWNER')")
     public ResponseEntity<Void> deleteStep(
             @PathVariable UUID id,
             @PathVariable UUID stepId) {
@@ -144,6 +152,7 @@ public class ProcessController {
      * Owner only.
      */
     @PutMapping("/api/projects/{projectId}/process-templates")
+    @PreAuthorize("hasRole('OWNER')")
     public ResponseEntity<Void> assignTemplate(
             @PathVariable UUID projectId,
             @RequestBody ProcessService.AssignTemplateRequest req) {
@@ -308,6 +317,7 @@ public class ProcessController {
      * Returns the full updated mapping list.
      */
     @PutMapping("/api/projects/{projectId}/process-role-assignees")
+    @PreAuthorize("hasRole('OWNER')")
     public ResponseEntity<List<ProcessService.RoleAssigneeResponse>> upsertRoleAssignees(
             @PathVariable UUID projectId,
             @RequestBody ProcessService.UpsertRoleAssigneesRequest req) {
@@ -321,6 +331,7 @@ public class ProcessController {
      * Auth: org owner OR project ADMIN.
      */
     @DeleteMapping("/api/projects/{projectId}/process-role-assignees/{roleCode}")
+    @PreAuthorize("hasRole('OWNER')")
     public ResponseEntity<Void> deleteRoleAssignee(
             @PathVariable UUID projectId,
             @PathVariable String roleCode) {

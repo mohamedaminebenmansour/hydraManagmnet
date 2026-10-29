@@ -68,8 +68,17 @@ public class TicketService {
         if (Boolean.TRUE.equals(mine)) { sql.append(" and t.assigned_to = ?"); args.add(me.getId()); }
         sql.append(" order by t.created_at desc");
 
-        return jdbc.queryForList(sql.toString(), args.toArray()).stream()
+        List<TicketResponse> result = jdbc.queryForList(sql.toString(), args.toArray()).stream()
                 .map(TicketService::toResponse).toList();
+
+        // IDOR guard: non-owner users only see tickets on projects they're members of
+        // (or tickets with no project — those are org-wide).
+        if (Boolean.TRUE.equals(me.getIsOwner())) return result;
+        Set<UUID> accessibleProjects = new HashSet<>(jdbc.queryForList(
+                "select project_id from project_member where user_id = ?", UUID.class, me.getId()));
+        return result.stream()
+                .filter(t -> t.projectId() == null || accessibleProjects.contains(t.projectId()))
+                .toList();
     }
 
     // ══════════════════ 2. GET ONE (null → 404) ══════════════════
@@ -78,7 +87,22 @@ public class TicketService {
         AppUser me = users.findByEmail(auth.getName()).orElseThrow();
         List<Map<String, Object>> rows = jdbc.queryForList(
                 SELECT_SQL + " where t.id = ? and t.org_id = ?", id, me.getOrgId());
-        return rows.isEmpty() ? null : toResponse(rows.get(0));
+        if (rows.isEmpty()) return null;
+        // IDOR guard: non-owner users can only see tickets on projects they're members of
+        // (or tickets with no project — those are org-wide).
+        Map<String, Object> row = rows.get(0);
+        if (!Boolean.TRUE.equals(me.getIsOwner())) {
+            UUID ticketProjectId = (UUID) row.get("project_id");
+            if (ticketProjectId != null) {
+                Integer cnt = jdbc.queryForObject(
+                        "select count(*) from project_member where project_id = ? and user_id = ?",
+                        Integer.class, ticketProjectId, me.getId());
+                if (cnt == null || cnt == 0) {
+                    return null; // Not found → same as 404, no info leak
+                }
+            }
+        }
+        return toResponse(row);
     }
 
     // ══════════════════ 3. CREATE TICKET ══════════════════
