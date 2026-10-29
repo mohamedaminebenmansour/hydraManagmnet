@@ -10,8 +10,10 @@ import { DatePickerModule } from 'primeng/datepicker';
 import { FileUploadModule } from 'primeng/fileupload';
 import { ProgressBarModule } from 'primeng/progressbar';
 import { MessageService } from 'primeng/api';
+import { DocumentPickerDialogComponent } from './document-picker-dialog.component';
 
 import { StockService } from '@app/core/services/stock.service';
+import { ProjectService } from '@app/core/services/project.service';
 import { DocumentService } from '@app/core/services/document.service';
 import { AuthService } from '@app/core/auth.service';
 import { PERM } from '@app/core/permissions';
@@ -49,6 +51,7 @@ interface TypeOption { type: StockMoveType; label: string; icon: string; color: 
   imports: [
     FormsModule, RouterLink, ButtonModule, InputTextModule, InputNumberModule,
     SelectModule, TextareaModule, DatePickerModule, FileUploadModule, ProgressBarModule,
+    DocumentPickerDialogComponent,
   ],
   template: `
     <section class="mf">
@@ -150,42 +153,85 @@ interface TypeOption { type: StockMoveType; label: string; icon: string; color: 
                       placeholder="Ex : BL n°…, fournisseur…"></textarea>
           </div>
 
-          <!-- Document attach (optional, only when project context exists) -->
+          <!-- Document attach (optional) — visible for IN/TRANSFER with project context -->
           @if (canAttachDocument()) {
             <div class="field field-wide">
-              <label>Pièce jointe — BL / photo <small class="hint-inline">(optionnel)</small></label>
-              <div class="doc-attach">
-                <p-fileUpload mode="basic" chooseLabel="Choisir un fichier"
-                              [auto]="true" [customUpload]="true"
-                              (uploadHandler)="onPickFile($event)"
-                              accept=".pdf,.jpg,.jpeg,.png,.webp,.heic"
-                              [maxFileSize]="maxFileSize"
-                              styleClass="doc-upload"></p-fileUpload>
-                @if (pickedFile()) {
-                  <div class="picked-file">
-                    <i class="pi pi-paperclip"></i>
-                    <span class="pf-name">{{ pickedFile()!.name }}</span>
-                    <button type="button" pButton icon="pi pi-times" [text]="true" severity="danger"
-                            (click)="clearFile()"></button>
-                  </div>
-                }
-                @if (uploadProgress() !== null) {
-                  <p-progressBar [value]="uploadProgress()"></p-progressBar>
-                }
-                <small class="field-hint doc-hint">
-                  <i class="pi pi-info-circle"></i>
-                  Enregistré dans le dossier <strong>STOCK / BL</strong> du projet.
-                </small>
-              </div>
+              <label>Justificatif — BL / photo <small class="hint-inline">(optionnel)</small></label>
+
+              <!-- Project selector for CENTRAL-only IN (no SITE location) -->
+              @if (needsProjectSelector()) {
+                <div class="project-sel">
+                  <p-select [options]="projectOptions()" [(ngModel)]="overrideProjectIdSignal"
+                            placeholder="Sélectionnez le projet pour le justificatif…"
+                            optionLabel="name" optionValue="id"
+                            (onChange)="onOverrideProjectChange($event)"
+                            styleClass="w-100" />
+                  <small class="field-hint">
+                    <i class="pi pi-info-circle"></i>
+                    Le justificatif sera rangé dans le dossier <strong>STOCK / BL</strong> de ce projet.
+                  </small>
+                </div>
+              }
+
+              @if (!needsProjectSelector() || overrideProjectId()) {
+                <div class="doc-attach">
+                  @if (!selectedExistingDocId()) {
+                    <p-fileUpload mode="basic" chooseLabel="Téléverser un fichier"
+                                  [auto]="true" [customUpload]="true"
+                                  (uploadHandler)="onPickFile($event)"
+                                  accept=".pdf,.jpg,.jpeg,.png,.webp,.heic"
+                                  [maxFileSize]="maxFileSize"
+                                  styleClass="doc-upload"></p-fileUpload>
+                  }
+                  @if (pickedFile()) {
+                    <div class="picked-file">
+                      <i class="pi pi-paperclip"></i>
+                      <span class="pf-name">{{ pickedFile()!.name }}</span>
+                      <button type="button" pButton icon="pi pi-times" [text]="true" severity="danger"
+                              (click)="clearFile()"></button>
+                    </div>
+                  }
+                  @if (uploadProgress() !== null) {
+                    <p-progressBar [value]="uploadProgress()"></p-progressBar>
+                  }
+                  @if (selectedExistingDocId()) {
+                    <div class="picked-file">
+                      <i class="pi pi-file-o"></i>
+                      <span class="pf-name">Document existant sélectionné</span>
+                      <button type="button" pButton icon="pi pi-times" [text]="true" severity="danger"
+                              (click)="clearExistingDoc()"></button>
+                    </div>
+                  }
+                  @if (!pickedFile() && !selectedExistingDocId()) {
+                    <div class="or-divider">
+                      <span>ou</span>
+                    </div>
+                    <button type="button" pButton label="Choisir un document existant"
+                            icon="pi pi-folder-open" [text]="true" severity="info"
+                            (click)="openPicker()"></button>
+                  }
+                  <small class="field-hint doc-hint">
+                    <i class="pi pi-info-circle"></i>
+                    Enregistré dans le dossier <strong>STOCK / BL</strong> du projet.
+                  </small>
+                </div>
+              }
             </div>
           } @else if (moveType() === 'IN' || moveType() === 'TRANSFER') {
             <div class="field field-wide">
               <small class="hint-no-upload">
                 <i class="pi pi-info-circle"></i>
-                La pièce jointe n'est disponible que pour les mouvements sur un chantier.
-                Pour le dépôt central, ajoutez la pièce plus tard depuis l'historique.
+                Sélectionnez d'abord un emplacement pour activer la pièce jointe.
+                Pour un transfert central→central, ajoutez la pièce plus tard depuis l'historique.
               </small>
             </div>
+          }
+
+          <!-- Document picker dialog (scoped to STOCK/BL folder) -->
+          @if (effectiveProjectId()) {
+            <app-document-picker-dialog [projectId]="effectiveProjectId()!"
+                                        [(visible)]="pickerVisibleSignal"
+                                        (picked)="onDocPicked($event)" />
           }
         </div>
 
@@ -293,6 +339,11 @@ interface TypeOption { type: StockMoveType; label: string; icon: string; color: 
     }
     .hint-no-upload i { color: #94a3b8; margin-top: 2px; }
 
+    /* Project selector for CENTRAL IN */
+    .project-sel { display: flex; flex-direction: column; gap: 6px; margin-bottom: 10px; }
+    .or-divider { display: flex; align-items: center; gap: 10px; margin: 6px 0; color: #94a3b8; font-size: 12px; }
+    .or-divider::before, .or-divider::after { content: ''; flex: 1; height: 1px; background: #e2e8f0; }
+
     /* Validation error */
     .mf-error {
       background: #fef2f2; border: 1px solid #fecaca; border-radius: 8px;
@@ -313,6 +364,7 @@ interface TypeOption { type: StockMoveType; label: string; icon: string; color: 
 export class MoveFormComponent implements OnInit {
   private stock = inject(StockService);
   private documentService = inject(DocumentService);
+  private projectService = inject(ProjectService);
   private auth = inject(AuthService);
   private route = inject(ActivatedRoute);
   private router = inject(Router);
@@ -331,6 +383,15 @@ export class MoveFormComponent implements OnInit {
 
   pickedFile = signal<File | null>(null);
   uploadProgress = signal<number | null>(null);
+
+  // "Pick existing" path — set when the user picks a doc from the picker dialog.
+  selectedExistingDocId = signal<string | null>(null);
+  selectedExistingDocName = signal<string | null>(null);
+  pickerVisible = signal(false);
+
+  // Project selector for CENTRAL-only IN moves (when no SITE location is involved).
+  // When set, this overrides derivedProjectId for the document-attach flow.
+  overrideProjectId = signal<string | null>(null);
 
   submitting = signal(false);
 
@@ -393,9 +454,53 @@ export class MoveFormComponent implements OnInit {
     return null;
   });
 
-  canAttachDocument = computed(() =>
-    (this.moveType() === 'IN' || this.moveType() === 'TRANSFER') &&
-    !!this.derivedProjectId());
+  /**
+   * The document-attach section is shown for IN and TRANSFER moves when:
+   *  - a SITE location is selected (projectId derived from it), OR
+   *  - the user has manually selected a project (CENTRAL-only IN + overrideProjectId).
+   * CENTRAL→CENTRAL TRANSFER is excluded (no project context possible).
+   */
+  canAttachDocument = computed(() => {
+    if (this.moveType() !== 'IN' && this.moveType() !== 'TRANSFER') return false;
+    // Block CENTRAL→CENTRAL TRANSFER (no project context)
+    if (this.moveType() === 'TRANSFER') {
+      const from = this.stock.locationById(this.fromLocationId ?? '');
+      const to = this.stock.locationById(this.toLocationId ?? '');
+      if (from?.type === 'CENTRAL' && to?.type === 'CENTRAL') return false;
+    }
+    return !!this.derivedProjectId() || !!this.overrideProjectId();
+  });
+
+  /** True when the move is IN at CENTRAL and a project must be manually selected. */
+  needsProjectSelector = computed(() => {
+    if (this.moveType() !== 'IN') return false;
+    const to = this.stock.locationById(this.toLocationId ?? '');
+    return to?.type === 'CENTRAL';
+  });
+
+  /** The projectId to use for document operations (derived from SITE OR user-selected). */
+  effectiveProjectId = computed<string | null>(() =>
+    this.derivedProjectId() ?? this.overrideProjectId());
+
+  /** Writable signal for ngModel on the project selector (CENTRAL IN). */
+  overrideProjectIdSignal = signal<string | null>(null);
+  /** Two-way bound visible for the picker dialog (template uses this). */
+  pickerVisibleSignal = signal(false);
+
+  /** Sync the ngModel signal → the overrideProjectId computed chain. */
+  onOverrideProjectChange(ev: any): void {
+    const val = ev?.value ?? null;
+    this.overrideProjectIdSignal.set(val);
+    this.overrideProjectId.set(val);
+  }
+
+  /** Project options for the CENTRAL-IN selector (reuse ProjectService). */
+  projectOptions = signal<{ id: string; name: string }[]>([]);
+  private loadProjectOptions(): void {
+    this.projectService.options().subscribe(opts => {
+      this.projectOptions.set((opts ?? []).map(o => ({ id: o.id, name: o.name })));
+    });
+  }
 
   submitLabel = computed(() => {
     const v = this.mtv(this.moveType());
@@ -408,6 +513,7 @@ export class MoveFormComponent implements OnInit {
   ngOnInit(): void {
     this.stock.loadItems().subscribe();
     this.stock.loadLocations().subscribe();
+    this.loadProjectOptions();
 
     // Read query params (?type=IN&itemId=…&fromLocationId=…&toLocationId=…)
     this.route.queryParams.subscribe(p => {
@@ -450,6 +556,37 @@ export class MoveFormComponent implements OnInit {
     this.uploadProgress.set(null);
   }
 
+  /** Open the existing-document picker (scoped to the project's STOCK/BL folder). */
+  openPicker(): void {
+    if (!this.effectiveProjectId()) {
+      this.msgs.add({
+        severity: 'warn', summary: 'Projet requis',
+        detail: 'Sélectionnez d\'abord un projet pour le justificatif.',
+      });
+      return;
+    }
+    this.pickerVisible.set(true);
+  }
+
+  /** Called when the picker emits a selected documentId. */
+  onDocPicked(docId: string): void {
+    this.selectedExistingDocId.set(docId);
+    // Clear any picked file (mutually exclusive)
+    this.pickedFile.set(null);
+    this.uploadProgress.set(null);
+    // Try to show a friendly name — fetch is optional, id is enough for the API
+    this.selectedExistingDocName.set(null);
+    this.msgs.add({
+      severity: 'info', summary: 'Document sélectionné',
+      detail: 'Le document existant sera lié au mouvement à la création.',
+    });
+  }
+
+  clearExistingDoc(): void {
+    this.selectedExistingDocId.set(null);
+    this.selectedExistingDocName.set(null);
+  }
+
   // ── Validation ──────────────────────────────────────────────────────
   validationError = computed<string | null>(() => {
     if (!this.selectedItemId) return 'Veuillez sélectionner un article.';
@@ -482,14 +619,21 @@ export class MoveFormComponent implements OnInit {
     }
 
     let documentId: string | null = null;
+    let uploadedDocProjectId: string | null = null;
 
-    // Optional document attach (only on IN/TRANSFER with project context)
-    if (this.canAttachDocument() && this.pickedFile() && this.derivedProjectId()) {
-      documentId = await this.uploadDocument(this.derivedProjectId()!, this.pickedFile()!);
+    // Path A: user picked a file → upload it first
+    if (this.canAttachDocument() && this.pickedFile() && this.effectiveProjectId()) {
+      uploadedDocProjectId = this.effectiveProjectId()!;
+      documentId = await this.uploadDocument(uploadedDocProjectId, this.pickedFile()!);
       if (!documentId) {
         this.submitting.set(false);
-        return; // toast already shown
+        return; // upload failed — toast already shown
       }
+    }
+
+    // Path B: user picked an existing document → use its id directly (no upload)
+    if (this.canAttachDocument() && this.selectedExistingDocId() && !this.pickedFile()) {
+      documentId = this.selectedExistingDocId();
     }
 
     const body = {
@@ -513,6 +657,16 @@ export class MoveFormComponent implements OnInit {
           detail: `${move.itemName} — ${move.qty} ${move.uom}`,
         });
         this.router.navigate(['/stock/mouvements']);
+      } else if (uploadedDocProjectId && documentId) {
+        // COMPENSATION: upload succeeded but postMove failed → orphaned document.
+        // The doc is filed under the project's STOCK/BL folder and can be linked
+        // later from the Historique. Be explicit — do not silently swallow.
+        this.msgs.add({
+          severity: 'warn',
+          summary: 'Pièce téléversée mais le mouvement a échoué',
+          detail: `La pièce « ${this.pickedFile()?.name ?? 'BL'} » est dans le dossier STOCK/BL du projet. Le mouvement n'a pas été créé. Vous pourrez lier cette pièce depuis l'historique une fois le mouvement créé.`,
+          life: 12000,
+        });
       }
     });
   }
@@ -533,7 +687,7 @@ export class MoveFormComponent implements OnInit {
     const form = new FormData();
     form.append('file', file, file.name);
     form.append('title', `BL — ${file.name}`);
-    form.append('docType', 'BL');
+    form.append('docType', 'BON_LIVRAISON');
 
     return new Promise<string | null>(resolve => {
       this.documentService.upload(projectId, folder.folderId, form).subscribe({

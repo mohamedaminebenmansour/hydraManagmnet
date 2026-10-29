@@ -7,8 +7,10 @@ import { DialogModule } from 'primeng/dialog';
 import { TooltipModule } from 'primeng/tooltip';
 
 import { StockService } from '@app/core/services/stock.service';
+import { DocumentPickerDialogComponent } from './document-picker-dialog.component';
 import { AuthService } from '@app/core/auth.service';
 import { PERM } from '@app/core/permissions';
+import { MessageService } from 'primeng/api';
 import {
   StockMove, MovePage, LinkedDocument,
   moveTypeVisual, formatQty, formatDateTime, formatDate,
@@ -27,7 +29,7 @@ import {
 @Component({
   selector: 'app-stock-moves',
   standalone: true,
-  imports: [FormsModule, RouterLink, ButtonModule, SelectModule, DialogModule, TooltipModule],
+  imports: [FormsModule, RouterLink, ButtonModule, SelectModule, DialogModule, TooltipModule, DocumentPickerDialogComponent],
   template: `
     <section class="sm">
       <header class="sm-head">
@@ -125,13 +127,15 @@ import {
                   </td>
                   <td class="c-by">{{ m.createdByName ?? '—' }}</td>
                   <td>
-                    @if (m.documentId || docCounts()[m.id]) {
+                    @if ((m.linkedDocCount ?? 0) > 0 || m.documentId) {
                       <button pButton [text]="true" icon="pi pi-paperclip" severity="info"
-                              [label]="(docCounts()[m.id] ?? (m.documentId ? 1 : 0)).toString()"
+                              [label]="((m.linkedDocCount ?? 0) + (m.documentId ? 1 : 0)).toString()"
                               pTooltip="Voir les pièces jointes" tooltipPosition="left"
                               (click)="showDocs(m)"></button>
                     } @else {
-                      <span class="c-nodoc">—</span>
+                      <span class="c-nodoc" pTooltip="Aucun justificatif" tooltipPosition="left">
+                        <i class="pi pi-minus-circle"></i>
+                      </span>
                     }
                   </td>
                   <td class="c-note">{{ m.note ?? '—' }}</td>
@@ -224,10 +228,24 @@ import {
             }
           </ul>
         }
+        @if (canMove()) {
+          <div class="dialog-add-action">
+            <button pButton label="Ajouter un justificatif" icon="pi pi-plus"
+                    severity="success" [text]="true"
+                    (click)="openAddDocPicker()"></button>
+          </div>
+        }
         <ng-template pTemplate="footer">
           <p-button label="Fermer" [text]="true" (onClick)="docsVisible.set(false)" />
         </ng-template>
       </p-dialog>
+
+      <!-- Document picker for attaching an existing doc to a move (junction link) -->
+      @if (docsTargetMove()) {
+        <app-document-picker-dialog [projectId]="docsTargetMove()!.projectId ?? ''"
+                                    [(visible)]="docPickerVisible"
+                                    (picked)="onAddDocPicked($event)" />
+      }
     </section>
   `,
   styles: [`
@@ -330,6 +348,12 @@ import {
       text-align: center; padding: 30px 20px; color: #64748b;
       display: flex; flex-direction: column; align-items: center; gap: 8px;
     }
+    .dialog-add-action {
+      padding: 8px 0 12px;
+      border-top: 1px solid #f1f5f9;
+      margin-top: 8px;
+    }
+    .c-nodoc i { font-size: 12px; }
 
     /* States */
     .sm-loading, .sm-empty {
@@ -345,6 +369,7 @@ import {
 export class StockMovesComponent implements OnInit {
   private stock = inject(StockService);
   private auth = inject(AuthService);
+  private msgs = inject(MessageService);
 
   canMove = computed(() => this.auth.can(PERM.STOCK_MOVE) || !!this.auth.me()?.isOwner);
 
@@ -368,8 +393,10 @@ export class StockMovesComponent implements OnInit {
   docsVisible = signal(false);
   docsLoading = signal(false);
   linkedDocs = signal<LinkedDocument[]>([]);
-  // Cache counts per move so the badge stays cheap across pages
-  docCounts = signal<Record<string, number>>({});
+
+  // Add-document picker state (for linking an existing doc to a move via junction)
+  docPickerVisible = signal(false);
+  docsTargetMove = signal<StockMove | null>(null);
 
   // Dropdown options
   itemOptions = computed(() => this.stock.items().map(i => ({ id: i.id, name: i.name })));
@@ -400,8 +427,7 @@ export class StockMovesComponent implements OnInit {
     }).subscribe(p => {
       this.pageData.set(p);
       this.loading.set(false);
-      // Pre-fetch document counts for the visible moves (cheap)
-      this.preloadDocCounts();
+      // No N+1: linkedDocCount comes from the enriched history() SQL response.
     });
   }
 
@@ -440,23 +466,46 @@ export class StockMovesComponent implements OnInit {
 
   /** Show linked documents for a move (fetches lazily). */
   showDocs(m: StockMove): void {
+    this.docsTargetMove.set(m);
     this.linkedDocs.set([]);
     this.docsVisible.set(true);
     this.docsLoading.set(true);
     this.stock.documentsOf(m.id).subscribe(docs => {
       this.linkedDocs.set(docs);
-      this.docCounts.update(m2 => ({ ...m2, [m.id]: docs.length }));
       this.docsLoading.set(false);
     });
   }
 
-  /** Pre-fetch document counts for the current page (so badges show without a click). */
-  private preloadDocCounts(): void {
-    for (const m of this.moves()) {
-      if (this.docCounts()[m.id] != null) continue;
-      this.stock.documentsOf(m.id).subscribe(docs => {
-        this.docCounts.update(m2 => ({ ...m2, [m.id]: docs.length }));
+  /**
+   * Open the document picker to attach an existing doc to the move currently
+   * shown in the docs dialog. Requires STOCK_MOVE perm (UI-gated) and a
+   * projectId on the move (SITE moves have one; CENTRAL moves may not).
+   */
+  openAddDocPicker(): void {
+    const m = this.docsTargetMove();
+    if (!m?.projectId) {
+      this.msgs.add({
+        severity: 'warn', summary: 'Projet requis',
+        detail: 'Ce mouvement n\'est pas rattaché à un projet. Impossible d\'ajouter un justificatif ici.',
       });
+      return;
     }
+    this.docPickerVisible.set(true);
+  }
+
+  /** Called when the picker emits a selected documentId → link via junction. */
+  onAddDocPicked(docId: string): void {
+    const m = this.docsTargetMove();
+    if (!m) return;
+    this.stock.linkDocument(m.id, { documentId: docId }).subscribe(ok => {
+      if (ok) {
+        this.msgs.add({
+          severity: 'success', summary: 'Justificatif lié',
+          detail: 'Le document a été rattaché au mouvement.',
+        });
+        // Refresh the docs list so the new link appears immediately
+        this.showDocs(m);
+      }
+    });
   }
 }

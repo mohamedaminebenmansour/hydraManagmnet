@@ -84,6 +84,7 @@ export interface StockMove {
   createdBy?: string | null;
   createdByName?: string | null;
   createdAt?: string | null;
+  linkedDocCount?: number;
 }
 
 export interface MovePage {
@@ -375,6 +376,7 @@ export function mapMove(raw: any): StockMove {
     createdBy: raw?.createdBy ?? raw?.created_by ?? null,
     createdByName: raw?.createdByName ?? raw?.created_by_name ?? null,
     createdAt: raw?.createdAt ?? raw?.created_at ?? null,
+    linkedDocCount: raw?.linkedDocCount ?? raw?.linked_doc_count ?? null,
   };
 }
 
@@ -394,6 +396,6 @@ export function mapLinkedDocument(raw: any): LinkedDocument {
     title: raw?.title ?? raw?.name ?? null,
     reference: raw?.reference ?? raw?.code ?? null,
     docType: raw?.docType ?? raw?.doc_type ?? raw?.type ?? null,
-    isPrimary: Boolean(raw?.isPrimary ?? raw?.is_primary ?? false),
+    isPrimary: Boolean(raw?.isPrimary ?? raw?.is_primary ?? raw?.primary ?? false),
   };
 }
