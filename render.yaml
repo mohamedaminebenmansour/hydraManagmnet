@@ -1,10 +1,9 @@
 # Render Blueprint — auto-configures the backend service
-# Docs: https://render.com/docs/blueprint-spec
 services:
   - type: web
     name: hydra-api
     env: docker
-    dockerfilePath: ./Dockerfile
+    dockerfilePath: ./backend/Dockerfile
     dockerContext: ./backend
     healthCheckPath: /health
     autoDeploy: true
