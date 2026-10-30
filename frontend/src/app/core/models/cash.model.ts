@@ -118,6 +118,8 @@ export interface CashMovement {
   voucherNo?: string | null;
   nature?: MovementNature | string | null;
   invoiceRef?: string | null;
+  /** Part 3.3 — link to a Bon de Commande for material-proof warnings. */
+  bcId?: string | null;
 }
 
 /** Create/edit body for POST/PUT /api/cash/movements. */
@@ -142,6 +144,7 @@ export interface MovementBody {
   voucherNo?: string | null;
   nature?: MovementNature | string | null;
   invoiceRef?: string | null;
+  bcId?: string | null;
 }
 
 /** GET /api/cash/pots/{id}/balance response. */
@@ -179,12 +182,15 @@ export interface SubmitPaymentBody {
   voucherNo?: string | null;
   nature?: MovementNature | string | null;
   invoiceRef?: string | null;
+  bcId?: string | null;
 }
 
 /** Response of submit-payment: the new DRAFT movement + the running process. */
 export interface SubmitPaymentResponse {
   movement: CashMovement;
   processInstanceId: string;
+  /** Part 3.3 — soft advisory warnings (material proof, process guardrails). Empty when all OK. */
+  warnings?: string[];
 }
 
 /** One event of the movement timeline (from event_log). */

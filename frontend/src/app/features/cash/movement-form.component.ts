@@ -11,6 +11,7 @@ import { TextareaModule } from 'primeng/textarea';
 import { MessageService } from 'primeng/api';
 import { CashService } from '@app/core/services/cash.service';
 import { PartyService } from '@app/core/services/party.service';
+import { PurchaseService } from '@app/core/services/purchase.service';
 import { AuthService } from '@app/core/auth.service';
 import { PERM } from '@app/core/permissions';
 import {
@@ -226,7 +227,14 @@ import {
               <label>Projet concerné <small>(requis pour une validation)</small></label>
               <p-select [options]="projectOptions()" optionValue="id" optionLabel="name"
                         [(ngModel)]="projectId" placeholder="Aucun (opération générale)"
-                        filter filterPlaceholder="Rechercher" styleClass="w-100" [showClear]="true" />
+                        filter filterPlaceholder="Rechercher" styleClass="w-100" [showClear]="true"
+                        (onChange)="onProjectChangeForBc()" />
+            </div>
+            <div class="field">
+              <label>Bon de commande <small>(optionnel — preuve matérielle)</small></label>
+              <p-select [options]="confirmedBcs()" optionValue="id" optionLabel="label"
+                        [(ngModel)]="bcId" placeholder="Aucun"
+                        styleClass="w-100" [showClear]="true" />
             </div>
             <div class="field">
               <label>Note <small>(optionnel)</small></label>
@@ -237,6 +245,16 @@ import {
         </details>
 
         <div class="mf-actions">
+          @if (paymentWarnings().length > 0) {
+            <div class="mf-warn" style="width: 100%; background: #fffbeb; border-color: #fcd34d; color: #92400e;">
+              <i class="pi pi-exclamation-triangle"></i>
+              <strong>Avertissements rapprochement :</strong>
+              <ul style="margin: 4px 0 0 20px; padding: 0;">
+                @for (w of paymentWarnings(); track w) { <li>{{ w }}</li> }
+              </ul>
+              <small style="display: block; margin-top: 4px;">Le paiement n'est pas bloqué — ces alertes sont informatives.</small>
+            </div>
+          }
           @if (!canDraft) {
             <div class="mf-warn" style="width: 100%">
               <i class="pi pi-lock"></i>
@@ -443,6 +461,7 @@ export class MovementFormComponent implements OnInit {
   private router = inject(Router);
   private cashService = inject(CashService);
   private partyService = inject(PartyService);
+  private purchaseService = inject(PurchaseService);
   private msgs = inject(MessageService);
   private auth = inject(AuthService);
 
@@ -466,6 +485,9 @@ export class MovementFormComponent implements OnInit {
   toPotId: string | null = null;
   projectId: string | null = null;
   partyId: string | null = null;
+  bcId: string | null = null;
+  confirmedBcs = signal<{ id: string; label: string }[]>([]);
+  paymentWarnings = signal<string[]>([]);
   label = '';
   note = '';
 
@@ -753,10 +775,20 @@ export class MovementFormComponent implements OnInit {
       voucherNo: this.voucherNo.trim() || undefined,
       nature: this.nature ?? undefined,
       invoiceRef: this.invoiceRef.trim() || undefined,
+      bcId: this.bcId ?? undefined,
     }).subscribe(res => {
       if (!res) {
         this.saving.set(false);
         return;
+      }
+      if (res.warnings && res.warnings.length > 0) {
+        this.paymentWarnings.set(res.warnings);
+        this.msgs.add({
+          severity: 'warn', summary: 'Avertissements rapprochement',
+          detail: res.warnings.length + ' alerte(s) — voir le détail ci-dessous.', life: 10000,
+        });
+      } else {
+        this.paymentWarnings.set([]);
       }
       if (att) {
         // Best effort: the payment EXISTS now — a failed upload must not
@@ -779,6 +811,15 @@ export class MovementFormComponent implements OnInit {
           detail: 'Il attend maintenant la validation du workflow d\'approbation.' });
         this.finishSubmission(res.movement.id);
       }
+    });
+  }
+
+  onProjectChangeForBc(): void {
+    this.bcId = null;
+    this.confirmedBcs.set([]);
+    if (!this.projectId) return;
+    this.purchaseService.loadBcs(true, this.projectId, 'CONFIRMED').subscribe(bcs => {
+      this.confirmedBcs.set(bcs.map(bc => ({ id: bc.id, label: bc.reference || bc.id })));
     });
   }
 

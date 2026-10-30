@@ -202,6 +202,7 @@ export class CashService {
       map(raw => ({
         movement: mapMovement(raw?.['movement']),
         processInstanceId: String(raw?.['processInstanceId'] ?? ''),
+        warnings: Array.isArray(raw?.['warnings']) ? raw['warnings'] : [],
       })),
       catchError(err => {
         this.toastError(err, 'Impossible d\'envoyer le paiement pour validation');
