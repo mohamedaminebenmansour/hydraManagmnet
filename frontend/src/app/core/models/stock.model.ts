@@ -85,6 +85,8 @@ export interface StockMove {
   createdByName?: string | null;
   createdAt?: string | null;
   linkedDocCount?: number;
+  bcLineId?: string | null;
+  blLineId?: string | null;
 }
 
 export interface MovePage {
@@ -397,5 +399,227 @@ export function mapLinkedDocument(raw: any): LinkedDocument {
     reference: raw?.reference ?? raw?.code ?? null,
     docType: raw?.docType ?? raw?.doc_type ?? raw?.type ?? null,
     isPrimary: Boolean(raw?.isPrimary ?? raw?.is_primary ?? raw?.primary ?? false),
+  };
+}
+
+
+// ── Part 2: Purchase Orders (BC) + Bons de Livraison (BL) + Match ─────────
+
+export interface PurchaseOrder {
+  id: string;
+  projectId: string;
+  projectName?: string | null;
+  supplierPartyId?: string | null;
+  supplierName?: string | null;
+  status: 'DRAFT' | 'CONFIRMED' | 'CANCELLED' | 'CLOSED';
+  reference?: string | null;
+  orderedAt?: string | null;
+  expectedAt?: string | null;
+  notes?: string | null;
+  documentId?: string | null;
+  createdBy?: string | null;
+  createdAt?: string | null;
+  updatedAt?: string | null;
+  lineCount?: number;
+  lines?: PurchaseOrderLine[];
+}
+
+export interface PurchaseOrderLine {
+  id: string;
+  purchaseOrderId: string;
+  itemId: string;
+  itemName?: string | null;
+  qtyOrdered: number;
+  uom: string;
+  unitPrice?: number | null;
+  notes?: string | null;
+  createdBy?: string | null;
+  createdAt?: string | null;
+}
+
+export interface BonLivraison {
+  id: string;
+  projectId: string;
+  projectName?: string | null;
+  bcId?: string | null;
+  bcReference?: string | null;
+  supplierPartyId?: string | null;
+  supplierName?: string | null;
+  status: 'DRAFT' | 'POSTED' | 'CANCELLED';
+  reference?: string | null;
+  receivedAt?: string | null;
+  locationId: string;
+  locationName?: string | null;
+  locationType?: string | null;
+  documentId?: string | null;
+  notes?: string | null;
+  createdBy?: string | null;
+  createdAt?: string | null;
+  updatedAt?: string | null;
+  lineCount?: number;
+  lines?: BonLivraisonLine[];
+}
+
+export interface BonLivraisonLine {
+  id: string;
+  bonLivraisonId: string;
+  bcLineId?: string | null;
+  itemId: string;
+  itemName?: string | null;
+  qtyReceived: number;
+  uom: string;
+  notes?: string | null;
+  createdBy?: string | null;
+  createdAt?: string | null;
+}
+
+export interface BcLineMatchRow {
+  bcLineId: string;
+  bcId: string;
+  bcReference?: string | null;
+  itemId: string;
+  itemName: string;
+  uom: string;
+  qtyOrdered: number;
+  qtyReceived: number;
+  qtyInStockMoves: number;
+  status: 'MATCHED' | 'PARTIAL' | 'OVER' | 'MISSING_BL' | 'QTY_MISMATCH';
+}
+
+export interface MatchPage {
+  items: BcLineMatchRow[];
+  total: number;
+  page: number;
+  size: number;
+}
+
+// Match status → French label + color
+export const MATCH_STATUS_VISUAL: Record<string, { label: string; color: string; soft: string; icon: string }> = {
+  MATCHED:     { label: 'Conforme',      color: '#16a34a', soft: '#f0fdf4', icon: 'pi-check-circle' },
+  PARTIAL:     { label: 'Partiel',       color: '#ea580c', soft: '#fff7ed', icon: 'pi-exclamation-triangle' },
+  OVER:        { label: 'Excédent',       color: '#dc2626', soft: '#fef2f2', icon: 'pi-arrow-circle-up' },
+  MISSING_BL:  { label: 'Sans réception', color: '#94a3b8', soft: '#f1f5f9', icon: 'pi-inbox' },
+  QTY_MISMATCH:{ label: 'Écart stock',    color: '#dc2626', soft: '#fef2f2', icon: 'pi-exclamation-circle' },
+};
+
+export function matchStatusVisual(status: string | null | undefined) {
+  const key = String(status ?? '').toUpperCase();
+  return MATCH_STATUS_VISUAL[key] ?? MATCH_STATUS_VISUAL['MISSING_BL'];
+}
+
+// BC status → French label + color
+export const BC_STATUS_VISUAL: Record<string, { label: string; color: string; soft: string; icon: string }> = {
+  DRAFT:     { label: 'Brouillon',   color: '#64748b', soft: '#f1f5f9', icon: 'pi-pencil' },
+  CONFIRMED: { label: 'Confirmé',    color: '#16a34a', soft: '#f0fdf4', icon: 'pi-check-circle' },
+  CANCELLED: { label: 'Annulé',       color: '#dc2626', soft: '#fef2f2', icon: 'pi-ban' },
+  CLOSED:    { label: 'Clôturé',      color: '#7c3aed', soft: '#f5f3ff', icon: 'pi-lock' },
+};
+
+export function bcStatusVisual(status: string | null | undefined) {
+  const key = String(status ?? '').toUpperCase();
+  return BC_STATUS_VISUAL[key] ?? BC_STATUS_VISUAL['DRAFT'];
+}
+
+// BL status → French label + color
+export const BL_STATUS_VISUAL: Record<string, { label: string; color: string; soft: string; icon: string }> = {
+  DRAFT:     { label: 'Brouillon',   color: '#64748b', soft: '#f1f5f9', icon: 'pi-pencil' },
+  POSTED:    { label: 'Réceptionné', color: '#16a34a', soft: '#f0fdf4', icon: 'pi-check-circle' },
+  CANCELLED: { label: 'Annulé',       color: '#dc2626', soft: '#fef2f2', icon: 'pi-ban' },
+};
+
+export function blStatusVisual(status: string | null | undefined) {
+  const key = String(status ?? '').toUpperCase();
+  return BL_STATUS_VISUAL[key] ?? BL_STATUS_VISUAL['DRAFT'];
+}
+
+// Defensive mappers
+export function mapPurchaseOrder(raw: any): PurchaseOrder {
+  return {
+    id: String(raw?.id ?? ''),
+    projectId: String(raw?.projectId ?? raw?.project_id ?? ''),
+    projectName: raw?.projectName ?? raw?.project_name ?? null,
+    supplierPartyId: raw?.supplierPartyId ?? raw?.supplier_party_id ?? null,
+    supplierName: raw?.supplierName ?? raw?.supplier_name ?? null,
+    status: String(raw?.status ?? 'DRAFT').toUpperCase() as PurchaseOrder['status'],
+    reference: raw?.reference ?? null,
+    orderedAt: raw?.orderedAt ?? raw?.ordered_at ?? null,
+    expectedAt: raw?.expectedAt ?? raw?.expected_at ?? null,
+    notes: raw?.notes ?? null,
+    documentId: raw?.documentId ?? raw?.document_id ?? null,
+    createdBy: raw?.createdBy ?? raw?.created_by ?? null,
+    createdAt: raw?.createdAt ?? raw?.created_at ?? null,
+    updatedAt: raw?.updatedAt ?? raw?.updated_at ?? null,
+    lineCount: raw?.lineCount ?? raw?.line_count ?? undefined,
+    lines: Array.isArray(raw?.lines) ? raw.lines.map(mapPurchaseOrderLine) : undefined,
+  };
+}
+
+export function mapPurchaseOrderLine(raw: any): PurchaseOrderLine {
+  return {
+    id: String(raw?.id ?? ''),
+    purchaseOrderId: String(raw?.purchaseOrderId ?? raw?.purchase_order_id ?? ''),
+    itemId: String(raw?.itemId ?? raw?.item_id ?? ''),
+    itemName: raw?.itemName ?? raw?.item_name ?? null,
+    qtyOrdered: Number(raw?.qtyOrdered ?? raw?.qty_ordered ?? 0),
+    uom: String(raw?.uom ?? ''),
+    unitPrice: raw?.unitPrice ?? raw?.unit_price ?? null,
+    notes: raw?.notes ?? null,
+    createdBy: raw?.createdBy ?? raw?.created_by ?? null,
+    createdAt: raw?.createdAt ?? raw?.created_at ?? null,
+  };
+}
+
+export function mapBonLivraison(raw: any): BonLivraison {
+  return {
+    id: String(raw?.id ?? ''),
+    projectId: String(raw?.projectId ?? raw?.project_id ?? ''),
+    projectName: raw?.projectName ?? raw?.project_name ?? null,
+    bcId: raw?.bcId ?? raw?.bc_id ?? null,
+    bcReference: raw?.bcReference ?? raw?.bc_reference ?? null,
+    supplierPartyId: raw?.supplierPartyId ?? raw?.supplier_party_id ?? null,
+    supplierName: raw?.supplierName ?? raw?.supplier_name ?? null,
+    status: String(raw?.status ?? 'DRAFT').toUpperCase() as BonLivraison['status'],
+    reference: raw?.reference ?? null,
+    receivedAt: raw?.receivedAt ?? raw?.received_at ?? null,
+    locationId: String(raw?.locationId ?? raw?.location_id ?? ''),
+    locationName: raw?.locationName ?? raw?.location_name ?? null,
+    locationType: raw?.locationType ?? raw?.location_type ?? null,
+    documentId: raw?.documentId ?? raw?.document_id ?? null,
+    notes: raw?.notes ?? null,
+    createdBy: raw?.createdBy ?? raw?.created_by ?? null,
+    createdAt: raw?.createdAt ?? raw?.created_at ?? null,
+    updatedAt: raw?.updatedAt ?? raw?.updated_at ?? null,
+    lineCount: raw?.lineCount ?? raw?.line_count ?? undefined,
+    lines: Array.isArray(raw?.lines) ? raw.lines.map(mapBonLivraisonLine) : undefined,
+  };
+}
+
+export function mapBonLivraisonLine(raw: any): BonLivraisonLine {
+  return {
+    id: String(raw?.id ?? ''),
+    bonLivraisonId: String(raw?.bonLivraisonId ?? raw?.bon_livraison_id ?? ''),
+    bcLineId: raw?.bcLineId ?? raw?.bc_line_id ?? null,
+    itemId: String(raw?.itemId ?? raw?.item_id ?? ''),
+    itemName: raw?.itemName ?? raw?.item_name ?? null,
+    qtyReceived: Number(raw?.qtyReceived ?? raw?.qty_received ?? 0),
+    uom: String(raw?.uom ?? ''),
+    notes: raw?.notes ?? null,
+    createdBy: raw?.createdBy ?? raw?.created_by ?? null,
+    createdAt: raw?.createdAt ?? raw?.created_at ?? null,
+  };
+}
+
+export function mapBcLineMatchRow(raw: any): BcLineMatchRow {
+  return {
+    bcLineId: String(raw?.bcLineId ?? raw?.bc_line_id ?? ''),
+    bcId: String(raw?.bcId ?? raw?.bc_id ?? ''),
+    bcReference: raw?.bcReference ?? raw?.bc_reference ?? null,
+    itemId: String(raw?.itemId ?? raw?.item_id ?? ''),
+    itemName: String(raw?.itemName ?? raw?.item_name ?? '—'),
+    uom: String(raw?.uom ?? ''),
+    qtyOrdered: Number(raw?.qtyOrdered ?? raw?.qty_ordered ?? 0),
+    qtyReceived: Number(raw?.qtyReceived ?? raw?.qty_received ?? 0),
+    qtyInStockMoves: Number(raw?.qtyInStockMoves ?? raw?.qty_in_stock_moves ?? 0),
+    status: String(raw?.status ?? 'MISSING_BL').toUpperCase() as BcLineMatchRow['status'],
   };
 }

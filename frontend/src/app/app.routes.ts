@@ -85,6 +85,21 @@ export const routes: Routes = [
         loadComponent: () => import('./features/stock/items-admin.component').then(m => m.ItemsAdminComponent) },
       { path: 'stock/emplacements', canActivate: [permGuard(PERM.STOCK_VIEW)],
         loadComponent: () => import('./features/stock/locations-admin.component').then(m => m.LocationsAdminComponent) },
+      // Part 2.4 — BC / BL / Match UI
+      { path: 'stock/commandes', canActivate: [permGuard(PERM.STOCK_VIEW)],
+        loadComponent: () => import('./features/stock/bc-list.component').then(m => m.BcListComponent) },
+      { path: 'stock/commandes/new', canActivate: [permGuard(PERM.STOCK_VIEW)],
+        loadComponent: () => import('./features/stock/bc-form.component').then(m => m.BcFormComponent) },
+      { path: 'stock/commandes/:id', canActivate: [permGuard(PERM.STOCK_VIEW)],
+        loadComponent: () => import('./features/stock/bc-detail.component').then(m => m.BcDetailComponent) },
+      { path: 'stock/receptions', canActivate: [permGuard(PERM.STOCK_VIEW)],
+        loadComponent: () => import('./features/stock/bl-list.component').then(m => m.BlListComponent) },
+      { path: 'stock/receptions/new', canActivate: [permGuard(PERM.STOCK_VIEW)],
+        loadComponent: () => import('./features/stock/bl-form.component').then(m => m.BlFormComponent) },
+      { path: 'stock/receptions/:id', canActivate: [permGuard(PERM.STOCK_VIEW)],
+        loadComponent: () => import('./features/stock/bl-detail.component').then(m => m.BlDetailComponent) },
+      { path: 'stock/rapprochement', canActivate: [permGuard(PERM.STOCK_VIEW)],
+        loadComponent: () => import('./features/stock/match-overview.component').then(m => m.MatchOverviewComponent) },
     ]
   },
   { path: '**', redirectTo: '' }

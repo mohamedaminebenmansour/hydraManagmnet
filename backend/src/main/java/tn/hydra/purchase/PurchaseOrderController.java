@@ -138,4 +138,25 @@ public class PurchaseOrderController {
                                               Authentication auth) {
         return service.linkDocument(auth, id, body);
     }
+
+    // ── MATCH (Part 2.3 — read-only soft match) ───────────────────────────
+
+    /** Match overview across all BCs (filtered by project for non-owners). */
+    @GetMapping("/match")
+    @PreAuthorize("hasRole('OWNER') or hasAuthority('PERM_STOCK_VIEW')")
+    public PurchaseOrderService.MatchPage matchOverview(
+            @RequestParam(required = false) UUID projectId,
+            @RequestParam(required = false) String status,
+            @RequestParam(required = false, defaultValue = "0") int page,
+            @RequestParam(required = false, defaultValue = "50") int size,
+            Authentication auth) {
+        return service.matchOverview(auth, projectId, status, page, size);
+    }
+
+    /** Match for a single BC — one row per BC line. */
+    @GetMapping("/{id}/match")
+    @PreAuthorize("hasRole('OWNER') or hasAuthority('PERM_STOCK_VIEW')")
+    public List<PurchaseOrderService.BcLineMatchRow> matchForBc(@PathVariable UUID id, Authentication auth) {
+        return service.matchForBc(auth, id);
+    }
 }

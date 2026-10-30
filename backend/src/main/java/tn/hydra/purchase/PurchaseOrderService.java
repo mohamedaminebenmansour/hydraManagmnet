@@ -112,6 +112,13 @@ public class PurchaseOrderService {
 
     public record LinkDocumentRequest(UUID documentId) {}
 
+    // ── Match DTOs (Part 2.3 — read-only soft match) ──────────────────────
+    public record BcLineMatchRow(UUID bcLineId, UUID bcId, String bcReference,
+                                  UUID itemId, String itemName, String uom,
+                                  java.math.BigDecimal qtyOrdered, java.math.BigDecimal qtyReceived,
+                                  java.math.BigDecimal qtyInStockMoves, String status) {}
+    public record MatchPage(List<BcLineMatchRow> items, long total, int page, int size) {}
+
     // ══════════════════════════════════════════════════════════════
     //  CREATE — POST /api/purchase-orders
     // ══════════════════════════════════════════════════════════════
@@ -455,6 +462,115 @@ public class PurchaseOrderService {
         audit.log("STOCK_BC_DOCUMENT_LINKED", "purchase_order", po.getId(),
                 "{\"documentId\":\"" + req.documentId() + "\"}");
         return Map.of("linked", true, "documentId", req.documentId());
+    }
+
+    // ══════════════════════════════════════════════════════════════
+    //  MATCH (Part 2.3 — read-only soft match, never blocks payments)
+    // ══════════════════════════════════════════════════════════════
+
+    public MatchPage matchOverview(Authentication auth, UUID projectId, String statusFilter, int page, int size) {
+        AppUser me = currentUser(auth);
+        requirePermission(auth, "STOCK_VIEW", "match-overview");
+        if (page < 0) page = 0;
+        if (size <= 0 || size > 200) size = 50;
+        if (projectId != null) requireProjectVisible(me, projectId);
+
+        StringBuilder sql = new StringBuilder(
+            "select pol.id as bc_line_id, pol.purchase_order_id as bc_id, po.reference as bc_reference, " +
+            "pol.item_id, i.name as item_name, i.uom, pol.qty_ordered, " +
+            "coalesce(sum(bll.qty_received), 0) as qty_received, " +
+            "coalesce((select sum(sm.qty) from stock_move sm where sm.bc_line_id = pol.id and sm.move_type = 'IN'), 0) as qty_in_stock_moves " +
+            "from purchase_order_line pol " +
+            "join purchase_order po on po.id = pol.purchase_order_id " +
+            "join stock_item i on i.id = pol.item_id " +
+            "left join bon_livraison_line bll on bll.bc_line_id = pol.id " +
+            "and exists (select 1 from bon_livraison bl where bl.id = bll.bon_livraison_id and bl.org_id = pol.org_id and bl.status = 'POSTED') " +
+            "where pol.org_id = ? ");
+        List<Object> args = new ArrayList<>();
+        args.add(me.getOrgId());
+        if (projectId != null) { sql.append(" and pol.purchase_order_id in (select id from purchase_order where project_id = ?) "); args.add(projectId); }
+        if (!Boolean.TRUE.equals(me.getIsOwner())) {
+            sql.append(" and pol.purchase_order_id in (select po2.id from purchase_order po2 where po2.org_id = ? and po2.project_id in (select pm.project_id from project_member pm where pm.user_id = ?)) ");
+            args.add(me.getOrgId()); args.add(me.getId());
+        }
+        sql.append(" group by pol.id, pol.purchase_order_id, po.reference, pol.item_id, i.name, i.uom, pol.qty_ordered, pol.created_at");
+        sql.append(" order by pol.created_at desc limit ? offset ?");
+        args.add(size); args.add(page * size);
+
+        List<Map<String, Object>> rows = jdbc.queryForList(sql.toString(), args.toArray());
+        List<BcLineMatchRow> items = rows.stream().map(r -> {
+            java.math.BigDecimal qtyOrdered = (java.math.BigDecimal) r.get("qty_ordered");
+            java.math.BigDecimal qtyReceived = (java.math.BigDecimal) r.get("qty_received");
+            java.math.BigDecimal qtyInStock = (java.math.BigDecimal) r.get("qty_in_stock_moves");
+            return new BcLineMatchRow(
+                    (UUID) r.get("bc_line_id"),
+                    (UUID) r.get("bc_id"),
+                    (String) r.get("bc_reference"),
+                    (UUID) r.get("item_id"),
+                    (String) r.get("item_name"),
+                    (String) r.get("uom"),
+                    qtyOrdered, qtyReceived, qtyInStock,
+                    deriveMatchStatus(qtyOrdered, qtyReceived, qtyInStock));
+        }).toList();
+
+        StringBuilder csql = new StringBuilder("select count(*) from purchase_order_line pol where pol.org_id = ? ");
+        List<Object> cargs = new ArrayList<>(); cargs.add(me.getOrgId());
+        if (projectId != null) { csql.append(" and pol.purchase_order_id in (select id from purchase_order where project_id = ?) "); cargs.add(projectId); }
+        if (!Boolean.TRUE.equals(me.getIsOwner())) {
+            csql.append(" and pol.purchase_order_id in (select po2.id from purchase_order po2 where po2.org_id = ? and po2.project_id in (select pm.project_id from project_member pm where pm.user_id = ?)) ");
+            cargs.add(me.getOrgId()); cargs.add(me.getId());
+        }
+        Long total = jdbc.queryForObject(csql.toString(), Long.class, cargs.toArray());
+        if (total == null) total = 0L;
+        return new MatchPage(items, total, page, size);
+    }
+
+    public List<BcLineMatchRow> matchForBc(Authentication auth, UUID bcId) {
+        AppUser me = currentUser(auth);
+        requirePermission(auth, "STOCK_VIEW", "match-for-bc");
+        PurchaseOrder po = poOrNotFound(me.getOrgId(), bcId);
+        requireProjectVisible(me, po.getProjectId());
+
+        List<Map<String, Object>> rows = jdbc.queryForList(
+            "select pol.id as bc_line_id, pol.purchase_order_id as bc_id, po.reference as bc_reference, " +
+            "pol.item_id, i.name as item_name, i.uom, pol.qty_ordered, " +
+            "coalesce(sum(bll.qty_received), 0) as qty_received, " +
+            "coalesce((select sum(sm.qty) from stock_move sm where sm.bc_line_id = pol.id and sm.move_type = 'IN'), 0) as qty_in_stock_moves " +
+            "from purchase_order_line pol " +
+            "join purchase_order po on po.id = pol.purchase_order_id " +
+            "join stock_item i on i.id = pol.item_id " +
+            "left join bon_livraison_line bll on bll.bc_line_id = pol.id " +
+            "and exists (select 1 from bon_livraison bl where bl.id = bll.bon_livraison_id and bl.org_id = pol.org_id and bl.status = 'POSTED') " +
+            "where pol.org_id = ? and pol.purchase_order_id = ? " +
+            "group by pol.id, pol.purchase_order_id, po.reference, pol.item_id, i.name, i.uom, pol.qty_ordered " +
+            "order by pol.created_at",
+            me.getOrgId(), bcId);
+
+        return rows.stream().map(r -> {
+            java.math.BigDecimal qtyOrdered = (java.math.BigDecimal) r.get("qty_ordered");
+            java.math.BigDecimal qtyReceived = (java.math.BigDecimal) r.get("qty_received");
+            java.math.BigDecimal qtyInStock = (java.math.BigDecimal) r.get("qty_in_stock_moves");
+            return new BcLineMatchRow(
+                    (UUID) r.get("bc_line_id"),
+                    (UUID) r.get("bc_id"),
+                    (String) r.get("bc_reference"),
+                    (UUID) r.get("item_id"),
+                    (String) r.get("item_name"),
+                    (String) r.get("uom"),
+                    qtyOrdered, qtyReceived, qtyInStock,
+                    deriveMatchStatus(qtyOrdered, qtyReceived, qtyInStock));
+        }).toList();
+    }
+
+    private String deriveMatchStatus(java.math.BigDecimal qtyOrdered, java.math.BigDecimal qtyReceived, java.math.BigDecimal qtyInStock) {
+        if (qtyReceived == null) qtyReceived = java.math.BigDecimal.ZERO;
+        if (qtyInStock == null) qtyInStock = java.math.BigDecimal.ZERO;
+        if (qtyReceived.compareTo(java.math.BigDecimal.ZERO) == 0) return "MISSING_BL";
+        if (qtyReceived.compareTo(qtyOrdered) > 0) return "OVER";
+        if (qtyReceived.compareTo(qtyOrdered) < 0) return "PARTIAL";
+        if (qtyInStock.compareTo(qtyOrdered) >= 0) return "MATCHED";
+        if (qtyInStock.compareTo(qtyReceived) < 0) return "QTY_MISMATCH";
+        return "MATCHED";
     }
 
     // ══════════════════════════════════════════════════════════════

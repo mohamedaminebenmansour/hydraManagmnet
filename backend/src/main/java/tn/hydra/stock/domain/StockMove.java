@@ -120,6 +120,14 @@ public class StockMove implements Persistable<UUID> {
     @Column(name = "note")
     private String note;
 
+    /** FK→purchase_order_line(id). Set when an IN move closes a BC line (Part 2.2). Null otherwise. */
+    @Column(name = "bc_line_id")
+    private UUID bcLineId;
+
+    /** FK→bon_livraison_line(id). Set when an IN move is sourced from a BL (Part 2.2). Null otherwise. */
+    @Column(name = "bl_line_id")
+    private UUID blLineId;
+
     @Column(name = "created_by", updatable = false, nullable = false)
     private UUID createdBy;
 

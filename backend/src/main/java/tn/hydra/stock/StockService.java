@@ -124,7 +124,8 @@ public class StockService {
                                String itemName, UUID documentId, UUID projectId,
                                UUID partyId, UUID cashMovementId, String note,
                                UUID createdBy, String createdByName, java.time.Instant createdAt,
-                               Integer linkedDocCount) {}
+                               Integer linkedDocCount,
+                               UUID bcLineId, UUID blLineId) {}
 
     public record MovePage(List<MoveResponse> items, long total, int page, int size) {}
 
@@ -151,6 +152,7 @@ public class StockService {
                                   UUID fromLocationId, UUID toLocationId,
                                   UUID itemId, UUID documentId, UUID partyId,
                                   UUID cashMovementId, String note,
+                                  UUID bcLineId, UUID blLineId,
                                   Map<String, Object> metadata) {}
 
     public record ReverseRequest(String reason) {}
@@ -667,6 +669,8 @@ public class StockService {
         m.setPartyId(req.partyId());
         m.setCashMovementId(req.cashMovementId());
         m.setNote(req.note());
+        m.setBcLineId(req.bcLineId());
+        m.setBlLineId(req.blLineId());
         m.setCreatedBy(me.getId());
         m.setCreatedAt(java.time.Instant.now());
         m.markNew();
@@ -759,6 +763,7 @@ public class StockService {
                        m.item_id, i.name as item_name,
                        m.document_id, m.project_id, m.party_id, m.cash_movement_id,
                        m.note, m.created_by, u.full_name as created_by_name, m.created_at,
+                       m.bc_line_id, m.bl_line_id,
                        (select count(*) from stock_move_document smd where smd.move_id = m.id) as linked_doc_count
                 from stock_move m
                 join stock_item i on i.id = m.item_id
@@ -1063,7 +1068,8 @@ public class StockService {
                 m.getItemId(), item.getName(),
                 m.getDocumentId(), m.getProjectId(), m.getPartyId(), m.getCashMovementId(),
                 m.getNote(), m.getCreatedBy(), createdByName, m.getCreatedAt(),
-                linkedDocCount);
+                linkedDocCount,
+                m.getBcLineId(), m.getBlLineId());
     }
 
     private static MoveResponse rowToMoveResponse(Map<String, Object> r) {
@@ -1080,7 +1086,8 @@ public class StockService {
                 (UUID) r.get("party_id"), (UUID) r.get("cash_movement_id"),
                 (String) r.get("note"), (UUID) r.get("created_by"),
                 (String) r.get("created_by_name"), toInstant(r.get("created_at")),
-                linkedDocCount);
+                linkedDocCount,
+                (UUID) r.get("bc_line_id"), (UUID) r.get("bl_line_id"));
     }
 
     /** JdbcTemplate returns java.sql.Timestamp for timestamptz — normalize to Instant. */
