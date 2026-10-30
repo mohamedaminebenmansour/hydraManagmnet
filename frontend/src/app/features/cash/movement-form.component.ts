@@ -214,6 +214,38 @@ import {
           }
         </div>
 
+        <!-- Section 5: Contrôle matériel (BC + Facture) -->
+        <div class="mf-section">
+          <h2><span class="s-num">5</span> Contrôle matériel</h2>
+          @if (!projectId) {
+            <div class="field">
+              <small class="field-hint" style="color: #d97706;">
+                <i class="pi pi-info-circle"></i> Sélectionnez un projet (dans « Plus d'options ») pour lier un bon de commande et activer le contrôle matériel.
+              </small>
+            </div>
+          } @else {
+            <div class="field-row">
+              <div class="field">
+                <label>Bon de commande <small>(contrôle matériel — optionnel)</small></label>
+                <p-select [options]="confirmedBcs()" optionValue="id" optionLabel="label"
+                          [(ngModel)]="bcId" placeholder="Aucun"
+                          styleClass="w-100" [showClear]="true" />
+                @if (projectId && confirmedBcs().length === 0) {
+                  <small class="field-hint" style="color: #94a3b8;">
+                    <i class="pi pi-info-circle"></i> Aucun bon de commande confirmé sur ce projet.
+                  </small>
+                }
+              </div>
+              <div class="field">
+                <label>Facture <small>(traçabilité — optionnel)</small></label>
+                <p-select [options]="validatedFactures()" optionValue="id" optionLabel="label"
+                          [(ngModel)]="factureId" placeholder="Aucune"
+                          styleClass="w-100" [showClear]="true" />
+              </div>
+            </div>
+          }
+        </div>
+
         <details class="mf-more">
           <summary><i class="pi pi-chevron-down"></i> Plus d'options</summary>
           <div class="mf-more-body">
@@ -229,18 +261,6 @@ import {
                         [(ngModel)]="projectId" placeholder="Aucun (opération générale)"
                         filter filterPlaceholder="Rechercher" styleClass="w-100" [showClear]="true"
                         (onChange)="onProjectChangeForBc()" />
-            </div>
-            <div class="field">
-              <label>Bon de commande <small>(optionnel — preuve matérielle)</small></label>
-              <p-select [options]="confirmedBcs()" optionValue="id" optionLabel="label"
-                        [(ngModel)]="bcId" placeholder="Aucun"
-                        styleClass="w-100" [showClear]="true" />
-            </div>
-            <div class="field">
-              <label>Facture <small>(optionnel — traçabilité)</small></label>
-              <p-select [options]="validatedFactures()" optionValue="id" optionLabel="label"
-                        [(ngModel)]="factureId" placeholder="Aucune"
-                        styleClass="w-100" [showClear]="true" />
             </div>
             <div class="field">
               <label>Note <small>(optionnel)</small></label>
