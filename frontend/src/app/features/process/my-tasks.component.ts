@@ -31,7 +31,8 @@ import { formatAmount } from '@app/core/models/cash.model';
       } @else if (allTasks().length === 0) {
         <div class="empty-state">
           <i class="pi pi-inbox"></i>
-          <p>Aucune tâche en attente</p>
+          <p>Aucune validation en attente</p>
+          <p class="empty-hint">Les validations de paiement apparaissent ici.<br>Pour les réceptions fournisseur : Achats → Réceptions.</p>
         </div>
       } @else {
         <div class="status-chips">

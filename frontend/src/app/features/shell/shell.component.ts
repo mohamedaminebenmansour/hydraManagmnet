@@ -21,7 +21,7 @@ interface NavItem {
 
 const NAV: NavItem[] = [
   { label: 'Accueil',        icon: 'pi-home',          path: '/',           perm: '',           color: '#0ea5e9' },
-  { label: 'Mes tâches',     icon: 'pi-check-square', path: '/mes-taches',  perm: '',           color: '#f59e0b', badge: 'count' },
+  { label: 'Mes validations',     icon: 'pi-check-square', path: '/mes-taches',  perm: '',           color: '#f59e0b', badge: 'count' },
   { label: 'Trésorerie',     icon: 'pi-wallet',       path: '/tresorerie',  perm: PERM.CASH_READ, color: '#0d9488' },
   // TASK 5 — Espace Finance: caisses + paiements en attente + export mensuel CSV.
   // Same CASH_READ perm (FINANCE + OWNER both have it); sits under Trésorerie in the nav.
@@ -41,7 +41,7 @@ const NAV: NavItem[] = [
   },
   // Tickets = tâches / signalements simples (assignation, statut, photo) — PAS les validations
   // de paiement, qui passent par Trésorerie → submit-payment → Mes tâches (process inbox).
-  { label: 'Tâches / Signalements', icon: 'pi-ticket', path: '/tickets',   perm: PERM.TICKET_READ, color: '#d97706' },
+  { label: 'Demandes', icon: 'pi-ticket', path: '/tickets',   perm: PERM.TICKET_READ, color: '#d97706' },
   { label: 'Utilisateurs',   icon: 'pi-users',        path: '/users',       perm: PERM.USER_CREATE, color: '#2563eb' },
   { label: 'Rôles',          icon: 'pi-id-card',      path: '/roles',       perm: PERM.ROLE_MANAGE, color: '#0891b2' },
   { label: 'Journal',        icon: 'pi-history',       path: '/audit',       perm: PERM.AUDIT_VIEW, color: '#64748b' },
