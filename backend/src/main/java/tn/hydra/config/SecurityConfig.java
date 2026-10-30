@@ -36,6 +36,15 @@ public class SecurityConfig {
                     .requestMatchers("/error").permitAll()
                     .requestMatchers("/health").permitAll()
                     .anyRequest().authenticated())
+            .cors(cors -> cors.configurationSource(request -> {
+                var c = new org.springframework.web.cors.CorsConfiguration();
+                c.addAllowedOriginPattern("*");
+                c.addAllowedHeader("*");
+                c.addAllowedMethod("*");
+                c.setAllowCredentials(true);
+                c.addExposedHeader("XSRF-TOKEN");
+                return c;
+            }))
             .formLogin(f -> f.disable())
             .httpBasic(b -> b.disable())
             .logout(l -> l.disable())
