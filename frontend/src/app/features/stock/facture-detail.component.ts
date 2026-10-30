@@ -1,5 +1,6 @@
 import { Component, OnInit, computed, inject, signal } from '@angular/core';
 import { RouterLink, ActivatedRoute } from '@angular/router';
+import { DocumentPickerDialogComponent } from './document-picker-dialog.component';
 import { ButtonModule } from 'primeng/button';
 import { MessageService } from 'primeng/api';
 import { PurchaseService } from '@app/core/services/purchase.service';
@@ -10,7 +11,7 @@ import { Facture, factureStatusVisual, formatDate, formatQty } from '@app/core/m
 @Component({
   selector: 'app-facture-detail',
   standalone: true,
-  imports: [RouterLink, ButtonModule],
+  imports: [RouterLink, ButtonModule, DocumentPickerDialogComponent],
   template: `
     <section class="fac-detail">
       @if (fac()) {
@@ -31,6 +32,19 @@ import { Facture, factureStatusVisual, formatDate, formatQty } from '@app/core/m
               <div class="info"><label>Montant TTC</label><span>{{ fac()?.amountTtc }} TND</span></div>
             }
           </div>
+          @if (fac()?.documentId) {
+            <div class="doc-link">
+              <i class="pi pi-file-pdf"></i>
+              <a [routerLink]="'/documents/' + fac()?.documentId" class="doc-open">Voir le justificatif (PDF)</a>
+            </div>
+          } @else if (canMove()) {
+            <div class="doc-link">
+              <i class="pi pi-paperclip"></i>
+              <span style="color: #94a3b8;">Aucun justificatif lié.</span>
+              <button pButton label="Lier un document" icon="pi pi-link" [text]="true" severity="info"
+                      (click)="docPickerVisible.set(true)"></button>
+            </div>
+          }
           @if (fac()?.notes) { <div class="notes"><i class="pi pi-info-circle"></i> {{ fac()?.notes }}</div> }
           <table class="lines-table">
             <thead><tr><th>Description</th><th class="num">Qté</th><th>Unité</th><th class="num">Prix unit.</th><th class="num">Ligne HT</th></tr></thead>
@@ -54,6 +68,12 @@ import { Facture, factureStatusVisual, formatDate, formatQty } from '@app/core/m
           </div>
         </div>
       } @else if (loading()) { <div class="loading"><i class="pi pi-spin pi-spinner"></i> Chargement…</div> }
+
+      @if (fac()?.projectId) {
+        <app-document-picker-dialog [projectId]="fac()!.projectId" kind="FACTURE"
+                                    [(visible)]="docPickerVisible"
+                                    (picked)="onDocPicked($event)" />
+      }
     </section>
   `,
   styles: [`
@@ -77,6 +97,10 @@ import { Facture, factureStatusVisual, formatDate, formatQty } from '@app/core/m
     .actions { display: flex; gap: 8px; border-top: 1px solid #e2e8f0; padding-top: 16px; }
     .chip { display: inline-flex; align-items: center; gap: 5px; padding: 3px 10px; border-radius: 999px; font-size: 12px; font-weight: 700; background: var(--s); color: var(--c); }
     .loading { text-align: center; padding: 40px; color: #64748b; }
+    .doc-link { display: flex; align-items: center; gap: 8px; margin-bottom: 16px; padding: 10px 12px; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; font-size: 14px; }
+    .doc-link i { color: #dc2626; }
+    .doc-open { color: #2563eb; text-decoration: none; font-weight: 600; }
+    .doc-open:hover { text-decoration: underline; }
   `]
 })
 export class FactureDetailComponent implements OnInit {
@@ -87,12 +111,23 @@ export class FactureDetailComponent implements OnInit {
   fac = signal<Facture | null>(null);
   loading = signal(true);
   canMove = computed(() => this.auth.can(PERM.STOCK_MOVE) || !!this.auth.me()?.isOwner);
+  docPickerVisible = signal(false);
   sv = factureStatusVisual;
   fmt = formatDate;
   ngOnInit(): void {
     const id = this.route.snapshot.paramMap.get('id');
     if (id) this.purchase.getFacture(id).subscribe(f => { this.fac.set(f); this.loading.set(false); });
   }
+  onDocPicked(docId: string): void {
+    const f = this.fac(); if (!f) return;
+    this.purchase.linkFactureDocument(f.id, docId).subscribe(ok => {
+      if (ok) {
+        this.msgs.add({ severity: 'success', summary: 'Justificatif lié', detail: 'Document rattaché à la facture.' });
+        this.purchase.getFacture(f.id).subscribe(refreshed => { if (refreshed) this.fac.set(refreshed); });
+      }
+    });
+  }
+
   validate(): void {
     const f = this.fac(); if (!f) return;
     this.purchase.validateFacture(f.id).subscribe(updated => { if (updated) { this.fac.set(updated); this.msgs.add({ severity: 'success', summary: 'Facture validée' }); } });

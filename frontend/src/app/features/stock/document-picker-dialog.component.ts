@@ -42,7 +42,7 @@ import { StockDocKind } from '@app/core/models/stock.model';
         } @else if (documents().length === 0) {
           <div class="dpd-empty">
             <i class="pi pi-folder-open"></i>
-            <p>Aucun document dans le dossier <strong>STOCK / BL</strong> de ce projet.</p>
+            <p>Aucun document dans le dossier <strong>STOCK / {{ kind }}</strong> de ce projet.</p>
             <small>Téléversez un nouveau fichier depuis le formulaire de mouvement, ou ajoutez d'abord un document dans le dossier du projet.</small>
           </div>
         } @else {
@@ -122,6 +122,8 @@ export class DocumentPickerDialogComponent implements OnChanges {
 
   /** Project whose STOCK/BL folder will be listed. */
   @Input({ required: true }) projectId!: string;
+  /** Folder kind: 'BL' (default), 'BC', 'FACTURE', 'AUTRE'. Controls which subfolder is listed. */
+  @Input() kind: string = 'BL';
   /** Two-way bound visibility (p-dialog pattern). */
   @Input() visible: boolean = false;
   /** Emitted when the user confirms a selection. */
@@ -158,10 +160,10 @@ export class DocumentPickerDialogComponent implements OnChanges {
     this.selectedId.set(null);
     this.search = '';
 
-    this.stock.ensureStockFolder(this.projectId, 'BL' as StockDocKind).subscribe(folder => {
+    this.stock.ensureStockFolder(this.projectId, (this.kind || 'BL') as StockDocKind).subscribe(folder => {
       if (!folder?.folderId) {
         this.loading.set(false);
-        this.error.set('Impossible de résoudre le dossier STOCK / BL du projet.');
+        this.error.set('Impossible de résoudre le dossier STOCK / ' + (this.kind || 'BL') + ' du projet.');
         return;
       }
       // List documents in that folder (size 50 — enough for a picker)
@@ -175,7 +177,7 @@ export class DocumentPickerDialogComponent implements OnChanges {
         },
         error: () => {
           this.loading.set(false);
-          this.error.set('Impossible de charger les documents du dossier STOCK / BL.');
+          this.error.set('Impossible de charger les documents du dossier STOCK / ' + (this.kind || 'BL') + '.');
         },
       });
     });

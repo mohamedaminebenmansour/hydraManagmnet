@@ -8,6 +8,9 @@ import { SelectModule } from 'primeng/select';
 import { TextareaModule } from 'primeng/textarea';
 import { DatePickerModule } from 'primeng/datepicker';
 import { MessageService } from 'primeng/api';
+import { FileUploadModule } from 'primeng/fileupload';
+import { ProgressBarModule } from 'primeng/progressbar';
+import { DocumentService } from '@app/core/services/document.service';
 import { PurchaseService } from '@app/core/services/purchase.service';
 import { StockService } from '@app/core/services/stock.service';
 import { ProjectService } from '@app/core/services/project.service';
@@ -17,7 +20,7 @@ import { PERM } from '@app/core/permissions';
 @Component({
   selector: 'app-facture-form',
   standalone: true,
-  imports: [FormsModule, RouterLink, ButtonModule, InputTextModule, InputNumberModule, SelectModule, TextareaModule, DatePickerModule],
+  imports: [FormsModule, RouterLink, ButtonModule, InputTextModule, InputNumberModule, SelectModule, TextareaModule, DatePickerModule, FileUploadModule, ProgressBarModule],
   template: `
     <section class="fac-form">
       <header class="head">
@@ -68,6 +71,37 @@ import { PERM } from '@app/core/permissions';
           }
           <button pButton label="Ajouter une ligne" icon="pi pi-plus" [text]="true" (click)="addLine()"></button>
         </div>
+        @if (projectId) {
+          <div class="field field-wide">
+            <label>Justificatif facture (PDF) <small class="hint-inline">(optionnel)</small></label>
+            <div class="doc-attach">
+              @if (!uploadedDocId()) {
+                <p-fileUpload mode="basic" chooseLabel="Téléverser un PDF"
+                              [auto]="true" [customUpload]="true"
+                              (uploadHandler)="onPickFile($event)"
+                              accept=".pdf,.jpg,.jpeg,.png"
+                              [maxFileSize]="50000000"
+                              styleClass="doc-upload"></p-fileUpload>
+              }
+              @if (pickedFile()) {
+                <div class="picked-file">
+                  <i class="pi pi-paperclip"></i>
+                  <span class="pf-name">{{ pickedFile()!.name }}</span>
+                  <button type="button" pButton icon="pi pi-times" [text]="true" severity="danger"
+                          (click)="clearFile()"></button>
+                </div>
+              }
+              @if (uploadProgress() !== null) {
+                <p-progressBar [value]="uploadProgress()"></p-progressBar>
+              }
+              <small class="field-hint">
+                <i class="pi pi-info-circle"></i>
+                Enregistré dans le dossier <strong>05.03 FACTURE</strong> du projet.
+              </small>
+            </div>
+          </div>
+        }
+
         <div class="actions">
           <p-button label="Annuler" [text]="true" routerLink="/stock/factures" />
           <p-button label="Créer la facture" icon="pi pi-check" severity="success" [disabled]="!projectId || lines().length === 0" [loading]="saving()" (onClick)="submit()"></p-button>
@@ -97,6 +131,12 @@ import { PERM } from '@app/core/permissions';
     .uom-input { width: 80px; }
     :host ::ng-deep .price-input { width: 120px; }
     .actions { display: flex; justify-content: flex-end; gap: 8px; border-top: 1px solid #e2e8f0; padding-top: 16px; }
+    .doc-attach { display: flex; flex-direction: column; gap: 8px; }
+    .picked-file { display: flex; align-items: center; gap: 8px; background: #f0fdfa; border: 1px solid #99f6e4; border-radius: 8px; padding: 8px 12px; font-size: 13px; }
+    .picked-file i { color: #0d9488; }
+    .picked-file .pf-name { flex: 1; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .field-hint { font-size: 12px; color: #64748b; }
+    .hint-inline { font-weight: 400; color: #94a3b8; font-size: 12px; }
     @media (max-width: 640px) { .grid { grid-template-columns: 1fr; } }
   `]
 })
@@ -107,6 +147,10 @@ export class FactureFormComponent implements OnInit {
   private auth = inject(AuthService);
   private router = inject(Router);
   private msgs = inject(MessageService);
+  private documentService = inject(DocumentService);
+  pickedFile = signal<File | null>(null);
+  uploadProgress = signal<number | null>(null);
+  uploadedDocId = signal<string | null>(null);
   saving = signal(false);
   projectId: string | null = null;
   bcId: string | null = null;
@@ -124,9 +168,63 @@ export class FactureFormComponent implements OnInit {
   }
   addLine(): void { this.lines.update(l => [...l, { description: '', qty: null, uom: 'sac', unitPrice: null }]); }
   removeLine(idx: number): void { this.lines.update(l => l.filter((_, i) => i !== idx)); }
-  submit(): void {
+  onPickFile(ev: any): void {
+    const f: File = ev?.files?.[0];
+    if (f) this.pickedFile.set(f);
+  }
+
+  clearFile(): void {
+    this.pickedFile.set(null);
+    this.uploadProgress.set(null);
+    this.uploadedDocId.set(null);
+  }
+
+  private async uploadFacturePdf(projectId: string, file: File): Promise<string | null> {
+    this.uploadProgress.set(0);
+    const folder = await this.stock.ensureStockFolder(projectId, 'FACTURE' as any).toPromise();
+    if (!folder?.folderId) {
+      this.uploadProgress.set(null);
+      return null;
+    }
+    const form = new FormData();
+    form.append('file', file, file.name);
+    form.append('title', 'Facture — ' + file.name);
+    form.append('docType', 'FACTURE');
+    return new Promise<string | null>(resolve => {
+      this.documentService.upload(projectId, folder.folderId, form).subscribe({
+        next: ev => {
+          if (ev.type === 'progress') { this.uploadProgress.set(ev.percent); }
+          else if (ev.type === 'done') {
+            this.uploadProgress.set(100);
+            this.msgs.add({ severity: 'info', summary: 'Justificatif', detail: 'PDF enregistré dans 05.03 FACTURE' });
+            resolve(ev.result?.id ?? null);
+          }
+        },
+        error: () => {
+          this.uploadProgress.set(null);
+          this.msgs.add({ severity: 'error', summary: 'Échec upload', detail: 'La pièce n\'a pas pu être téléversée' });
+          resolve(null);
+        },
+      });
+    });
+  }
+
+  async submit(): Promise<void> {
     if (!this.projectId || this.lines().length === 0) return;
     this.saving.set(true);
+
+    // Upload PDF first if a file was picked
+    let documentId: string | null = null;
+    let uploadedProjectId: string | null = null;
+    if (this.pickedFile() && this.projectId) {
+      uploadedProjectId = this.projectId;
+      documentId = await this.uploadFacturePdf(this.projectId, this.pickedFile()!);
+      if (!documentId) {
+        this.saving.set(false);
+        return;
+      }
+    }
+
     this.purchase.createFacture({
       projectId: this.projectId,
       bcId: this.bcId,
@@ -136,6 +234,7 @@ export class FactureFormComponent implements OnInit {
       amountTva: this.amountTva,
       amountTtc: (this.amountHt ?? 0) + (this.amountTva ?? 0) || null,
       notes: this.notes.trim() || null,
+      documentId,
       lines: this.lines().filter(l => l.description.trim() && l.qty && l.qty > 0).map(l => ({
         description: l.description.trim(),
         qty: l.qty,
@@ -147,6 +246,12 @@ export class FactureFormComponent implements OnInit {
       if (f) {
         this.msgs.add({ severity: 'success', summary: 'Facture créée', detail: f.reference || f.id });
         this.router.navigate(['/stock/factures', f.id]);
+      } else if (uploadedProjectId && documentId) {
+        this.msgs.add({
+          severity: 'warn', summary: 'Pièce téléversée mais la création a échoué',
+          detail: 'Le PDF est dans le dossier 05.03 FACTURE du projet. Vous pourrez le lier depuis le détail de la facture.',
+          life: 12000,
+        });
       }
     });
   }
