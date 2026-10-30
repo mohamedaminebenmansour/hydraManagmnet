@@ -483,7 +483,8 @@ export interface BcLineMatchRow {
   qtyOrdered: number;
   qtyReceived: number;
   qtyInStockMoves: number;
-  status: 'MATCHED' | 'PARTIAL' | 'OVER' | 'MISSING_BL' | 'QTY_MISMATCH';
+  qtyInvoiced?: number;
+  status: 'MATCHED' | 'PARTIAL_RECEIVE' | 'PARTIAL_INVOICE' | 'OVER_INVOICE' | 'MISSING_BL' | 'MISSING_FACTURE' | 'QTY_MISMATCH' | 'PARTIAL' | 'OVER';
 }
 
 export interface MatchPage {
@@ -620,6 +621,117 @@ export function mapBcLineMatchRow(raw: any): BcLineMatchRow {
     qtyOrdered: Number(raw?.qtyOrdered ?? raw?.qty_ordered ?? 0),
     qtyReceived: Number(raw?.qtyReceived ?? raw?.qty_received ?? 0),
     qtyInStockMoves: Number(raw?.qtyInStockMoves ?? raw?.qty_in_stock_moves ?? 0),
+    qtyInvoiced: Number(raw?.qtyInvoiced ?? raw?.qty_invoiced ?? 0),
     status: String(raw?.status ?? 'MISSING_BL').toUpperCase() as BcLineMatchRow['status'],
   };
 }
+
+// ── Part 3: Factures (supplier invoices) ───────────────────────────────────
+
+export interface Facture {
+  id: string;
+  projectId: string;
+  projectName?: string | null;
+  supplierPartyId?: string | null;
+  supplierName?: string | null;
+  bcId?: string | null;
+  bcReference?: string | null;
+  blId?: string | null;
+  blReference?: string | null;
+  status: 'DRAFT' | 'VALIDATED' | 'CANCELLED';
+  reference?: string | null;
+  invoiceDate?: string | null;
+  dueDate?: string | null;
+  amountHt?: number | null;
+  amountTva?: number | null;
+  amountTtc?: number | null;
+  documentId?: string | null;
+  notes?: string | null;
+  createdBy?: string | null;
+  createdAt?: string | null;
+  updatedAt?: string | null;
+  lineCount?: number;
+  lines?: FactureLine[];
+}
+
+export interface FactureLine {
+  id: string;
+  factureId: string;
+  itemId?: string | null;
+  itemName?: string | null;
+  bcLineId?: string | null;
+  blLineId?: string | null;
+  description: string;
+  qty: number;
+  uom?: string | null;
+  unitPrice?: number | null;
+  lineHt?: number | null;
+  notes?: string | null;
+  createdBy?: string | null;
+  createdAt?: string | null;
+}
+
+export const FACTURE_STATUS_VISUAL: Record<string, { label: string; color: string; soft: string; icon: string }> = {
+  DRAFT:     { label: 'Brouillon',   color: '#64748b', soft: '#f1f5f9', icon: 'pi-pencil' },
+  VALIDATED: { label: 'Validée',     color: '#16a34a', soft: '#f0fdf4', icon: 'pi-check-circle' },
+  CANCELLED: { label: 'Annulée',      color: '#dc2626', soft: '#fef2f2', icon: 'pi-ban' },
+};
+
+export function factureStatusVisual(status: string | null | undefined) {
+  const key = String(status ?? '').toUpperCase();
+  return FACTURE_STATUS_VISUAL[key] ?? FACTURE_STATUS_VISUAL['DRAFT'];
+}
+
+// Extend MATCH_STATUS_VISUAL with the new Part 3.2 statuses
+MATCH_STATUS_VISUAL['MISSING_FACTURE']  = { label: 'Sans facture',     color: '#94a3b8', soft: '#f1f5f9', icon: 'pi-inbox' };
+MATCH_STATUS_VISUAL['OVER_INVOICE']     = { label: 'Excédent facture', color: '#dc2626', soft: '#fef2f2', icon: 'pi-arrow-circle-up' };
+MATCH_STATUS_VISUAL['PARTIAL_RECEIVE']  = { label: 'Réception partielle', color: '#ea580c', soft: '#fff7ed', icon: 'pi-exclamation-triangle' };
+MATCH_STATUS_VISUAL['PARTIAL_INVOICE']  = { label: 'Facturation partielle', color: '#ea580c', soft: '#fff7ed', icon: 'pi-exclamation-triangle' };
+
+export function mapFacture(raw: any): Facture {
+  return {
+    id: String(raw?.id ?? ''),
+    projectId: String(raw?.projectId ?? raw?.project_id ?? ''),
+    projectName: raw?.projectName ?? raw?.project_name ?? null,
+    supplierPartyId: raw?.supplierPartyId ?? raw?.supplier_party_id ?? null,
+    supplierName: raw?.supplierName ?? raw?.supplier_name ?? null,
+    bcId: raw?.bcId ?? raw?.bc_id ?? null,
+    bcReference: raw?.bcReference ?? raw?.bc_reference ?? null,
+    blId: raw?.blId ?? raw?.bl_id ?? null,
+    blReference: raw?.blReference ?? raw?.bl_reference ?? null,
+    status: String(raw?.status ?? 'DRAFT').toUpperCase() as Facture['status'],
+    reference: raw?.reference ?? null,
+    invoiceDate: raw?.invoiceDate ?? raw?.invoice_date ?? null,
+    dueDate: raw?.dueDate ?? raw?.due_date ?? null,
+    amountHt: raw?.amountHt ?? raw?.amount_ht ?? null,
+    amountTva: raw?.amountTva ?? raw?.amount_tva ?? null,
+    amountTtc: raw?.amountTtc ?? raw?.amount_ttc ?? null,
+    documentId: raw?.documentId ?? raw?.document_id ?? null,
+    notes: raw?.notes ?? null,
+    createdBy: raw?.createdBy ?? raw?.created_by ?? null,
+    createdAt: raw?.createdAt ?? raw?.created_at ?? null,
+    updatedAt: raw?.updatedAt ?? raw?.updated_at ?? null,
+    lineCount: raw?.lineCount ?? raw?.line_count ?? undefined,
+    lines: Array.isArray(raw?.lines) ? raw.lines.map(mapFactureLine) : undefined,
+  };
+}
+
+export function mapFactureLine(raw: any): FactureLine {
+  return {
+    id: String(raw?.id ?? ''),
+    factureId: String(raw?.factureId ?? raw?.facture_id ?? ''),
+    itemId: raw?.itemId ?? raw?.item_id ?? null,
+    itemName: raw?.itemName ?? raw?.item_name ?? null,
+    bcLineId: raw?.bcLineId ?? raw?.bc_line_id ?? null,
+    blLineId: raw?.blLineId ?? raw?.bl_line_id ?? null,
+    description: String(raw?.description ?? ''),
+    qty: Number(raw?.qty ?? 0),
+    uom: raw?.uom ?? null,
+    unitPrice: raw?.unitPrice ?? raw?.unit_price ?? null,
+    lineHt: raw?.lineHt ?? raw?.line_ht ?? null,
+    notes: raw?.notes ?? null,
+    createdBy: raw?.createdBy ?? raw?.created_by ?? null,
+    createdAt: raw?.createdAt ?? raw?.created_at ?? null,
+  };
+}
+

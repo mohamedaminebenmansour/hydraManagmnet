@@ -30,7 +30,7 @@ import { BcLineMatchRow, matchStatusVisual, formatQty } from '@app/core/models/s
       } @else {
         <div class="table-wrap">
           <table class="table">
-            <thead><tr><th>BC</th><th>Article</th><th class="num">Commandé</th><th class="num">Reçu</th><th class="num">En stock</th><th>Statut</th></tr></thead>
+            <thead><tr><th>BC</th><th>Article</th><th class="num">Commandé</th><th class="num">Reçu</th><th class="num">En stock</th><th class="num">Facturé</th><th>Statut</th></tr></thead>
             <tbody>
               @for (row of filtered(); track row.bcLineId) {
                 <tr>
@@ -39,6 +39,7 @@ import { BcLineMatchRow, matchStatusVisual, formatQty } from '@app/core/models/s
                   <td class="num">{{ formatQty(row.qtyOrdered) }}</td>
                   <td class="num">{{ formatQty(row.qtyReceived) }}</td>
                   <td class="num">{{ formatQty(row.qtyInStockMoves) }}</td>
+                  <td class="num">{{ formatQty(row.qtyInvoiced) }}</td>
                   <td>
                     <span class="chip" [style.--c]="sv(row.status).color" [style.--s]="sv(row.status).soft"
                           [pTooltip]="sv(row.status).label" tooltipPosition="left">
@@ -85,14 +86,18 @@ export class MatchOverviewComponent implements OnInit {
   formatQty = formatQty;
   readonly statusOptions = [
     { label: 'Conforme', value: 'MATCHED' },
-    { label: 'Partiel', value: 'PARTIAL' },
+    { label: 'Réception partielle', value: 'PARTIAL_RECEIVE' },
+    { label: 'Facturation partielle', value: 'PARTIAL_INVOICE' },
     { label: 'Sans réception', value: 'MISSING_BL' },
+    { label: 'Sans facture', value: 'MISSING_FACTURE' },
+    { label: 'Excédent facture', value: 'OVER_INVOICE' },
     { label: 'Écart stock', value: 'QTY_MISMATCH' },
   ];
 
   filtered = computed(() => {
     if (!this.statusFilter) return this.rows();
-    return this.rows().filter(r => r.status === this.statusFilter);
+    return this.rows().filter(r => r.status === this.statusFilter
+      || (this.statusFilter === 'PARTIAL' && (r.status === 'PARTIAL_RECEIVE' || r.status === 'PARTIAL_INVOICE')));
   });
 
   ngOnInit(): void { this.reload(); }

@@ -33,6 +33,7 @@ const NAV: NavItem[] = [
   { label: 'Commandes',     icon: 'pi-shopping-cart',  path: '/stock/commandes',    perm: PERM.STOCK_VIEW,   color: '#2563eb' },
   { label: 'Réceptions',     icon: 'pi-truck',          path: '/stock/receptions',   perm: PERM.STOCK_VIEW,   color: '#16a34a' },
   { label: 'Rapprochement',  icon: 'pi-verify',         path: '/stock/rapprochement', perm: PERM.STOCK_VIEW,   color: '#7c3aed' },
+  { label: 'Factures',       icon: 'pi-file',            path: '/stock/factures',      perm: PERM.STOCK_VIEW,   color: '#7c3aed' },
   // Tickets = tâches / signalements simples (assignation, statut, photo) — PAS les validations
   // de paiement, qui passent par Trésorerie → submit-payment → Mes tâches (process inbox).
   { label: 'Tâches / Signalements', icon: 'pi-ticket', path: '/tickets',   perm: PERM.TICKET_READ, color: '#d97706' },

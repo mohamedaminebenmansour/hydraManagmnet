@@ -100,6 +100,13 @@ export const routes: Routes = [
         loadComponent: () => import('./features/stock/bl-detail.component').then(m => m.BlDetailComponent) },
       { path: 'stock/rapprochement', canActivate: [permGuard(PERM.STOCK_VIEW)],
         loadComponent: () => import('./features/stock/match-overview.component').then(m => m.MatchOverviewComponent) },
+      // Part 3.4 — Factures UI
+      { path: 'stock/factures', canActivate: [permGuard(PERM.STOCK_VIEW)],
+        loadComponent: () => import('./features/stock/facture-list.component').then(m => m.FactureListComponent) },
+      { path: 'stock/factures/new', canActivate: [permGuard(PERM.STOCK_VIEW)],
+        loadComponent: () => import('./features/stock/facture-form.component').then(m => m.FactureFormComponent) },
+      { path: 'stock/factures/:id', canActivate: [permGuard(PERM.STOCK_VIEW)],
+        loadComponent: () => import('./features/stock/facture-detail.component').then(m => m.FactureDetailComponent) },
     ]
   },
   { path: '**', redirectTo: '' }

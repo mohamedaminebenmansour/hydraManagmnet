@@ -6,6 +6,8 @@ import { MessageService } from 'primeng/api';
 import {
   PurchaseOrder, PurchaseOrderLine, BonLivraison, BonLivraisonLine,
   BcLineMatchRow, MatchPage,
+  Facture, FactureLine,
+  mapFacture, mapFactureLine,
   mapPurchaseOrder, mapPurchaseOrderLine, mapBonLivraison, mapBonLivraisonLine, mapBcLineMatchRow,
 } from '@app/core/models/stock.model';
 
@@ -214,5 +216,69 @@ export class PurchaseService {
       severity: 'error', summary: 'Erreur',
       detail: err?.error?.message ?? err?.error?.detail ?? err?.error?.code ?? fallback,
     });
+  }
+
+
+  // ════════════════════════════════════════════════════════════════════
+  //  FACTURES (Part 3.1+3.4)
+  // ════════════════════════════════════════════════════════════════════
+
+  loadFactures(force = false, projectId?: string, status?: string): Observable<Facture[]> {
+    let params = new HttpParams();
+    if (projectId) params = params.set('projectId', projectId);
+    if (status) params = params.set('status', status);
+    return this.http.get<AnyRaw[]>('/api/factures', { params }).pipe(
+      map(list => (Array.isArray(list) ? list : []).map(mapFacture)),
+      catchError(err => { this.toastError(err, 'Impossible de charger les factures'); return of([]); })
+    );
+  }
+
+  getFacture(id: string): Observable<Facture | null> {
+    return this.http.get<AnyRaw>(`/api/factures/${id}`).pipe(
+      map(raw => mapFacture(raw)),
+      catchError(err => { this.toastError(err, 'Facture introuvable'); return of(null); })
+    );
+  }
+
+  createFacture(body: any): Observable<Facture | null> {
+    return this.http.post<AnyRaw>('/api/factures', body).pipe(
+      map(raw => mapFacture(raw)),
+      catchError(err => { this.toastError(err, 'Impossible de créer la facture'); return of(null); })
+    );
+  }
+
+  updateFacture(id: string, body: any): Observable<Facture | null> {
+    return this.http.patch<AnyRaw>(`/api/factures/${id}`, body).pipe(
+      map(raw => mapFacture(raw)),
+      catchError(err => { this.toastError(err, 'Impossible de modifier la facture'); return of(null); })
+    );
+  }
+
+  validateFacture(id: string): Observable<Facture | null> {
+    return this.http.post<AnyRaw>(`/api/factures/${id}/validate`, {}).pipe(
+      map(raw => mapFacture(raw)),
+      catchError(err => { this.toastError(err, 'Validation impossible'); return of(null); })
+    );
+  }
+
+  cancelFacture(id: string, reason?: string): Observable<Facture | null> {
+    return this.http.post<AnyRaw>(`/api/factures/${id}/cancel`, { reason: reason ?? null }).pipe(
+      map(raw => mapFacture(raw)),
+      catchError(err => { this.toastError(err, 'Annulation impossible'); return of(null); })
+    );
+  }
+
+  addFactureLine(factureId: string, body: any): Observable<any | null> {
+    return this.http.post<AnyRaw>(`/api/factures/${factureId}/lines`, body).pipe(
+      map(raw => raw),
+      catchError(err => { this.toastError(err, 'Impossible d\'ajouter la ligne'); return of(null); })
+    );
+  }
+
+  linkFactureDocument(factureId: string, documentId: string): Observable<boolean> {
+    return this.http.post<AnyRaw>(`/api/factures/${factureId}/documents`, { documentId }).pipe(
+      map(() => true),
+      catchError(err => { this.toastError(err, 'Impossible de lier le document'); return of(false); })
+    );
   }
 }
