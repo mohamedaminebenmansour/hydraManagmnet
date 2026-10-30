@@ -183,6 +183,7 @@ export interface SubmitPaymentBody {
   nature?: MovementNature | string | null;
   invoiceRef?: string | null;
   bcId?: string | null;
+  factureId?: string | null;
 }
 
 /** Response of submit-payment: the new DRAFT movement + the running process. */

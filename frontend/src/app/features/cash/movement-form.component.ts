@@ -237,6 +237,12 @@ import {
                         styleClass="w-100" [showClear]="true" />
             </div>
             <div class="field">
+              <label>Facture <small>(optionnel — traçabilité)</small></label>
+              <p-select [options]="validatedFactures()" optionValue="id" optionLabel="label"
+                        [(ngModel)]="factureId" placeholder="Aucune"
+                        styleClass="w-100" [showClear]="true" />
+            </div>
+            <div class="field">
               <label>Note <small>(optionnel)</small></label>
               <textarea pInputTextarea [(ngModel)]="note" rows="2"
                         placeholder="Détails, référence facture, acompte %, …"></textarea>
@@ -487,6 +493,8 @@ export class MovementFormComponent implements OnInit {
   partyId: string | null = null;
   bcId: string | null = null;
   confirmedBcs = signal<{ id: string; label: string }[]>([]);
+  validatedFactures = signal<{ id: string; label: string }[]>([]);
+  factureId: string | null = null;
   paymentWarnings = signal<string[]>([]);
   label = '';
   note = '';
@@ -776,6 +784,7 @@ export class MovementFormComponent implements OnInit {
       nature: this.nature ?? undefined,
       invoiceRef: this.invoiceRef.trim() || undefined,
       bcId: this.bcId ?? undefined,
+      factureId: this.factureId ?? undefined,
     }).subscribe(res => {
       if (!res) {
         this.saving.set(false);
@@ -820,6 +829,10 @@ export class MovementFormComponent implements OnInit {
     if (!this.projectId) return;
     this.purchaseService.loadBcs(true, this.projectId, 'CONFIRMED').subscribe(bcs => {
       this.confirmedBcs.set(bcs.map(bc => ({ id: bc.id, label: bc.reference || bc.id })));
+    });
+    this.factureId = null;
+    this.purchaseService.loadFactures(true, this.projectId, 'VALIDATED').subscribe(facs => {
+      this.validatedFactures.set(facs.map(f => ({ id: f.id, label: f.reference || f.id })));
     });
   }
 
