@@ -12,6 +12,7 @@ import tn.hydra.document.domain.DocType;
 import tn.hydra.document.dto.DocumentResponse;
 import tn.hydra.document.service.DocumentService;
 import tn.hydra.exception.BadRequestException;
+import tn.hydra.purchase.PurchaseOrderService;
 import tn.hydra.exception.ResourceNotFoundException;
 import tn.hydra.user.AppUser;
 import tn.hydra.user.AppUserRepository;
@@ -105,13 +106,15 @@ public class CashService {
     private final AppUserRepository users;
     private final EventLogService audit;
     private final DocumentService documentService;
+    private final PurchaseOrderService purchaseOrders;
 
     public CashService(JdbcTemplate jdbc, AppUserRepository users, EventLogService audit,
-                       DocumentService documentService) {
+                       DocumentService documentService, PurchaseOrderService purchaseOrders) {
         this.jdbc = jdbc;
         this.users = users;
         this.audit = audit;
         this.documentService = documentService;
+        this.purchaseOrders = purchaseOrders;
     }
 
     // ══════════════════════════════════════════════════════════════
@@ -164,7 +167,8 @@ public class CashService {
             String voucherNo, String nature, String invoiceRef,
             // V28 (TASK 6) — void request flag (finance asks, owner voids)
             Instant voidRequestedAt, String voidRequestReason,
-            UUID bcId, String bcReference, UUID factureId, String factureReference) {}
+            UUID bcId, String bcReference, UUID factureId, String factureReference,
+            java.util.List<String> materialWarnings) {}
 
     /** One event in the movement timeline. */
     public record MovementTimelineEvent(
@@ -768,7 +772,13 @@ public class CashService {
         Map<String, Object> row = rows.get(0);
         UUID projectId = (UUID) row.get("project_id");
         if (projectId != null) requireProjectAccess(me, projectId);
-        return toMovementDetailResponse(row);
+        // Part 4.2 — compute material warnings if bc_id is set
+        java.util.List<String> materialWarnings = java.util.List.of();
+        UUID bcId = (UUID) row.get("bc_id");
+        if (bcId != null) {
+            materialWarnings = purchaseOrders.computeMaterialWarnings(auth, bcId);
+        }
+        return toMovementDetailResponse(row, materialWarnings);
     }
 
     /**
@@ -1166,7 +1176,7 @@ public class CashService {
         Set<UUID> accessible = accessibleProjectIds(me);
         return jdbc.queryForList(sql.toString(), args.toArray())
                 .stream()
-                .map(CashService::toMovementDetailResponse)
+                .map(row -> toMovementDetailResponse(row, java.util.List.of()))
                 .filter(m -> m.projectId() == null || accessible.contains(m.projectId()))
                 .toList();
     }
@@ -1903,7 +1913,7 @@ public class CashService {
     }
 
     /** Mapper for the richer response — uses JOIN'd columns (from_pot_name, etc.). */
-    private static MovementDetailResponse toMovementDetailResponse(Map<String, Object> row) {
+    private static MovementDetailResponse toMovementDetailResponse(Map<String, Object> row, java.util.List<String> materialWarnings) {
         Object movementDateObj = row.get("movement_date");
         LocalDate movementDate = movementDateObj == null ? null
                 : (movementDateObj instanceof Date d ? d.toLocalDate()
@@ -1954,7 +1964,8 @@ public class CashService {
                 (UUID) row.get("bc_id"),
                 (String) row.get("bc_reference"),
                 (UUID) row.get("facture_id"),
-                (String) row.get("facture_reference")
+                (String) row.get("facture_reference"),
+                materialWarnings != null ? materialWarnings : java.util.List.of()
         );
     }
 

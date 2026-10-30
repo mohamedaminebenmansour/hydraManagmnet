@@ -122,6 +122,28 @@ import {
             <div class="mdf-label">Note</div>
             <div class="mdf-value">{{ m.note || '—' }}</div>
           </div>
+          @if (materialWarnings().length > 0) {
+            <div class="material-warn-panel">
+              <div class="mwp-header">
+                <i class="pi pi-exclamation-triangle"></i>
+                <strong>Avertissements rapprochement</strong>
+              </div>
+              <ul>
+                @for (w of materialWarnings(); track w) { <li>{{ w }}</li> }
+              </ul>
+              <div class="mwp-links">
+                @if (bcId()) {
+                  <a [routerLink]="['/stock/commandes', bcId()]" class="mwp-link">
+                    <i class="pi pi-shopping-cart"></i> Voir commande
+                  </a>
+                }
+                <a [routerLink]="'/stock/rapprochement'" class="mwp-link">
+                  <i class="pi pi-verify"></i> Rapprochement
+                </a>
+              </div>
+              <small>Le paiement n'est pas bloqué — ces alertes sont informatives.</small>
+            </div>
+          }
           @if (m.processInstanceId) {
             <div class="md-field md-field-wide">
               <div class="mdf-label">Processus lié</div>
@@ -355,6 +377,9 @@ export class MovementDetailComponent implements OnInit {
    * TASK 6 — the attached proof document (movement read model first; the
    * timeline snapshot is the fallback while the page loads).
    */
+  materialWarnings = signal<string[]>([]);
+  bcId = computed(() => this.movement()?.bcId ?? null);
+
   proofDocumentId(): string | null {
     return this.movement()?.documentId ?? this.timeline()?.documentId ?? null;
   }
@@ -411,6 +436,8 @@ export class MovementDetailComponent implements OnInit {
     }
     this.cashService.getMovement(this.id).subscribe(m => {
       this.movement.set(m);
+      // Part 4.2 — extract material warnings from detail response
+      this.materialWarnings.set((m as any)?.materialWarnings ?? []);
       this.voidReason = '';
       this.loading.set(false);
       // If the movement has a linked process, fetch the process timeline

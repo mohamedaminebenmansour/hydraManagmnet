@@ -606,6 +606,45 @@ public class PurchaseOrderService {
     }
 
     // ══════════════════════════════════════════════════════════════
+    //  MATERIAL WARNINGS (Part 4.2 — shared by PaymentFacade + CashService)
+    // ══════════════════════════════════════════════════════════════
+
+    /**
+     * Compute material-proof warnings for a BC. Never throws.
+     * Returns French advisory strings for each non-MATCHED BC line.
+     * If matchForBc fails → empty list + log (caller never sees the error).
+     */
+    public java.util.List<String> computeMaterialWarnings(Authentication auth, UUID bcId) {
+        if (bcId == null) return java.util.List.of();
+        java.util.List<String> warnings = new java.util.ArrayList<>();
+        try {
+            var matchRows = matchForBc(auth, bcId);
+            for (var row : matchRows) {
+                String status = row.status();
+                if ("MATCHED".equals(status)) continue;
+                String itemName = row.itemName() != null ? row.itemName() : "article";
+                String msg = switch (status) {
+                    case "MISSING_BL" -> "Ligne « " + itemName + " » : aucune réception (BL) enregistrée.";
+                    case "MISSING_FACTURE" -> "Ligne « " + itemName + " » : reçu sans facture validée.";
+                    case "OVER_INVOICE" -> "Ligne « " + itemName + " » : facturation supérieure à la commande.";
+                    case "PARTIAL_RECEIVE" -> "Ligne « " + itemName + " » : réception partielle ("
+                            + row.qtyReceived() + "/" + row.qtyOrdered() + ").";
+                    case "PARTIAL_INVOICE" -> "Ligne « " + itemName + " » : facturation partielle ("
+                            + row.qtyInvoiced() + "/" + row.qtyOrdered() + ").";
+                    case "QTY_MISMATCH" -> "Ligne « " + itemName + " » : écart stock ("
+                            + row.qtyInStockMoves() + "/" + row.qtyReceived() + ").";
+                    default -> "Ligne « " + itemName + " » : statut de rapprochement non conforme (" + status + ").";
+                };
+                warnings.add(msg);
+            }
+        } catch (Exception e) {
+            System.err.println("[PurchaseOrderService] computeMaterialWarnings failed (bcId="
+                    + bcId + "): " + e.getMessage());
+        }
+        return warnings;
+    }
+
+    // ══════════════════════════════════════════════════════════════
     //  HELPERS (copied verbatim from StockService)
     // ══════════════════════════════════════════════════════════════
 

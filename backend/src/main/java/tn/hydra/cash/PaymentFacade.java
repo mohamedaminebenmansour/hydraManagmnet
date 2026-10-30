@@ -245,35 +245,7 @@ public class PaymentFacade {
             return warnings; // No BC linked → skip material checks (amendment #2)
         }
 
-        List<String> materialWarnings = new ArrayList<>();
-        try {
-            var matchRows = purchaseOrders.matchForBc(auth, req.bcId());
-            for (var row : matchRows) {
-                String status = row.status();
-                if ("MATCHED".equals(status)) continue;
-
-                String itemName = row.itemName() != null ? row.itemName() : "article";
-                String msg = switch (status) {
-                    case "MISSING_BL" -> "Ligne « " + itemName + " » : aucune réception (BL) enregistrée.";
-                    case "MISSING_FACTURE" -> "Ligne « " + itemName + " » : reçu sans facture validée.";
-                    case "OVER_INVOICE" -> "Ligne « " + itemName + " » : facturation supérieure à la commande.";
-                    case "PARTIAL_RECEIVE" -> "Ligne « " + itemName + " » : réception partielle ("
-                            + row.qtyReceived() + "/" + row.qtyOrdered() + ").";
-                    case "PARTIAL_INVOICE" -> "Ligne « " + itemName + " » : facturation partielle ("
-                            + row.qtyInvoiced() + "/" + row.qtyOrdered() + ").";
-                    case "QTY_MISMATCH" -> "Ligne « " + itemName + " » : écart stock ("
-                            + row.qtyInStockMoves() + "/" + row.qtyReceived() + ").";
-                    default -> "Ligne « " + itemName + " » : statut de rapprochement non conforme (" + status + ").";
-                };
-                materialWarnings.add(msg);
-            }
-        } catch (Exception e) {
-            // Never let a warning-computation failure block the payment.
-            // Log + swallow — the process-level warnings still surface.
-            System.err.println("[PaymentFacade] matchForBc warning computation failed (bcId="
-                    + req.bcId() + "): " + e.getMessage());
-        }
-
+        List<String> materialWarnings = purchaseOrders.computeMaterialWarnings(auth, req.bcId());
         warnings.addAll(materialWarnings);
 
         // Hard gate (default OFF — hydra.payments.require-stock-match=false)
