@@ -1,12 +1,21 @@
 {
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "buildCommand": "npm run build",
+  "outputDirectory": "dist/hydra-web/browser",
+  "installCommand": "npm install",
   "rewrites": [
     {
       "source": "/api/:path*",
-      "destination": "https://hydra-0gjc.onrender.com/api/:path*"
-    },
+      "destination": "https://hydra-api.onrender.com/api/:path*"
+    }
+  ],
+  "headers": [
     {
-      "source": "/((?!api/).*)",
-      "destination": "/index.html"
+      "source": "/(.*)",
+      "headers": [
+        { "key": "X-Content-Type-Options", "value": "nosniff" },
+        { "key": "X-Frame-Options", "value": "DENY" }
+      ]
     }
   ]
 }

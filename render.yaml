@@ -1,0 +1,29 @@
+# Render Blueprint — auto-configures the backend service
+# Docs: https://render.com/docs/blueprint-spec
+services:
+  - type: web
+    name: hydra-api
+    env: docker
+    dockerfilePath: ./Dockerfile
+    dockerContext: ./backend
+    healthCheckPath: /health
+    autoDeploy: true
+    envVars:
+      - key: DB_URL
+        sync: false
+      - key: DB_USER
+        value: postgres
+      - key: DB_PASSWORD
+        sync: false
+      - key: OWNER_EMAIL
+        value: owner@hydra.tn
+      - key: OWNER_PASSWORD
+        value: HydraOwner2026!
+      - key: HYDRA_STORAGE_TYPE
+        value: local
+      - key: HYDRA_STORAGE_ROOT
+        value: /opt/data/files
+      - key: SPRING_PROFILES_ACTIVE
+        value: prod
+      - key: JAVA_OPTS
+        value: "-Xmx512m -Xss256k"
