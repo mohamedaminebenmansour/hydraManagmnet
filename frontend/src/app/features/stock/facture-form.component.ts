@@ -34,7 +34,7 @@ import { PERM } from '@app/core/permissions';
             <p-select [options]="projects()" [(ngModel)]="projectId" placeholder="Sélectionner" optionLabel="name" optionValue="id" filter="true" styleClass="w-100" />
           </div>
           <div class="field">
-            <label>Bon de commande</label>
+            <label>Bon de commande <small class="hint-inline">(liez BC/BL fournisseur — pas les transferts internes)</small></label>
             <p-select [options]="confirmedBcs()" [(ngModel)]="bcId" placeholder="Optionnel" optionLabel="label" optionValue="id" [showClear]="true" styleClass="w-100" />
           </div>
           <div class="field">

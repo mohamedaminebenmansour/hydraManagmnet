@@ -9,6 +9,7 @@ import { TextareaModule } from 'primeng/textarea';
 import { MessageService } from 'primeng/api';
 import { PurchaseService } from '@app/core/services/purchase.service';
 import { StockService } from '@app/core/services/stock.service';
+import { ProjectService } from '@app/core/services/project.service';
 import { AuthService } from '@app/core/auth.service';
 import { PERM } from '@app/core/permissions';
 import { PurchaseOrder, BonLivraison } from '@app/core/models/stock.model';
@@ -20,7 +21,7 @@ import { PurchaseOrder, BonLivraison } from '@app/core/models/stock.model';
   template: `
     <section class="bl-form">
       <header class="head">
-        <h1><i class="pi pi-truck"></i> Nouvelle réception</h1>
+        <h1><i class="pi pi-truck"></i> Nouvelle réception fournisseur</h1>
         <a class="back" [routerLink]="'/stock/receptions'"><i class="pi pi-arrow-left"></i> Retour</a>
       </header>
       <div class="card">
@@ -107,6 +108,7 @@ import { PurchaseOrder, BonLivraison } from '@app/core/models/stock.model';
 export class BlFormComponent implements OnInit {
   private purchase = inject(PurchaseService);
   private stock = inject(StockService);
+  private projectService = inject(ProjectService);
   private auth = inject(AuthService);
   private router = inject(Router);
   private route = inject(ActivatedRoute);
@@ -142,9 +144,9 @@ export class BlFormComponent implements OnInit {
   }
 
   private loadProjects(): void {
-    // Reuse ProjectService via a simple http call through stock service cache isn't ideal; use inline
-    // Actually ProjectService.options() returns Observable — but we didn't inject it. Use stock.locations to derive projects.
-    // Simpler: inject ProjectService
+    this.projectService.options().subscribe(opts => {
+      this.projects.set((opts ?? []).map(o => ({ id: o.id, name: o.name })));
+    });
   }
 
   locationOptions = computed(() => this.stock.locations().filter(l => l.active).map(l => ({

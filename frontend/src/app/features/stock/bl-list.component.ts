@@ -16,8 +16,8 @@ import { BonLivraison, blStatusVisual, formatDateTime } from '@app/core/models/s
     <section class="bl-list">
       <header class="head">
         <div>
-          <h1><i class="pi pi-truck"></i> Réceptions</h1>
-          <p>Bons de livraison (BL) — réceptions de stock.</p>
+          <h1><i class="pi pi-truck"></i> Réceptions fournisseur</h1>
+          <p>Bons de livraison fournisseur — réceptions de stock.</p>
         </div>
         <div class="actions">
           <a class="back" [routerLink]="'/stock'"><i class="pi pi-arrow-left"></i> Hub</a>
@@ -29,7 +29,7 @@ import { BonLivraison, blStatusVisual, formatDateTime } from '@app/core/models/s
       </div>
       @if (loading()) { <div class="loading"><i class="pi pi-spin pi-spinner"></i> Chargement…</div> }
       @else if (bls().length === 0) {
-        <div class="empty"><i class="pi pi-truck"></i><h3>Aucune réception</h3><p>Créez un BL depuis une commande confirmée.</p></div>
+        <div class="empty"><i class="pi pi-truck"></i><h3>Aucune réception</h3><p>Créez une réception depuis une commande confirmée.</p></div>
       } @else {
         <div class="table-wrap">
           <table class="table">

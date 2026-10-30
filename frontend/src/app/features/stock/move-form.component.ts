@@ -402,7 +402,7 @@ export class MoveFormComponent implements OnInit {
     { type: 'IN',         label: 'Entrée',       icon: STOCK_MOVE_TYPE_VISUAL['IN'].icon,        color: STOCK_MOVE_TYPE_VISUAL['IN'].color },
     { type: 'OUT',        label: 'Sortie',       icon: STOCK_MOVE_TYPE_VISUAL['OUT'].icon,       color: STOCK_MOVE_TYPE_VISUAL['OUT'].color },
     { type: 'DIRECT_USE', label: 'Consommation', icon: STOCK_MOVE_TYPE_VISUAL['DIRECT_USE'].icon, color: STOCK_MOVE_TYPE_VISUAL['DIRECT_USE'].color },
-    { type: 'TRANSFER',   label: 'Transfert',    icon: STOCK_MOVE_TYPE_VISUAL['TRANSFER'].icon,  color: STOCK_MOVE_TYPE_VISUAL['TRANSFER'].color },
+    { type: 'TRANSFER',   label: 'Transfert / sortie dépôt',    icon: STOCK_MOVE_TYPE_VISUAL['TRANSFER'].icon,  color: STOCK_MOVE_TYPE_VISUAL['TRANSFER'].color },
     { type: 'ADJUST',     label: 'Ajustement',   icon: STOCK_MOVE_TYPE_VISUAL['ADJUST'].icon,    color: STOCK_MOVE_TYPE_VISUAL['ADJUST'].color },
   ];
 

@@ -123,6 +123,7 @@ import {
                       </span>
                     } @else {
                       <span class="loc-from">{{ m.fromLocationName ?? '—' }}</span>
+                      @if (m.blLineId) { <span class="via-bl-badge" pTooltip="Mouvement issu d une réception fournisseur (BL)" tooltipPosition="left"><i class="pi pi-truck"></i> Via BL</span> }
                     }
                   </td>
                   <td class="c-by">{{ m.createdByName ?? '—' }}</td>
@@ -354,6 +355,7 @@ import {
       margin-top: 8px;
     }
     .c-nodoc i { font-size: 12px; }
+    .via-bl-badge { display: inline-flex; align-items: center; gap: 3px; margin-left: 6px; padding: 2px 6px; border-radius: 999px; font-size: 11px; font-weight: 600; background: #ecfeff; color: #0891b2; border: 1px solid #cffafe; }
 
     /* States */
     .sm-loading, .sm-empty {
