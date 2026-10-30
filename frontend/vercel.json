@@ -5,7 +5,7 @@
   "rewrites": [
     {
       "source": "/api/:path*",
-      "destination": "https://hydra-api.onrender.com/api/:path*"
+      "destination": "https://hydramanagmnet.onrender.com/api/:path*"
     },
     {
       "source": "/((?!api).*)",
