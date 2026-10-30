@@ -223,7 +223,8 @@ public class CashService {
                                          BigDecimal claimedAmount, BigDecimal assessedAmount,
                                          String varianceReason,
                                          String paymentMode, String paymentRef,
-                                         String voucherNo, String nature, String invoiceRef) {}
+                                         String voucherNo, String nature, String invoiceRef,
+                                         UUID bcId) {}
 
     /**
      * Update DRAFT movement. Same shape as create minus processInstanceId

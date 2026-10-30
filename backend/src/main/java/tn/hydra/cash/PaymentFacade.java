@@ -5,9 +5,12 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import tn.hydra.audit.EventLogService;
 import tn.hydra.process.ProcessService;
+import tn.hydra.purchase.PurchaseOrderService;
 import tn.hydra.user.AppUser;
 import tn.hydra.user.AppUserRepository;
 
+import java.util.ArrayList;
+import java.util.List;
 import java.util.UUID;
 
 /**
@@ -39,15 +42,21 @@ public class PaymentFacade {
     private final ProcessService processService;
     private final AppUserRepository users;
     private final EventLogService audit;
+    private final PurchaseOrderService purchaseOrders;
+
+    @org.springframework.beans.factory.annotation.Value("${hydra.payments.require-stock-match:false}")
+    private boolean requireStockMatch;
 
     public PaymentFacade(CashService cashService,
                          ProcessService processService,
                          AppUserRepository users,
-                         EventLogService audit) {
+                         EventLogService audit,
+                         PurchaseOrderService purchaseOrders) {
         this.cashService = cashService;
         this.processService = processService;
         this.users = users;
         this.audit = audit;
+        this.purchaseOrders = purchaseOrders;
     }
 
     // ══════════════════════════════════════════════════════════════
@@ -93,7 +102,8 @@ public class PaymentFacade {
             String paymentRef,
             String voucherNo,
             String nature,
-            String invoiceRef
+            String invoiceRef,
+            UUID bcId
     ) {}
 
     /**
@@ -103,8 +113,14 @@ public class PaymentFacade {
      */
     public record SubmitPaymentResponse(
             CashService.MovementResponse movement,
-            UUID processInstanceId
-    ) {}
+            UUID processInstanceId,
+            List<String> warnings
+    ) {
+        /** Backward-compatible 2-field constructor (empty warnings). */
+        public SubmitPaymentResponse(CashService.MovementResponse movement, UUID processInstanceId) {
+            this(movement, processInstanceId, List.of());
+        }
+    }
 
     // ══════════════════════════════════════════════════════════════
     //  SUBMIT PAYMENT
@@ -145,7 +161,8 @@ public class PaymentFacade {
                 req.paymentRef(),
                 req.voucherNo(),
                 req.nature(),
-                req.invoiceRef()
+                req.invoiceRef(),
+                req.bcId()
         );
         CashService.MovementResponse movement = cashService.createMovement(auth, draftReq);
 
@@ -192,6 +209,78 @@ public class PaymentFacade {
 
         // (e) Return — refetch the movement so processInstanceId is populated
         CashService.MovementResponse linked = cashService.getMovement(auth, movement.id());
-        return new SubmitPaymentResponse(linked, started.id());
+
+        // Part 3.3 — soft material-proof warnings (never blocks unless flag is on)
+        List<String> warnings = computePaymentWarnings(auth, req, started.warnings());
+
+        return new SubmitPaymentResponse(linked, started.id(), warnings);
+    }
+
+    // ══════════════════════════════════════════════════════════════
+    //  PART 3.3 — Soft material-proof warnings
+    // ══════════════════════════════════════════════════════════════
+
+    /**
+     * Compute advisory warnings for material proof when submitting a payment.
+     *
+     * Rules (Part 3.3):
+     *   - If bcId is null → skip material checks (no warning about missing BC).
+     *   - If bcId present → call PurchaseOrderService.matchForBc(auth, bcId)
+     *     and for each BC line whose status != MATCHED, add a French advisory.
+     *   - matchForBc failures: log + swallow (payment still 200).
+     *   - If hydra.payments.require-stock-match=true AND warnings non-empty
+     *     from material checks → throw 409 STOCK_MATCH_REQUIRED (hard gate).
+     *
+     * Returns the combined list: process-level warnings + material warnings.
+     * NEVER blocks unless the flag is explicitly true.
+     */
+    private List<String> computePaymentWarnings(Authentication auth,
+                                                  SubmitPaymentRequest req,
+                                                  List<String> processWarnings) {
+        List<String> warnings = new ArrayList<>(processWarnings);
+
+        if (req.bcId() == null) {
+            return warnings; // No BC linked → skip material checks (amendment #2)
+        }
+
+        List<String> materialWarnings = new ArrayList<>();
+        try {
+            var matchRows = purchaseOrders.matchForBc(auth, req.bcId());
+            for (var row : matchRows) {
+                String status = row.status();
+                if ("MATCHED".equals(status)) continue;
+
+                String itemName = row.itemName() != null ? row.itemName() : "article";
+                String msg = switch (status) {
+                    case "MISSING_BL" -> "Ligne « " + itemName + " » : aucune réception (BL) enregistrée.";
+                    case "MISSING_FACTURE" -> "Ligne « " + itemName + " » : reçu sans facture validée.";
+                    case "OVER_INVOICE" -> "Ligne « " + itemName + " » : facturation supérieure à la commande.";
+                    case "PARTIAL_RECEIVE" -> "Ligne « " + itemName + " » : réception partielle ("
+                            + row.qtyReceived() + "/" + row.qtyOrdered() + ").";
+                    case "PARTIAL_INVOICE" -> "Ligne « " + itemName + " » : facturation partielle ("
+                            + row.qtyInvoiced() + "/" + row.qtyOrdered() + ").";
+                    case "QTY_MISMATCH" -> "Ligne « " + itemName + " » : écart stock ("
+                            + row.qtyInStockMoves() + "/" + row.qtyReceived() + ").";
+                    default -> "Ligne « " + itemName + " » : statut de rapprochement non conforme (" + status + ").";
+                };
+                materialWarnings.add(msg);
+            }
+        } catch (Exception e) {
+            // Never let a warning-computation failure block the payment.
+            // Log + swallow — the process-level warnings still surface.
+            System.err.println("[PaymentFacade] matchForBc warning computation failed (bcId="
+                    + req.bcId() + "): " + e.getMessage());
+        }
+
+        warnings.addAll(materialWarnings);
+
+        // Hard gate (default OFF — hydra.payments.require-stock-match=false)
+        if (requireStockMatch && !materialWarnings.isEmpty()) {
+            throw new tn.hydra.common.BusinessRuleException("STOCK_MATCH_REQUIRED",
+                    "Rapprochement stock non conforme — " + materialWarnings.size()
+                            + " ligne(s) en alerte. Activez le rapprochement ou corrigez les écarts.");
+        }
+
+        return warnings;
     }
 }
