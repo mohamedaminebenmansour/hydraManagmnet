@@ -1,5 +1,5 @@
 import { Component, OnInit, computed, inject, signal } from '@angular/core';
-import { RouterLink, RouterLinkActive, RouterOutlet } from '@angular/router';
+import { Router, RouterLink, RouterLinkActive, RouterOutlet } from '@angular/router';
 import { ButtonModule } from 'primeng/button';
 import { ToastModule } from 'primeng/toast';
 import { TooltipModule } from 'primeng/tooltip';
@@ -15,7 +15,8 @@ interface NavItem {
   path: string;
   perm: string;
   color: string;
-  badge?: 'count'; // whether to show a notification count
+  badge?: 'count';
+  children?: NavItem[]; // expandable sub-items (Part: Achats group)
 }
 
 const NAV: NavItem[] = [
@@ -29,11 +30,15 @@ const NAV: NavItem[] = [
   { label: 'Chantiers',      icon: 'pi-briefcase',    path: '/projects',    perm: PERM.PROJECT_READ, color: '#0d9488' },
   // Stock & matériel (Part 1.3) — visible to anyone with STOCK_VIEW
   { label: 'Matériel',       icon: 'pi-box',           path: '/stock',       perm: PERM.STOCK_VIEW,   color: '#0d9488' },
-  // Part 2.4 — Commandes / Réceptions / Rapprochement
-  { label: 'Commandes',     icon: 'pi-shopping-cart',  path: '/stock/commandes',    perm: PERM.STOCK_VIEW,   color: '#2563eb' },
-  { label: 'Réceptions',     icon: 'pi-truck',          path: '/stock/receptions',   perm: PERM.STOCK_VIEW,   color: '#16a34a' },
-  { label: 'Rapprochement',  icon: 'pi-verify',         path: '/stock/rapprochement', perm: PERM.STOCK_VIEW,   color: '#7c3aed' },
-  { label: 'Factures',       icon: 'pi-file',            path: '/stock/factures',      perm: PERM.STOCK_VIEW,   color: '#7c3aed' },
+  // Achats — grouped expandable (Commandes / Réceptions / Factures / Rapprochement)
+  { label: 'Achats',  icon: 'pi-shopping-cart',  path: '',  perm: PERM.STOCK_VIEW,  color: '#2563eb',
+    children: [
+      { label: 'Commandes',            icon: 'pi-shopping-cart',  path: '/stock/commandes',    perm: PERM.STOCK_VIEW, color: '#2563eb' },
+      { label: 'Réceptions fournisseur', icon: 'pi-truck',          path: '/stock/receptions',   perm: PERM.STOCK_VIEW, color: '#16a34a' },
+      { label: 'Factures',              icon: 'pi-file',            path: '/stock/factures',      perm: PERM.STOCK_VIEW, color: '#7c3aed' },
+      { label: 'Rapprochement',         icon: 'pi-verify',         path: '/stock/rapprochement', perm: PERM.STOCK_VIEW, color: '#7c3aed' },
+    ]
+  },
   // Tickets = tâches / signalements simples (assignation, statut, photo) — PAS les validations
   // de paiement, qui passent par Trésorerie → submit-payment → Mes tâches (process inbox).
   { label: 'Tâches / Signalements', icon: 'pi-ticket', path: '/tickets',   perm: PERM.TICKET_READ, color: '#d97706' },
@@ -78,18 +83,40 @@ const NAV: NavItem[] = [
 
         <!-- Navigation (icon-first, color-coded) -->
         <nav>
-          @for (item of menu(); track item.path) {
-            <a [routerLink]="item.path" routerLinkActive="active"
-               [routerLinkActiveOptions]="{ exact: item.path === '/' }"
-               [style.--nav-color]="item.color"
-               pTooltip="{{ item.label }}" tooltipPosition="right"
-               class="nav-item">
-              <span class="nav-icon"><i class="pi" [class]="item.icon"></i></span>
-              <span class="nav-label">{{ item.label }}</span>
-              @if (item.badge === 'count' && taskCount() > 0) {
-                <span class="nav-badge">{{ taskCount() }}</span>
+          @for (item of menu(); track item.label) {
+            @if (item.children && item.children.length > 0) {
+              <!-- Expandable parent (e.g. Achats) -->
+              <button type="button" class="nav-item nav-parent"
+                      [style.--nav-color]="item.color"
+                      (click)="achatsExpanded.set(!achatsExpanded())">
+                <span class="nav-icon"><i class="pi" [class]="item.icon"></i></span>
+                <span class="nav-label">{{ item.label }}</span>
+                <i class="pi nav-chev" [class.pi-chevron-down]="achatsExpanded()" [class.pi-chevron-right]="!achatsExpanded()"></i>
+              </button>
+              @if (achatsExpanded()) {
+                @for (child of item.children; track child.path) {
+                  <a [routerLink]="child.path" routerLinkActive="active"
+                     [style.--nav-color]="child.color"
+                     class="nav-item nav-child">
+                    <span class="nav-icon"><i class="pi" [class]="child.icon"></i></span>
+                    <span class="nav-label">{{ child.label }}</span>
+                  </a>
+                }
               }
-            </a>
+            } @else {
+              <!-- Flat nav item -->
+              <a [routerLink]="item.path" routerLinkActive="active"
+                 [routerLinkActiveOptions]="{ exact: item.path === '/' }"
+                 [style.--nav-color]="item.color"
+                 pTooltip="{{ item.label }}" tooltipPosition="right"
+                 class="nav-item">
+                <span class="nav-icon"><i class="pi" [class]="item.icon"></i></span>
+                <span class="nav-label">{{ item.label }}</span>
+                @if (item.badge === 'count' && taskCount() > 0) {
+                  <span class="nav-badge">{{ taskCount() }}</span>
+                }
+              </a>
+            }
           }
         </nav>
 
@@ -201,6 +228,12 @@ const NAV: NavItem[] = [
       color: #fff;
       box-shadow: 0 4px 12px -3px color-mix(in srgb, var(--nav-color) 60%, transparent);
     }
+    .nav-parent { background: none; border: none; cursor: pointer; width: 100%;
+      text-align: left; }
+    .nav-chev { margin-left: auto; font-size: 12px; color: #94a3b8; }
+    .nav-child { padding-left: 36px; font-size: 13px; }
+    .nav-child .nav-icon { width: 18px; }
+    .nav-child::before { left: 12px !important; }
     .nav-item.active::before {
       content: ''; position: absolute; left: -12px; top: 8px; bottom: 8px; width: 4px;
       background: var(--nav-color); border-radius: 0 4px 4px 0;
@@ -290,6 +323,7 @@ const NAV: NavItem[] = [
 })
 export class ShellComponent implements OnInit {
   private auth = inject(AuthService);
+  private router = inject(Router);
   private projectService = inject(ProjectService);
   private processService = inject(ProcessService);
 
@@ -300,6 +334,7 @@ export class ShellComponent implements OnInit {
   me = this.auth.me;
 
   menu = computed(() => NAV.filter(i => !i.perm || this.auth.can(i.perm)));
+  achatsExpanded = signal(false);
 
   userInitials = computed(() => initials(this.auth.me()?.fullName));
   userGradient = computed(() => {
@@ -316,6 +351,13 @@ export class ShellComponent implements OnInit {
     });
 
     // Load pending task count for the bell + sidebar badge
+    // Auto-expand Achats if a child route is active
+    const url = this.router.url;
+    if (url.includes('/stock/commandes') || url.includes('/stock/receptions') ||
+        url.includes('/stock/factures') || url.includes('/stock/rapprochement')) {
+      this.achatsExpanded.set(true);
+    }
+
     this.processService.myTasks().subscribe({
       next: list => this.taskCount.set((list ?? []).length),
       error: () => this.taskCount.set(0),

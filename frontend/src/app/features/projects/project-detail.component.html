@@ -72,6 +72,30 @@
     </div>
   </section>
 
+  <!-- RACCOURCIS CHANTIER — 4 tuiles vers Achats / Stock / Argent / Docs -->
+  <section class="project-hub-tiles">
+    <a class="pht-tile" [routerLink]="['/stock/commandes']" [queryParams]="{projectId: proj?.id}">
+      <span class="pht-icon" style="color: #2563eb;"><i class="pi pi-shopping-cart"></i></span>
+      <span class="pht-label">Achats</span>
+      <span class="pht-hint">Commandes · Réceptions · Factures</span>
+    </a>
+    <a class="pht-tile" [routerLink]="['/stock/stocks']" [queryParams]="{projectId: proj?.id}">
+      <span class="pht-icon" style="color: #0d9488;"><i class="pi pi-box"></i></span>
+      <span class="pht-label">Stock</span>
+      <span class="pht-hint">Niveaux · Mouvements</span>
+    </a>
+    <a class="pht-tile" [routerLink]="['/tresorerie/caisses']">
+      <span class="pht-icon" style="color: #f59e0b;"><i class="pi pi-wallet"></i></span>
+      <span class="pht-label">Argent</span>
+      <span class="pht-hint">Caisse du chantier</span>
+    </a>
+    <a class="pht-tile" (click)="activeTab.set('0')">
+      <span class="pht-icon" style="color: #6366f1;"><i class="pi pi-folder"></i></span>
+      <span class="pht-label">Documents</span>
+      <span class="pht-hint">Dossiers du chantier</span>
+    </a>
+  </section>
+
   <!-- ARGENT DU CHANTIER — caisse + raccourcis paiement -->
   <section class="cash-strip">
     <div class="cash-strip-icon"><i class="pi pi-wallet"></i></div>
