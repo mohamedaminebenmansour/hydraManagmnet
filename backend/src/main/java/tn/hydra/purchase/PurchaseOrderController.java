@@ -139,6 +139,16 @@ public class PurchaseOrderController {
         return service.linkDocument(auth, id, body);
     }
 
+    /** POST /api/purchase-orders/{id}/close — CONFIRMED → CLOSED (all lines must be MATCHED). */
+    @PostMapping("/{id}/close")
+    @PreAuthorize("hasRole('OWNER') or hasAuthority('PERM_STOCK_MOVE')")
+    public PurchaseOrderService.BcResponse close(@PathVariable UUID id,
+                                                  @RequestParam(required = false, defaultValue = "false") boolean force,
+                                                  @RequestBody(required = false) PurchaseOrderService.CloseRequest body,
+                                                  Authentication auth) {
+        return service.close(auth, id, force, body);
+    }
+
     // ── MATCH (Part 2.3 — read-only soft match) ───────────────────────────
 
     /** Match overview across all BCs (filtered by project for non-owners). */

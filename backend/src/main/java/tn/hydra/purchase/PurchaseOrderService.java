@@ -439,6 +439,71 @@ public class PurchaseOrderService {
     }
 
     // ══════════════════════════════════════════════════════════════
+    //  CLOSE — POST /api/purchase-orders/{id}/close (Part 4.3)
+    // ══════════════════════════════════════════════════════════════
+
+    public record CloseRequest(String reason) {}
+
+    /**
+     * Close a CONFIRMED BC when all lines are MATCHED.
+     * Optional force=true (OWNER/STOCK_ADMIN only) skips the match gate.
+     * Audits STOCK_BC_CLOSED with {force, reason, lineCount}.
+     */
+    @Transactional
+    public BcResponse close(Authentication auth, UUID bcId, boolean force, CloseRequest req) {
+        AppUser me = currentUser(auth);
+        requirePermission(auth, "STOCK_MOVE", "close-bc");
+        PurchaseOrder po = poOrNotFound(me.getOrgId(), bcId);
+        requireProjectVisible(me, po.getProjectId());
+
+        // Status gate: CONFIRMED only
+        if (po.getStatus() != PurchaseOrderStatus.CONFIRMED) {
+            throw new BusinessRuleException("BC_INVALID_STATUS",
+                    "Clôture impossible depuis le statut " + po.getStatus()
+                            + " (CONFIRMED requis)");
+        }
+
+        // Force gate: only OWNER or STOCK_ADMIN
+        if (force) {
+            boolean canForce = Boolean.TRUE.equals(me.getIsOwner())
+                    || hasPermission(auth, "STOCK_ADMIN");
+            if (!canForce) {
+                throw new BusinessRuleException("FORBIDDEN",
+                        "Forçage de clôture réservé au gérant ou à l'administrateur stock");
+            }
+        } else {
+            // Default: all lines must be MATCHED
+            List<BcLineMatchRow> matchRows;
+            try {
+                matchRows = matchForBc(auth, bcId);
+            } catch (Exception e) {
+                throw new BusinessRuleException("BC_MATCH_CHECK_FAILED",
+                        "Vérification du rapprochement impossible — " + e.getMessage());
+            }
+            List<String> unmatched = new ArrayList<>();
+            for (BcLineMatchRow row : matchRows) {
+                if (!"MATCHED".equals(row.status())) {
+                    unmatched.add(row.itemName() + " : " + row.status());
+                }
+            }
+            if (!unmatched.isEmpty()) {
+                throw new BusinessRuleException("BC_NOT_FULLY_MATCHED",
+                        unmatched.size() + " ligne(s) non conforme(s) — "
+                                + String.join(", ", unmatched));
+            }
+        }
+
+        String reason = req != null && req.reason() != null ? req.reason().trim() : null;
+        po.setStatus(PurchaseOrderStatus.CLOSED);
+        po.setUpdatedAt(Instant.now());
+        pos.save(po);
+        audit.log("STOCK_BC_CLOSED", "purchase_order", po.getId(),
+                "{\"force\":" + force
+                + ",\"reason\":" + jsonOrNull(reason) + "}");
+        return toBcResponse(po, projectName(po.getProjectId()), supplierName(po), loadLines(po), 0);
+    }
+
+    // ══════════════════════════════════════════════════════════════
     //  DOCUMENT LINK — POST /api/purchase-orders/{id}/documents
     // ══════════════════════════════════════════════════════════════
 

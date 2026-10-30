@@ -1,6 +1,7 @@
 import { Component, OnInit, computed, inject, signal } from '@angular/core';
 import { Router, RouterLink, ActivatedRoute } from '@angular/router';
 import { ButtonModule } from 'primeng/button';
+import { DialogModule } from 'primeng/dialog';
 import { MessageService } from 'primeng/api';
 import { PurchaseService } from '@app/core/services/purchase.service';
 import { AuthService } from '@app/core/auth.service';
@@ -10,7 +11,7 @@ import { PurchaseOrder, bcStatusVisual } from '@app/core/models/stock.model';
 @Component({
   selector: 'app-bc-detail',
   standalone: true,
-  imports: [RouterLink, ButtonModule],
+  imports: [RouterLink, ButtonModule, DialogModule],
   template: `
     <section class="bc-detail">
       @if (bc()) {
@@ -44,6 +45,7 @@ import { PurchaseOrder, bcStatusVisual } from '@app/core/models/stock.model';
             }
             @if (bc()?.status === 'CONFIRMED' && canMove()) {
               <button pButton label="Réceptionner (BL)" icon="pi pi-truck" severity="info" [routerLink]="'/stock/receptions/new?bcId=' + bc()?.id"></button>
+              <button pButton label="Clôturer la commande" icon="pi pi-lock" severity="warn" (click)="closeVisible.set(true)"></button>
               <button pButton label="Annuler" icon="pi pi-times" severity="danger" [text]="true" (click)="cancel()"></button>
             }
           </div>
@@ -51,6 +53,18 @@ import { PurchaseOrder, bcStatusVisual } from '@app/core/models/stock.model';
       } @else if (loading()) {
         <div class="loading"><i class="pi pi-spin pi-spinner"></i> Chargement…</div>
       }
+      <p-dialog header="Clôturer la commande" [(visible)]="closeVisible" [modal]="true" [style]="{ width: '420px' }">
+        <div class="close-hint">
+          <i class="pi pi-info-circle"></i>
+          Cette action est définitive. La commande sera marquée comme clôturée.
+          <br><br>
+          <small>Tous les lignes doivent être conformes (MATCHED). Sinon, la clôture sera refusée.</small>
+        </div>
+        <ng-template pTemplate="footer">
+          <p-button label="Annuler" [text]="true" (onClick)="closeVisible.set(false)" />
+          <p-button label="Clôturer" icon="pi pi-lock" severity="warn" [loading]="closing()" (onClick)="confirmClose()" />
+        </ng-template>
+      </p-dialog>
     </section>
   `,
   styles: [`.bc-detail { max-width: 800px; }
@@ -74,6 +88,9 @@ import { PurchaseOrder, bcStatusVisual } from '@app/core/models/stock.model';
     .actions { display: flex; gap: 8px; border-top: 1px solid #e2e8f0; padding-top: 16px; }
     .chip { display: inline-flex; align-items: center; gap: 5px; padding: 3px 10px; border-radius: 999px; font-size: 12px; font-weight: 700; background: var(--s); color: var(--c); }
     .loading { text-align: center; padding: 40px; color: #64748b; }
+    .close-hint { font-size: 14px; color: #475569; line-height: 1.5; }
+    .close-hint i { color: #d97706; margin-right: 4px; }
+    .close-hint small { color: #94a3b8; }
   `]
 })
 export class BcDetailComponent implements OnInit {
@@ -86,6 +103,7 @@ export class BcDetailComponent implements OnInit {
   bc = signal<PurchaseOrder | null>(null);
   loading = signal(true);
   canMove = computed(() => this.auth.can(PERM.STOCK_MOVE) || !!this.auth.me()?.isOwner);
+  closeVisible = signal(false);
   sv = bcStatusVisual;
 
   ngOnInit(): void {
@@ -96,6 +114,21 @@ export class BcDetailComponent implements OnInit {
   confirm(): void {
     const bc = this.bc(); if (!bc) return;
     this.purchase.confirmBc(bc.id).subscribe(updated => { if (updated) { this.bc.set(updated); this.msgs.add({ severity: 'success', summary: 'BC confirmé' }); } });
+  }
+
+  closing = signal(false);
+
+  confirmClose(): void {
+    const bc = this.bc(); if (!bc) return;
+    this.closing.set(true);
+    this.purchase.closeBc(bc.id).subscribe(updated => {
+      this.closing.set(false);
+      this.closeVisible.set(false);
+      if (updated) {
+        this.bc.set(updated);
+        this.msgs.add({ severity: 'success', summary: 'Commande clôturée', detail: 'Le bon de commande est maintenant clos.' });
+      }
+    });
   }
 
   cancel(): void {

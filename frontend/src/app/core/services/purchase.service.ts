@@ -90,6 +90,16 @@ export class PurchaseService {
     );
   }
 
+  /** Part 4.3 — Close a CONFIRMED BC when all lines MATCHED. Optional force (OWNER/STOCK_ADMIN). */
+  closeBc(id: string, force?: boolean, reason?: string): Observable<PurchaseOrder | null> {
+    let params = new HttpParams();
+    if (force) params = params.set('force', 'true');
+    return this.http.post<AnyRaw>(`/api/purchase-orders/${id}/close`, { reason: reason ?? null }, { params }).pipe(
+      map(raw => mapPurchaseOrder(raw)),
+      catchError(err => { this.toastError(err, 'Clôture impossible'); return of(null); })
+    );
+  }
+
   addBcLine(bcId: string, body: any): Observable<PurchaseOrderLine | null> {
     return this.http.post<AnyRaw>(`/api/purchase-orders/${bcId}/lines`, body).pipe(
       map(raw => mapPurchaseOrderLine(raw)),
