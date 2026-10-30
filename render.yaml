@@ -1,10 +1,7 @@
-# Render Blueprint — auto-configures the backend service
 services:
   - type: web
     name: hydra-api
     env: docker
-    dockerfilePath: ./backend/Dockerfile
-    dockerContext: ./backend
     healthCheckPath: /health
     autoDeploy: true
     envVars:
@@ -22,7 +19,5 @@ services:
         value: local
       - key: HYDRA_STORAGE_ROOT
         value: /opt/data/files
-      - key: SPRING_PROFILES_ACTIVE
-        value: prod
       - key: JAVA_OPTS
         value: "-Xmx512m -Xss256k"
