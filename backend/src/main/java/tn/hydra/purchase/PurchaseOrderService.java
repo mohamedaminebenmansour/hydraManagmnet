@@ -116,7 +116,8 @@ public class PurchaseOrderService {
     public record BcLineMatchRow(UUID bcLineId, UUID bcId, String bcReference,
                                   UUID itemId, String itemName, String uom,
                                   java.math.BigDecimal qtyOrdered, java.math.BigDecimal qtyReceived,
-                                  java.math.BigDecimal qtyInStockMoves, String status) {}
+                                  java.math.BigDecimal qtyInStockMoves,
+                                  java.math.BigDecimal qtyInvoiced, String status) {}
     public record MatchPage(List<BcLineMatchRow> items, long total, int page, int size) {}
 
     // ══════════════════════════════════════════════════════════════
@@ -479,7 +480,8 @@ public class PurchaseOrderService {
             "select pol.id as bc_line_id, pol.purchase_order_id as bc_id, po.reference as bc_reference, " +
             "pol.item_id, i.name as item_name, i.uom, pol.qty_ordered, " +
             "coalesce(sum(bll.qty_received), 0) as qty_received, " +
-            "coalesce((select sum(sm.qty) from stock_move sm where sm.bc_line_id = pol.id and sm.move_type = 'IN'), 0) as qty_in_stock_moves " +
+            "coalesce((select sum(sm.qty) from stock_move sm where sm.bc_line_id = pol.id and sm.move_type = 'IN'), 0) as qty_in_stock_moves, " +
+            "coalesce((select sum(fl.qty) from facture_line fl join facture f on f.id = fl.facture_id where fl.bc_line_id = pol.id and f.org_id = pol.org_id and f.status = 'VALIDATED'), 0) as qty_invoiced " +
             "from purchase_order_line pol " +
             "join purchase_order po on po.id = pol.purchase_order_id " +
             "join stock_item i on i.id = pol.item_id " +
@@ -502,6 +504,7 @@ public class PurchaseOrderService {
             java.math.BigDecimal qtyOrdered = (java.math.BigDecimal) r.get("qty_ordered");
             java.math.BigDecimal qtyReceived = (java.math.BigDecimal) r.get("qty_received");
             java.math.BigDecimal qtyInStock = (java.math.BigDecimal) r.get("qty_in_stock_moves");
+            java.math.BigDecimal qtyInvoiced = (java.math.BigDecimal) r.get("qty_invoiced");
             return new BcLineMatchRow(
                     (UUID) r.get("bc_line_id"),
                     (UUID) r.get("bc_id"),
@@ -509,8 +512,8 @@ public class PurchaseOrderService {
                     (UUID) r.get("item_id"),
                     (String) r.get("item_name"),
                     (String) r.get("uom"),
-                    qtyOrdered, qtyReceived, qtyInStock,
-                    deriveMatchStatus(qtyOrdered, qtyReceived, qtyInStock));
+                    qtyOrdered, qtyReceived, qtyInStock, qtyInvoiced,
+                    deriveMatchStatus(qtyOrdered, qtyReceived, qtyInStock, qtyInvoiced));
         }).toList();
 
         StringBuilder csql = new StringBuilder("select count(*) from purchase_order_line pol where pol.org_id = ? ");
@@ -535,7 +538,8 @@ public class PurchaseOrderService {
             "select pol.id as bc_line_id, pol.purchase_order_id as bc_id, po.reference as bc_reference, " +
             "pol.item_id, i.name as item_name, i.uom, pol.qty_ordered, " +
             "coalesce(sum(bll.qty_received), 0) as qty_received, " +
-            "coalesce((select sum(sm.qty) from stock_move sm where sm.bc_line_id = pol.id and sm.move_type = 'IN'), 0) as qty_in_stock_moves " +
+            "coalesce((select sum(sm.qty) from stock_move sm where sm.bc_line_id = pol.id and sm.move_type = 'IN'), 0) as qty_in_stock_moves, " +
+            "coalesce((select sum(fl.qty) from facture_line fl join facture f on f.id = fl.facture_id where fl.bc_line_id = pol.id and f.org_id = pol.org_id and f.status = 'VALIDATED'), 0) as qty_invoiced " +
             "from purchase_order_line pol " +
             "join purchase_order po on po.id = pol.purchase_order_id " +
             "join stock_item i on i.id = pol.item_id " +
@@ -550,6 +554,7 @@ public class PurchaseOrderService {
             java.math.BigDecimal qtyOrdered = (java.math.BigDecimal) r.get("qty_ordered");
             java.math.BigDecimal qtyReceived = (java.math.BigDecimal) r.get("qty_received");
             java.math.BigDecimal qtyInStock = (java.math.BigDecimal) r.get("qty_in_stock_moves");
+            java.math.BigDecimal qtyInvoiced = (java.math.BigDecimal) r.get("qty_invoiced");
             return new BcLineMatchRow(
                     (UUID) r.get("bc_line_id"),
                     (UUID) r.get("bc_id"),
@@ -557,19 +562,46 @@ public class PurchaseOrderService {
                     (UUID) r.get("item_id"),
                     (String) r.get("item_name"),
                     (String) r.get("uom"),
-                    qtyOrdered, qtyReceived, qtyInStock,
-                    deriveMatchStatus(qtyOrdered, qtyReceived, qtyInStock));
+                    qtyOrdered, qtyReceived, qtyInStock, qtyInvoiced,
+                    deriveMatchStatus(qtyOrdered, qtyReceived, qtyInStock, qtyInvoiced));
         }).toList();
     }
 
-    private String deriveMatchStatus(java.math.BigDecimal qtyOrdered, java.math.BigDecimal qtyReceived, java.math.BigDecimal qtyInStock) {
+    /**
+     * Derive the match status from 4 quantities:
+     *   qtyOrdered     — BC line
+     *   qtyReceived    — POSTED BLs
+     *   qtyInStock     — stock_move IN with bc_line_id
+     *   qtyInvoiced    — VALIDATED facture lines with bc_line_id
+     *
+     * Status priority (checked in order):
+     *   1. MISSING_BL       — no BL received (qtyReceived == 0)
+     *   2. MISSING_FACTURE   — received but no invoice (qtyInvoiced == 0)
+     *   3. OVER_INVOICE      — invoiced > ordered (alert; soft, no block)
+     *   4. PARTIAL_RECEIVE   — received < ordered
+     *   5. PARTIAL_INVOICE   — received >= ordered but invoiced < ordered
+     *   6. QTY_MISMATCH      — stock < received (goods received but consumed/missing)
+     *   7. MATCHED           — ordered ≈ received ≈ invoiced ≈ in_stock (tolerance 0 for v1)
+     */
+    private String deriveMatchStatus(java.math.BigDecimal qtyOrdered, java.math.BigDecimal qtyReceived,
+                                      java.math.BigDecimal qtyInStock, java.math.BigDecimal qtyInvoiced) {
         if (qtyReceived == null) qtyReceived = java.math.BigDecimal.ZERO;
         if (qtyInStock == null) qtyInStock = java.math.BigDecimal.ZERO;
+        if (qtyInvoiced == null) qtyInvoiced = java.math.BigDecimal.ZERO;
+
+        // 1. No BL at all
         if (qtyReceived.compareTo(java.math.BigDecimal.ZERO) == 0) return "MISSING_BL";
-        if (qtyReceived.compareTo(qtyOrdered) > 0) return "OVER";
-        if (qtyReceived.compareTo(qtyOrdered) < 0) return "PARTIAL";
-        if (qtyInStock.compareTo(qtyOrdered) >= 0) return "MATCHED";
+        // 2. Received but no invoice
+        if (qtyInvoiced.compareTo(java.math.BigDecimal.ZERO) == 0) return "MISSING_FACTURE";
+        // 3. Over-invoice (invoiced > ordered) — alert, soft
+        if (qtyInvoiced.compareTo(qtyOrdered) > 0) return "OVER_INVOICE";
+        // 4. Partial receive (received < ordered)
+        if (qtyReceived.compareTo(qtyOrdered) < 0) return "PARTIAL_RECEIVE";
+        // 5. Partial invoice (received >= ordered but invoiced < ordered)
+        if (qtyInvoiced.compareTo(qtyOrdered) < 0) return "PARTIAL_INVOICE";
+        // 6. Stock mismatch (received ok + invoiced ok, but stock < received)
         if (qtyInStock.compareTo(qtyReceived) < 0) return "QTY_MISMATCH";
+        // 7. All aligned
         return "MATCHED";
     }
 
