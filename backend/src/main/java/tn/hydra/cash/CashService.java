@@ -135,7 +135,8 @@ public class CashService {
                                     String varianceReason, UUID documentId,
                                     // V26 enriched fields — Tunisian état de caisse (all nullable)
                                     String paymentMode, String paymentRef,
-                                    String voucherNo, String nature, String invoiceRef) {}
+                                    String voucherNo, String nature, String invoiceRef,
+                                    UUID bcId, UUID factureId) {}
 
     /**
      * Richer movement response — includes the human-readable names of the
@@ -162,7 +163,8 @@ public class CashService {
             String paymentMode, String paymentRef,
             String voucherNo, String nature, String invoiceRef,
             // V28 (TASK 6) — void request flag (finance asks, owner voids)
-            Instant voidRequestedAt, String voidRequestReason) {}
+            Instant voidRequestedAt, String voidRequestReason,
+            UUID bcId, String bcReference, UUID factureId, String factureReference) {}
 
     /** One event in the movement timeline. */
     public record MovementTimelineEvent(
@@ -224,7 +226,7 @@ public class CashService {
                                          String varianceReason,
                                          String paymentMode, String paymentRef,
                                          String voucherNo, String nature, String invoiceRef,
-                                         UUID bcId) {}
+                                         UUID bcId, UUID factureId) {}
 
     /**
      * Update DRAFT movement. Same shape as create minus processInstanceId
@@ -585,6 +587,16 @@ public class CashService {
             requireProjectAccess(me, resolvedProjectId);
         }
 
+        // Part 4.1 — IDOR validation for commercial links
+        if (req.bcId() != null) {
+            validateCommercialLink(req.bcId(), me.getOrgId(), resolvedProjectId,
+                    "purchase_order", "PAYMENT_BC_PROJECT_MISMATCH");
+        }
+        if (req.factureId() != null) {
+            validateCommercialLink(req.factureId(), me.getOrgId(), resolvedProjectId,
+                    "facture", "PAYMENT_FACTURE_PROJECT_MISMATCH");
+        }
+
         UUID id = UUID.randomUUID();
         jdbc.update("""
                 insert into cash_movement
@@ -592,10 +604,12 @@ public class CashService {
                    from_pot_id, to_pot_id, project_id, party_id, label, note,
                    claimed_amount, assessed_amount, variance_reason,
                    payment_mode, payment_ref, voucher_no, nature, invoice_ref,
+                   bc_id, facture_id,
                    status, process_instance_id, created_by, created_at)
                 values (?, ?, ?, ?, 'TND', ?, ?, ?, ?, ?, ?, ?,
                         ?, ?, ?,
                         ?, ?, ?, ?, ?,
+                        ?, ?,
                         'DRAFT', ?, ?, now())
                 """, id, me.getOrgId(), normalizeType(req.movementType()), effectiveAmount,
                 Date.valueOf(req.movementDate()),
@@ -603,6 +617,7 @@ public class CashService {
                 blankToNull(req.label()), blankToNull(req.note()),
                 claimed, assessed, varianceReason,
                 paymentMode, paymentRef, voucherNo, nature, invoiceRef,
+                req.bcId(), req.factureId(),
                 req.processInstanceId(),
                 me.getId());
 
@@ -726,7 +741,9 @@ public class CashService {
                        m.posted_by,   pbu.full_name as posted_by_name,  m.posted_at,
                        m.voided_by,   vu.full_name as voided_by_name,   m.voided_at,
                        m.void_reason, m.void_requested_at, m.void_request_reason,
-                       m.payment_mode, m.payment_ref, m.voucher_no, m.nature, m.invoice_ref
+                       m.payment_mode, m.payment_ref, m.voucher_no, m.nature, m.invoice_ref,
+                       m.bc_id, bc.reference as bc_reference,
+                       m.facture_id, fac.reference as facture_reference
                 from cash_movement m
                 left join cash_pot fp  on fp.id = m.from_pot_id
                 left join cash_pot tp  on tp.id = m.to_pot_id
@@ -741,6 +758,8 @@ public class CashService {
                     order by r.created_at desc
                     limit 1
                 ) drv on m.document_id is not null
+                left join purchase_order bc on bc.id = m.bc_id
+                left join facture fac on fac.id = m.facture_id
                 where m.id = ? and m.org_id = ?
                 """, id, me.getOrgId());
         if (rows.isEmpty()) {
@@ -1099,7 +1118,9 @@ public class CashService {
                        m.posted_by,   pbu.full_name as posted_by_name,  m.posted_at,
                        m.voided_by,   vu.full_name as voided_by_name,   m.voided_at,
                        m.void_reason, m.void_requested_at, m.void_request_reason,
-                       m.payment_mode, m.payment_ref, m.voucher_no, m.nature, m.invoice_ref
+                       m.payment_mode, m.payment_ref, m.voucher_no, m.nature, m.invoice_ref,
+                       m.bc_id, bc.reference as bc_reference,
+                       m.facture_id, fac.reference as facture_reference
                 from cash_movement m
                 left join cash_pot fp  on fp.id = m.from_pot_id
                 left join cash_pot tp  on tp.id = m.to_pot_id
@@ -1108,6 +1129,8 @@ public class CashService {
                 left join app_user pbu on pbu.id = m.posted_by
                 left join app_user vu  on vu.id  = m.voided_by
                 left join document d   on d.id  = m.document_id
+                left join purchase_order bc on bc.id = m.bc_id
+                left join facture fac on fac.id = m.facture_id
                 where m.org_id = ?
                 """);
         List<Object> args = new ArrayList<>();
@@ -1781,7 +1804,8 @@ public class CashService {
                        process_instance_id, created_by, created_at, posted_by, posted_at,
                        voided_by, voided_at, void_reason,
                        claimed_amount, assessed_amount, variance_reason, document_id,
-                       payment_mode, payment_ref, voucher_no, nature, invoice_ref
+                       payment_mode, payment_ref, voucher_no, nature, invoice_ref,
+                       bc_id, facture_id
                 from cash_movement
                 where id = ? and org_id = ?
                 for update
@@ -1794,6 +1818,20 @@ public class CashService {
     }
 
     /** Fetch one movement row without lock (for reads). */
+    /** Part 4.1 — Validate commercial link belongs to org + project matches. */
+    private void validateCommercialLink(UUID linkId, UUID orgId, UUID movementProjectId,
+                                          String tableName, String errorCode) {
+        Map<String, Object> row = jdbc.queryForMap(
+                "select project_id from " + tableName + " where id = ? and org_id = ?",
+                linkId, orgId);
+        UUID linkProjectId = (UUID) row.get("project_id");
+        if (movementProjectId != null && linkProjectId != null
+                && !movementProjectId.equals(linkProjectId)) {
+            throw new BusinessRuleException(errorCode,
+                    "Le " + tableName + " n'appartient pas au même projet que le paiement");
+        }
+    }
+
     private Map<String, Object> fetchMovementForRead(UUID id, UUID orgId) {
         List<Map<String, Object>> rows = jdbc.queryForList("""
                 select id, org_id, movement_type, amount, currency, movement_date,
@@ -1801,7 +1839,8 @@ public class CashService {
                        process_instance_id, created_by, created_at, posted_by, posted_at,
                        voided_by, voided_at, void_reason,
                        claimed_amount, assessed_amount, variance_reason, document_id,
-                       payment_mode, payment_ref, voucher_no, nature, invoice_ref
+                       payment_mode, payment_ref, voucher_no, nature, invoice_ref,
+                       bc_id, facture_id
                 from cash_movement
                 where id = ? and org_id = ?
                 """, id, orgId);
@@ -1857,7 +1896,9 @@ public class CashService {
                 (String) row.get("payment_ref"),
                 (String) row.get("voucher_no"),
                 (String) row.get("nature"),
-                (String) row.get("invoice_ref")
+                (String) row.get("invoice_ref"),
+                (UUID) row.get("bc_id"),
+                (UUID) row.get("facture_id")
         );
     }
 
@@ -1909,7 +1950,11 @@ public class CashService {
                 (String) row.get("invoice_ref"),
                 // V28 (TASK 6) — void request flag
                 toInstant(row.get("void_requested_at")),
-                (String) row.get("void_request_reason")
+                (String) row.get("void_request_reason"),
+                (UUID) row.get("bc_id"),
+                (String) row.get("bc_reference"),
+                (UUID) row.get("facture_id"),
+                (String) row.get("facture_reference")
         );
     }
 

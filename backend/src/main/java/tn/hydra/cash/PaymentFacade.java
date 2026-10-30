@@ -103,7 +103,8 @@ public class PaymentFacade {
             String voucherNo,
             String nature,
             String invoiceRef,
-            UUID bcId
+            UUID bcId,
+            UUID factureId
     ) {}
 
     /**
@@ -162,7 +163,8 @@ public class PaymentFacade {
                 req.voucherNo(),
                 req.nature(),
                 req.invoiceRef(),
-                req.bcId()
+                req.bcId(),
+                req.factureId()
         );
         CashService.MovementResponse movement = cashService.createMovement(auth, draftReq);
 
