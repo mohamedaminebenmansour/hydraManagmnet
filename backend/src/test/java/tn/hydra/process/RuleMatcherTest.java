@@ -3,6 +3,7 @@ package tn.hydra.process;
 import org.junit.jupiter.api.Test;
 
 import java.math.BigDecimal;
+import java.time.Instant;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -31,15 +32,21 @@ class RuleMatcherTest {
 
     // ── builders ──────────────────────────────────────────────────
 
-    /** Enabled candidate with conditions, no override. */
+    /** Enabled candidate with conditions, no override, system-scope, no created_at. */
     private static RuleMatcher.RuleCandidate cand(UUID id, int priority, Map<String, Object> conditions) {
-        return new RuleMatcher.RuleCandidate(id, priority, conditions, null, true);
+        return new RuleMatcher.RuleCandidate(id, priority, conditions, null, true, false, null);
     }
 
-    /** Fully-specified candidate. */
+    /** Fully-specified candidate (system-scope, no created_at by default). */
     private static RuleMatcher.RuleCandidate cand(UUID id, int priority, Map<String, Object> conditions,
                                                   BigDecimal override, boolean enabled) {
-        return new RuleMatcher.RuleCandidate(id, priority, conditions, override, enabled);
+        return new RuleMatcher.RuleCandidate(id, priority, conditions, override, enabled, false, null);
+    }
+
+    /** Candidate with explicit org-scope + created_at (for tie-break tests). */
+    private static RuleMatcher.RuleCandidate cand(UUID id, int priority, Map<String, Object> conditions,
+                                                  boolean orgScoped, Instant createdAt) {
+        return new RuleMatcher.RuleCandidate(id, priority, conditions, null, true, orgScoped, createdAt);
     }
 
     private static Map<String, Object> cond(Object... kv) {
@@ -255,16 +262,44 @@ class RuleMatcherTest {
     }
 
     @Test
-    void priorityTie_brokenDeterministicallyRegardlessOfListOrder() {
-        // Two matching candidates with the SAME priority -> the same winner is
-        // returned no matter the input order. This is the determinism property
-        // the rule engine relies on (UUID.compareTo is consistent, even though
-        // it uses signed-long comparison internally).
+    void priorityTie_orgScopedBeatsSystemTemplate() {
+        // Same priority -> org-scoped template wins over a system template.
+        UUID org = UUID.randomUUID();
+        UUID system = UUID.randomUUID();
+        Instant now = Instant.now();
+        Optional<UUID> r = RuleMatcher.pick(
+                List.of(cand(system, 100, cond(), false, now),     // system
+                        cand(org, 100, cond(), true, now)),        // org-scoped
+                facts(new BigDecimal("100")));
+        assertThat(r).as("org-scoped template wins on tie").contains(org);
+    }
+
+    @Test
+    void priorityTie_sameScope_olderCreatedAtWins() {
+        // Same priority, both org-scoped -> older created_at wins.
+        UUID older = UUID.randomUUID();
+        UUID newer = UUID.randomUUID();
+        Instant t1 = Instant.parse("2026-01-01T00:00:00Z");
+        Instant t2 = Instant.parse("2026-06-01T00:00:00Z");
+        Optional<UUID> r = RuleMatcher.pick(
+                List.of(cand(newer, 100, cond(), true, t2),
+                        cand(older, 100, cond(), true, t1)),
+                facts(new BigDecimal("100")));
+        assertThat(r).as("older created_at wins on tie").contains(older);
+    }
+
+    @Test
+    void priorityTie_isDeterministicRegardlessOfListOrder() {
+        // Same priority + same scope + same created_at -> templateId final
+        // tie-break; the winner is stable regardless of input order.
         UUID x = UUID.randomUUID();
         UUID y = UUID.randomUUID();
+        Instant t = Instant.parse("2026-01-01T00:00:00Z");
         RuleMatcher.PaymentFacts f = facts(new BigDecimal("100"));
-        Optional<UUID> r1 = RuleMatcher.pick(List.of(cand(x, 100, cond()), cand(y, 100, cond())), f);
-        Optional<UUID> r2 = RuleMatcher.pick(List.of(cand(y, 100, cond()), cand(x, 100, cond())), f);
+        Optional<UUID> r1 = RuleMatcher.pick(
+                List.of(cand(x, 100, cond(), true, t), cand(y, 100, cond(), true, t)), f);
+        Optional<UUID> r2 = RuleMatcher.pick(
+                List.of(cand(y, 100, cond(), true, t), cand(x, 100, cond(), true, t)), f);
         assertThat(r1).isPresent();
         assertThat(r2).isPresent();
         assertThat(r1).isEqualTo(r2); // same winner regardless of order

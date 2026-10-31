@@ -209,7 +209,10 @@ public class ProcessService {
             // subject is a CASH_MOVEMENT — filled via LEFT JOIN, null otherwise.
             // Lets "Mes tâches" show "Paiement — 2 500,000 TND" without N+1.
             String subjectLabel,
-            java.math.BigDecimal subjectAmount) {}
+            java.math.BigDecimal subjectAmount,
+            // due_days SLA: true when a PENDING step started more than due_days
+            // days ago (null due_days => never late).
+            boolean late) {}
 
     /** Summary row for the project chantier screen. */
     public record ProcessInstanceSummary(
@@ -503,13 +506,12 @@ public class ProcessService {
         UUID orgId = me.getOrgId();
         if (orgId == null) throw new IllegalStateException("User has no org");
 
-        // (1) Project membership
-        requireProjectAccess(me, cmd.projectId());
-
-        // (2) Resolve active template — prefer org-scoped, fall back to system (org_id IS NULL)
+        // Resolve active template by key — prefer org-scoped, fall back to system.
+        // Then delegate to startByTemplateId so the enablement / RUNNING / insert
+        // logic lives in exactly one place (no duplication).
         List<Map<String, Object>> tmplRows = jdbc.queryForList(
                 """
-                select id, key, name, description from process_template
+                select id from process_template
                 where key = ? and active = true
                   and (org_id = ? or org_id is null)
                 order by (org_id = ?) desc nulls last
@@ -521,19 +523,58 @@ public class ProcessService {
                     "Template introuvable ou inactif: " + cmd.templateKey());
         }
         UUID templateId = (UUID) tmplRows.get(0).get("id");
-        String templateName = (String) tmplRows.get(0).get("name");
+        return startByTemplateId(auth, cmd.projectId(), templateId, cmd.subjectType(), cmd.subjectId());
+    }
 
-        // (3) Project enablement check
+    /**
+     * Start a process from an already-resolved template id. Performs the SAME
+     * checks as {@link #start}: project membership, template active + visible to
+     * the org, per-chantier enablement whitelist (no rows => all active; any row
+     * => only templates with an enabled = true row), one-RUNNING-per-subject
+     * guard, then inserts the instance + first PENDING step.
+     *
+     * Used by PaymentFacade.submitPayment, which resolves the template via
+     * ApprovalRuleService.findRule and starts by id (no key lookup needed).
+     */
+    @Transactional
+    public StartProcessResponse startByTemplateId(Authentication auth, UUID projectId,
+                                                   UUID templateId, String subjectType, UUID subjectId) {
+        AppUser me = currentUser(auth);
+        UUID orgId = me.getOrgId();
+        if (orgId == null) throw new IllegalStateException("User has no org");
+
+        // (1) Project membership
+        requireProjectAccess(me, projectId);
+
+        // (2) Load template by id (confirm active + visible to the org) + fetch
+        //     key for the response/audit.
+        List<Map<String, Object>> tmplRows = jdbc.queryForList(
+                """
+                select id, key from process_template
+                where id = ? and active = true
+                  and (org_id = ? or org_id is null)
+                """,
+                templateId, orgId);
+        if (tmplRows.isEmpty()) {
+            throw new BadRequestException("TEMPLATE_NOT_FOUND",
+                    "Template introuvable ou inactif: " + templateId);
+        }
+        String templateKey = (String) tmplRows.get(0).get("key");
+
+        // (3) Project enablement check — whitelist: no rows => all active; any
+        //     row => only templates with an enabled = true row are allowed.
+        //     Same rule as ApprovalRuleService.findRule (one meaning for the
+        //     chantier switch).
         Integer ptCount = jdbc.queryForObject(
                 "select count(*) from project_process_template where project_id = ?",
-                Integer.class, cmd.projectId());
+                Integer.class, projectId);
         if (ptCount != null && ptCount > 0) {
             Integer enabledCount = jdbc.queryForObject(
                     """
                     select count(*) from project_process_template
                     where project_id = ? and template_id = ? and enabled = true
                     """,
-                    Integer.class, cmd.projectId(), templateId);
+                    Integer.class, projectId, templateId);
             if (enabledCount == null || enabledCount == 0) {
                 throw new BusinessRuleException("TEMPLATE_NOT_ENABLED_ON_PROJECT",
                         "Ce template n'est pas activé sur ce projet");
@@ -546,7 +587,7 @@ public class ProcessService {
                 select count(*) from process_instance
                 where org_id = ? and subject_type = ? and subject_id = ? and status = 'RUNNING'
                 """,
-                Integer.class, orgId, cmd.subjectType(), cmd.subjectId());
+                Integer.class, orgId, subjectType, subjectId);
         if (running != null && running > 0) {
             throw new BusinessRuleException("PROCESS_ALREADY_RUNNING",
                     "Une instance RUNNING existe déjà pour ce sujet");
@@ -561,12 +602,12 @@ public class ProcessService {
                                              current_step_order, created_by, created_at, updated_at)
                 values (?, ?, ?, ?, ?, ?, 'RUNNING', 1, ?, now(), now())
                 """,
-                instanceId, orgId, cmd.projectId(), templateId,
-                cmd.subjectType(), cmd.subjectId(), me.getId());
+                instanceId, orgId, projectId, templateId,
+                subjectType, subjectId, me.getId());
 
-        // (6) Load ALL template steps up front — TASK 3: collect warnings
-        // for any role that doesn't resolve to a concrete user (the process
-        // still starts; the role-based fallback keeps it alive).
+        // (6) Load ALL template steps up front — collect warnings for any role
+        //     that doesn't resolve to a concrete user (the process still starts;
+        //     the role-based fallback keeps it alive).
         List<Map<String, Object>> allSteps = jdbc.queryForList(
                 """
                 select step_order, step_key, name, assignee_role, requires_attachment
@@ -580,15 +621,15 @@ public class ProcessService {
         for (Map<String, Object> s : allSteps) {
             String role = (String) s.get("assignee_role");
             if (role == null || role.isBlank()) continue;
-            UUID resolved = resolveAssigneeByRole(cmd.projectId(), role);
+            UUID resolved = resolveAssigneeByRole(projectId, role);
             if (resolved == null) {
                 warnings.add("Aucun utilisateur pour le rôle " + role.toUpperCase()
                         + " sur ce projet — étape '" + s.get("name") + "' (rôle seul).");
             }
         }
 
-        // (7) Insert first PENDING step_instance (same as before — only the first
-        //     step is created at start; subsequent steps are created by completeStep).
+        // (7) Insert first PENDING step_instance (only the first step is created
+        //     at start; subsequent steps are created by completeStep).
         if (!allSteps.isEmpty()) {
             Map<String, Object> first = allSteps.get(0);
             int stepOrder = ((Number) first.get("step_order")).intValue();
@@ -598,7 +639,7 @@ public class ProcessService {
             boolean requiresAttachment = Boolean.TRUE.equals(first.get("requires_attachment"));
 
             // Resolve assignee — null is OK; any user with role may still act
-            UUID assigneeUserId = resolveAssigneeByRole(cmd.projectId(), assigneeRole);
+            UUID assigneeUserId = resolveAssigneeByRole(projectId, assigneeRole);
 
             jdbc.update(
                     """
@@ -618,16 +659,14 @@ public class ProcessService {
 
         // (9) Audit
         audit.log("PROCESS_STARTED", "process_instance", instanceId,
-                "{\"templateKey\":\"" + jsonEscape(cmd.templateKey()) +
-                "\",\"subjectType\":\"" + jsonEscape(cmd.subjectType()) +
-                "\",\"subjectId\":\"" + cmd.subjectId() +
-                "\",\"projectId\":\"" + cmd.projectId() + "\"}");
+                "{\"templateKey\":\"" + jsonEscape(templateKey) +
+                "\",\"subjectType\":\"" + jsonEscape(subjectType) +
+                "\",\"subjectId\":\"" + subjectId +
+                "\",\"projectId\":\"" + projectId + "\"}");
 
-        // TASK 3 — return warnings so the caller (PaymentFacade.submitPayment
-        // or the front-end directly) can surface them to the user. The process
-        // is created regardless — soft guardrail, not a hard fail.
-        return new StartProcessResponse(instanceId, "RUNNING", cmd.projectId(),
-                cmd.templateKey(), cmd.subjectType(), cmd.subjectId(), warnings);
+        // Return warnings so the caller can surface them (soft guardrail).
+        return new StartProcessResponse(instanceId, "RUNNING", projectId,
+                templateKey, subjectType, subjectId, warnings);
     }
 
     // ═══════════════════════════════════════════════════════════════
@@ -646,9 +685,12 @@ public class ProcessService {
                        psi.step_key, psi.assignee_user_id, psi.assignee_role,
                        psi.requires_attachment,
                        pi.template_id, pi.project_id, pi.status as instance_status,
-                       pi.subject_type, pi.subject_id, pi.org_id
+                       pi.subject_type, pi.subject_id, pi.org_id,
+                       coalesce(pts.approval_mode, 'ANY') as approval_mode
                 from process_step_instance psi
                 join process_instance pi on pi.id = psi.instance_id
+                left join process_template_step pts
+                       on pts.template_id = pi.template_id and pts.step_order = psi.step_order
                 where psi.id = ? and psi.instance_id = ?
                 """,
                 stepInstanceId, instanceId);
@@ -676,6 +718,7 @@ public class ProcessService {
         UUID subjectId = (UUID) step.get("subject_id");
         UUID orgId = (UUID) step.get("org_id");
         String stepKey = (String) step.get("step_key");
+        String approvalMode = (String) step.get("approval_mode");
 
         // Permission
         requireStepAccess(me, stepInstanceId, assigneeUserId, assigneeRole, projectId);
@@ -714,6 +757,68 @@ public class ProcessService {
                     "Cette étape requiert une pièce justificative. " +
                     "Joignez la facture / le bon de livraison sur le mouvement " +
                     "ou téléversez-la ici avant d'approuver.");
+        }
+
+        // ── approval_mode = ALL: record this approver and only flip to DONE when
+        //    every user holding the role on the chantier has approved. The step
+        //    stays PENDING (and the instance stays RUNNING) until the last one.
+        //    Required approvers = project_role_assignee (explicit per-chantier
+        //    mapping) UNION project members holding the business role via
+        //    user_role+role.code. The union is needed because
+        //    project_role_assignee is unique per (project, role) (V27) — at most
+        //    one user — so ALL steps that must require several approvers rely on
+        //    the role-holder set. An empty set (nobody holds the role) degrades
+        //    to single-approval completion (ALL == ANY).
+        if ("ALL".equals(approvalMode)) {
+            jdbc.update("""
+                    insert into process_step_approval
+                      (step_instance_id, user_id, org_id, comment)
+                    values (?, ?, ?, ?)
+                    on conflict (step_instance_id, user_id) do nothing
+                    """, stepInstanceId, me.getId(), orgId, req.comment());
+
+            List<UUID> required = jdbc.queryForList("""
+                    select user_id from project_role_assignee
+                    where project_id = ? and upper(role_code) = upper(?)
+                    union
+                    select pm.user_id from project_member pm
+                    join user_role ur on ur.user_id = pm.user_id
+                    join role r on r.id = ur.role_id
+                    where pm.project_id = ? and r.code = ?
+                    """, UUID.class, projectId, assigneeRole, projectId, assigneeRole);
+
+            if (!required.isEmpty()) {
+                Integer approvedByRequired = jdbc.queryForObject("""
+                        select count(distinct psa.user_id) from process_step_approval psa
+                        where psa.step_instance_id = ?
+                          and psa.org_id = ?
+                          and psa.user_id in (
+                              select user_id from project_role_assignee
+                              where project_id = ? and upper(role_code) = upper(?)
+                              union
+                              select pm.user_id from project_member pm
+                              join user_role ur on ur.user_id = pm.user_id
+                              join role r on r.id = ur.role_id
+                              where pm.project_id = ? and r.code = ?
+                          )
+                        """, Integer.class, stepInstanceId, orgId,
+                        projectId, assigneeRole, projectId, assigneeRole);
+                int approved = approvedByRequired == null ? 0 : approvedByRequired;
+                if (approved < required.size()) {
+                    // Not everyone yet — step stays PENDING, instance stays RUNNING.
+                    jdbc.update("update process_step_instance set comment = ? where id = ?",
+                            req.comment(), stepInstanceId);
+                    audit.log("STEP_PARTIAL_APPROVAL", "process_step_instance", stepInstanceId,
+                            "{\"instanceId\":\"" + instanceId +
+                            "\",\"stepKey\":\"" + jsonEscape(stepKey) +
+                            "\",\"approver\":\"" + me.getId() + "\"" +
+                            ",\"approvedCount\":" + approved +
+                            ",\"requiredCount\":" + required.size() + "}");
+                    return new StepResult(stepInstanceId, "PENDING");
+                }
+                // All required approvers have approved -> fall through to DONE.
+            }
+            // required empty -> degenerate (ALL == ANY): fall through to DONE.
         }
 
         // Mark step DONE
@@ -1322,11 +1427,15 @@ public class ProcessService {
                        psi.assignee_role, psi.assignee_user_id,
                        u.full_name as assignee_name,
                        psi.requires_attachment, psi.started_at,
-                       cm.label as subject_label, cm.amount as subject_amount
+                       cm.label as subject_label, cm.amount as subject_amount,
+                       (psi.started_at is not null and pts.due_days is not null
+                            and psi.started_at < now() - (pts.due_days * interval '1 day')) as late
                 from process_step_instance psi
                 join process_instance pi on pi.id = psi.instance_id
                 join project p on p.id = pi.project_id
                 join process_template pt on pt.id = pi.template_id
+                left join process_template_step pts
+                       on pts.template_id = pi.template_id and pts.step_order = psi.step_order
                 left join app_user u on u.id = psi.assignee_user_id
                 left join cash_movement cm
                        on pi.subject_type = 'CASH_MOVEMENT' and cm.id = pi.subject_id
@@ -1366,7 +1475,8 @@ public class ProcessService {
                         rs.getBoolean("requires_attachment"),
                         toInstant(rs.getTimestamp("started_at")),
                         rs.getString("subject_label"),
-                        rs.getBigDecimal("subject_amount")
+                        rs.getBigDecimal("subject_amount"),
+                        rs.getBoolean("late")
                 ),
                 orgId, isOwner, me.getId(), me.getId());
     }

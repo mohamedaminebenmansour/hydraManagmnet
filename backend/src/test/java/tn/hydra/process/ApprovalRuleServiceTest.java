@@ -109,19 +109,47 @@ class ApprovalRuleServiceTest {
 
     // ══════════════════════════════════════════════════════════════
     //  Scenario A — disabled template ignored even with better priority
+    //  (whitelist: the chantier has rows, so only enabled-row templates count)
     // ══════════════════════════════════════════════════════════════
     @Test
     void findRule_templateDisabledForProject_isIgnored_evenWithBetterPriority() {
-        // betterA has the better (lower) priority but is disabled on the chantier.
+        // betterA has the better (lower) priority but is disabled on the chantier;
+        // worseB is explicitly enabled via its own row. Under the whitelist the
+        // system PAYMENT_APPROVAL (no row) is also excluded, so worseB wins.
         UUID betterA = insertCashPaymentTemplate(10, "{}");
         UUID worseB  = insertCashPaymentTemplate(100, "{}");
         setProjectTemplate(betterA, false, null); // disable A for this chantier
+        setProjectTemplate(worseB, true, null);   // enable B for this chantier
 
         Optional<UUID> picked = approvalRuleService.findRule(
                 orgId, "CASH_PAYMENT", facts(new BigDecimal("500")));
 
         assertThat(picked).as("the non-disabled template must win").contains(worseB);
         assertThat(picked).isNotEqualTo(betterA);
+    }
+
+    // ══════════════════════════════════════════════════════════════
+    //  Point 0 — whitelist: a chantier with a row enabling another template
+    //  must NOT pick PAYMENT_APPROVAL (which has no row).
+    // ══════════════════════════════════════════════════════════════
+    @Test
+    void findRule_whitelist_excludesPaymentApprovalWhenChantierHasAnyRow() {
+        // PAYMENT_APPROVAL (system, priority 1000) would normally win on
+        // priority against X (priority 2000). But the chantier has ONE row
+        // enabling X, so the whitelist excludes every template without an
+        // enabled row — including PAYMENT_APPROVAL. X wins.
+        UUID paymentApprovalId = jdbc.queryForObject(
+                "select id from process_template where key = 'PAYMENT_APPROVAL' and org_id is null",
+                UUID.class);
+        UUID x = insertCashPaymentTemplate(2000, "{}");
+        setProjectTemplate(x, true, null); // the chantier's only row -> enables X
+
+        Optional<UUID> picked = approvalRuleService.findRule(
+                orgId, "CASH_PAYMENT", facts(new BigDecimal("500")));
+
+        assertThat(picked).as("PAYMENT_APPROVAL is not picked under the whitelist")
+                .isNotEqualTo(paymentApprovalId);
+        assertThat(picked).as("the whitelisted template X is picked").contains(x);
     }
 
     // ══════════════════════════════════════════════════════════════

@@ -4,7 +4,9 @@ import org.springframework.security.core.Authentication;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import tn.hydra.audit.EventLogService;
+import tn.hydra.process.ApprovalRuleService;
 import tn.hydra.process.ProcessService;
+import tn.hydra.process.RuleMatcher;
 import tn.hydra.purchase.PurchaseOrderService;
 import tn.hydra.user.AppUser;
 import tn.hydra.user.AppUserRepository;
@@ -40,6 +42,7 @@ public class PaymentFacade {
 
     private final CashService cashService;
     private final ProcessService processService;
+    private final ApprovalRuleService approvalRuleService;
     private final AppUserRepository users;
     private final EventLogService audit;
     private final PurchaseOrderService purchaseOrders;
@@ -49,11 +52,13 @@ public class PaymentFacade {
 
     public PaymentFacade(CashService cashService,
                          ProcessService processService,
+                         ApprovalRuleService approvalRuleService,
                          AppUserRepository users,
                          EventLogService audit,
                          PurchaseOrderService purchaseOrders) {
         this.cashService = cashService;
         this.processService = processService;
+        this.approvalRuleService = approvalRuleService;
         this.users = users;
         this.audit = audit;
         this.purchaseOrders = purchaseOrders;
@@ -180,14 +185,22 @@ public class PaymentFacade {
                     "Un paiement doit être rattaché à un projet (projectId manquant)");
         }
 
-        // (b) Start the PAYMENT_APPROVAL workflow
-        ProcessService.StartProcessCommand startCmd = new ProcessService.StartProcessCommand(
-                projectId,
-                "PAYMENT_APPROVAL",
-                "CASH_MOVEMENT",                // subject_type — documented contract
-                movement.id()                   // subject_id = movement id
-        );
-        ProcessService.StartProcessResponse started = processService.start(auth, startCmd);
+        // (b) Resolve the approval rule that governs this payment and start it.
+        //     ApprovalRuleService + RuleMatcher pick the template by
+        //     subject_type=CASH_PAYMENT + conditions (amount, nature, payment_mode)
+        //     + per-chantier whitelist; startByTemplateId runs the same checks as
+        //     start() but from an already-resolved id. If no rule matches, never
+        //     start a process — a payment must not exist without an approval flow
+        //     (the OUT movement is posted only when the process reaches COMPLETED,
+        //     via the existing cash hook in completeStep — unchanged).
+        RuleMatcher.PaymentFacts facts = new RuleMatcher.PaymentFacts(
+                projectId, movement.amount(), movement.nature(), movement.paymentMode());
+        UUID templateId = approvalRuleService.findRule(me.getOrgId(), "CASH_PAYMENT", facts)
+                .orElseThrow(() -> new tn.hydra.common.BusinessRuleException(
+                        "NO_APPROVAL_RULE",
+                        "Aucune règle d'approbation ne s'applique à ce paiement sur ce chantier"));
+        ProcessService.StartProcessResponse started = processService.startByTemplateId(
+                auth, projectId, templateId, "CASH_MOVEMENT", movement.id());
 
         // (c) Link the movement to the process instance
         cashService.linkProcessInstance(movement.id(), started.id(), me.getOrgId());
