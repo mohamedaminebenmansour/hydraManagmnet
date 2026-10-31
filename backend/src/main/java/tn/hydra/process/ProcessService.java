@@ -5,19 +5,25 @@ import org.springframework.security.core.Authentication;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import tn.hydra.audit.EventLogService;
+import tn.hydra.cash.MovementNature;
+import tn.hydra.cash.PaymentMode;
 import tn.hydra.common.BusinessRuleException;
 import tn.hydra.exception.BadRequestException;
 import tn.hydra.exception.ResourceNotFoundException;
 import tn.hydra.user.AppUser;
 import tn.hydra.user.AppUserRepository;
+import tools.jackson.databind.ObjectMapper;
 
 import java.sql.Timestamp;
 import java.math.BigDecimal;
+import java.text.DecimalFormat;
+import java.text.DecimalFormatSymbols;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
@@ -243,34 +249,66 @@ public class ProcessService {
     public record TemplateDetail(
             UUID id, String key, String name, UUID orgId, boolean active,
             String description,
-            Instant createdAt, List<TemplateStepView> steps) {
-        /** Backwards-compatible 7-field constructor (description = null). */
+            Instant createdAt, List<TemplateStepView> steps,
+            // Rule-builder fields (V38 columns).
+            String subjectType, Map<String, Object> conditions, Integer priority) {
+        /** Backwards-compatible 7-field constructor (description + rule fields = null). */
         public TemplateDetail(UUID id, String key, String name, UUID orgId, boolean active,
                                Instant createdAt, List<TemplateStepView> steps) {
-            this(id, key, name, orgId, active, null, createdAt, steps);
+            this(id, key, name, orgId, active, null, createdAt, steps, null, null, null);
         }
     }
 
     public record TemplateStepView(
             UUID id, int stepOrder, String stepKey, String name,
-            String assigneeRole, boolean requiresAttachment) {}
+            String assigneeRole, boolean requiresAttachment,
+            // Rule-builder fields (V38 columns).
+            String approvalMode, Integer dueDays) {}
 
     // Template management request records
-    public record CreateTemplateRequest(String key, String name, String description) {
+    public record CreateTemplateRequest(String key, String name, String description,
+                                        String subjectType,
+                                        Map<String, Object> conditions,
+                                        Integer priority) {
         /** Backwards-compatible 2-field constructor. */
-        public CreateTemplateRequest(String key, String name) { this(key, name, null); }
+        public CreateTemplateRequest(String key, String name) { this(key, name, null, null, null, null); }
+        /** Backwards-compatible 3-field constructor. */
+        public CreateTemplateRequest(String key, String name, String description) {
+            this(key, name, description, null, null, null);
+        }
     }
 
-    public record UpdateTemplateRequest(String name, Boolean active, String description) {
+    public record UpdateTemplateRequest(String name, Boolean active, String description,
+                                        String subjectType,
+                                        Map<String, Object> conditions,
+                                        Integer priority) {
         /** Backwards-compatible 2-field constructor. */
-        public UpdateTemplateRequest(String name, Boolean active) { this(name, active, null); }
+        public UpdateTemplateRequest(String name, Boolean active) { this(name, active, null, null, null, null); }
+        /** Backwards-compatible 3-field constructor. */
+        public UpdateTemplateRequest(String name, Boolean active, String description) {
+            this(name, active, description, null, null, null);
+        }
     }
 
     public record CreateStepRequest(int stepOrder, String stepKey, String name,
-                                    String assigneeRole, boolean requiresAttachment) {}
+                                    String assigneeRole, boolean requiresAttachment,
+                                    String approvalMode, Integer dueDays) {
+        /** Backwards-compatible 5-field constructor. */
+        public CreateStepRequest(int stepOrder, String stepKey, String name,
+                                 String assigneeRole, boolean requiresAttachment) {
+            this(stepOrder, stepKey, name, assigneeRole, requiresAttachment, null, null);
+        }
+    }
 
     public record UpdateStepRequest(String name, String assigneeRole,
-                                    boolean requiresAttachment, Integer stepOrder) {}
+                                    boolean requiresAttachment, Integer stepOrder,
+                                    String approvalMode, Integer dueDays) {
+        /** Backwards-compatible 4-field constructor. */
+        public UpdateStepRequest(String name, String assigneeRole,
+                                 boolean requiresAttachment, Integer stepOrder) {
+            this(name, assigneeRole, requiresAttachment, stepOrder, null, null);
+        }
+    }
 
     // Project template assignment
     public record AssignTemplateRequest(String templateKey, boolean enabled,
@@ -322,15 +360,21 @@ public class ProcessService {
     private final AppUserRepository users;
     private final EventLogService audit;
     private final tn.hydra.cash.CashService cashService;  // for auto-post on COMPLETED + handle on REJECTED
+    private final ObjectMapper objectMapper;              // conditions jsonb <-> Map
+    private final ApprovalRuleService approvalRuleService; // for the /test endpoint
 
     public ProcessService(JdbcTemplate jdbc,
                           AppUserRepository users,
                           EventLogService audit,
-                          tn.hydra.cash.CashService cashService) {
+                          tn.hydra.cash.CashService cashService,
+                          ObjectMapper objectMapper,
+                          ApprovalRuleService approvalRuleService) {
         this.jdbc = jdbc;
         this.users = users;
         this.audit = audit;
         this.cashService = cashService;
+        this.objectMapper = objectMapper;
+        this.approvalRuleService = approvalRuleService;
     }
 
     // ═══════════════════════════════════════════════════════════════
@@ -1629,7 +1673,8 @@ public class ProcessService {
 
         List<Map<String, Object>> rows = jdbc.queryForList(
                 """
-                select id, key, name, org_id, active, description, created_at
+                select id, key, name, org_id, active, description, created_at,
+                       subject_type, conditions::text as conditions, priority
                 from process_template
                 where id = ? and (org_id = ? or org_id is null)
                 """,
@@ -1642,7 +1687,8 @@ public class ProcessService {
 
         List<TemplateStepView> steps = jdbc.query(
                 """
-                select id, step_order, step_key, name, assignee_role, requires_attachment
+                select id, step_order, step_key, name, assignee_role, requires_attachment,
+                       approval_mode, due_days
                 from process_template_step
                 where template_id = ?
                 order by step_order asc
@@ -1653,7 +1699,9 @@ public class ProcessService {
                         rs.getString("step_key"),
                         rs.getString("name"),
                         rs.getString("assignee_role"),
-                        rs.getBoolean("requires_attachment")),
+                        rs.getBoolean("requires_attachment"),
+                        rs.getString("approval_mode"),
+                        (Integer) rs.getObject("due_days")),
                 templateId);
 
         return new TemplateDetail(
@@ -1664,7 +1712,10 @@ public class ProcessService {
                 Boolean.TRUE.equals(t.get("active")),
                 (String) t.get("description"),
                 toInstant((Timestamp) t.get("created_at")),
-                steps);
+                steps,
+                (String) t.get("subject_type"),
+                parseConditionsJson((String) t.get("conditions")),
+                t.get("priority") == null ? null : ((Number) t.get("priority")).intValue());
     }
 
     @Transactional
@@ -1678,6 +1729,11 @@ public class ProcessService {
         if (req.name() == null || req.name().isBlank())
             throw new BadRequestException("REQUIRED_FIELDS", "Le nom est obligatoire");
 
+        // Rule-builder: only CASH_PAYMENT rules for now; validate conditions.
+        validateSubjectType(req.subjectType());
+        Map<String, Object> conditions = validateConditions(orgId, req.conditions());
+        Integer priority = req.priority() == null ? 100 : req.priority();
+
         // Uniqueness check (org-scoped)
         Integer exists = jdbc.queryForObject(
                 "select count(*) from process_template where key = ? and org_id = ?",
@@ -1690,11 +1746,16 @@ public class ProcessService {
         UUID id = UUID.randomUUID();
         jdbc.update(
                 """
-                insert into process_template (id, key, name, org_id, active, description, created_at, updated_at)
-                values (?, ?, ?, ?, true, ?, now(), now())
+                insert into process_template
+                  (id, key, name, org_id, active, description, created_at, updated_at,
+                   subject_type, conditions, priority)
+                values (?, ?, ?, ?, true, ?, now(), now(), ?, ?::jsonb, ?)
                 """,
                 id, req.key().toUpperCase().trim(), req.name().trim(), orgId,
-                req.description() != null ? req.description().trim() : null);
+                req.description() != null ? req.description().trim() : null,
+                req.subjectType(),
+                conditionsToJson(conditions),
+                priority);
 
         audit.log("PROCESS_TEMPLATE_CREATED", "process_template", id,
                 "{\"key\":\"" + jsonEscape(req.key()) + "\",\"orgId\":\"" + orgId + "\"}");
@@ -1744,6 +1805,25 @@ public class ProcessService {
                     "update process_template set description = ?, updated_at = now() where id = ?",
                     req.description().isBlank() ? null : req.description().trim(),
                     templateId);
+        }
+        // Rule-builder fields (validated). System templates are already rejected
+        // above (org_id filter), so edits only apply to org-scoped templates.
+        if (req.subjectType() != null && !req.subjectType().isBlank()) {
+            validateSubjectType(req.subjectType());
+            jdbc.update(
+                    "update process_template set subject_type = ?, updated_at = now() where id = ?",
+                    req.subjectType(), templateId);
+        }
+        if (req.conditions() != null) {
+            Map<String, Object> conditions = validateConditions(orgId, req.conditions());
+            jdbc.update(
+                    "update process_template set conditions = ?::jsonb, updated_at = now() where id = ?",
+                    conditionsToJson(conditions), templateId);
+        }
+        if (req.priority() != null) {
+            jdbc.update(
+                    "update process_template set priority = ?, updated_at = now() where id = ?",
+                    req.priority(), templateId);
         }
 
         audit.log("PROCESS_TEMPLATE_UPDATED", "process_template", templateId,
@@ -1839,12 +1919,15 @@ public class ProcessService {
             jdbc.update(
                     """
                     insert into process_template_step
-                      (id, template_id, step_order, step_key, name, assignee_role, requires_attachment)
-                    values (?, ?, ?, ?, ?, ?, ?)
+                      (id, template_id, step_order, step_key, name, assignee_role,
+                       requires_attachment, approval_mode, due_days)
+                    values (?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     stepId, templateId, req.stepOrder(),
                     req.stepKey().toUpperCase().trim(),
-                    req.name(), req.assigneeRole(), req.requiresAttachment());
+                    req.name(), req.assigneeRole(), req.requiresAttachment(),
+                    normalizeApprovalMode(req.approvalMode()),
+                    normalizeDueDays(req.dueDays()));
         } catch (org.springframework.dao.DataIntegrityViolationException e) {
             throw new BusinessRuleException("STEP_EXISTS",
                     "Un step_order ou step_key en conflit existe déjà sur ce template");
@@ -1890,6 +1973,17 @@ public class ProcessService {
                         "Un autre step utilise déjà cet ordre");
             }
         }
+        // Rule-builder fields.
+        if (req.approvalMode() != null && !req.approvalMode().isBlank()) {
+            jdbc.update("update process_template_step set approval_mode = ? where id = ?",
+                    normalizeApprovalMode(req.approvalMode()), stepId);
+        }
+        if (req.dueDays() != null) {
+            // dueDays = 0 clears the delay (stores null); negative is rejected.
+            Integer normalized = normalizeDueDays(req.dueDays());
+            jdbc.update("update process_template_step set due_days = ? where id = ?",
+                    normalized, stepId);
+        }
 
         audit.log("PROCESS_STEP_UPDATED", "process_template_step", stepId,
                 "{\"templateId\":\"" + templateId + "\"}");
@@ -1929,6 +2023,448 @@ public class ProcessService {
             throw new ResourceNotFoundException("TEMPLATE_NOT_FOUND",
                     "Template introuvable ou non modifiable (template système)");
         }
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // RULE-BUILDER — copy / sentence / test + condition validation
+    // ═══════════════════════════════════════════════════════════════
+
+    /** Body for POST /api/processes/templates/{id}/test. */
+    public record TestRuleRequest(UUID projectId, BigDecimal amount,
+                                  String nature, String paymentMode) {}
+
+    /** Response for POST /api/processes/templates/{id}/test. */
+    public record TestRuleResponse(UUID chosenTemplateId, String chosenTemplateKey,
+                                   String chosenTemplateName, Integer chosenPriority,
+                                   UUID testedTemplateId, boolean testedMatched,
+                                   String reason,
+                                   List<ApprovalRuleService.CandidateResult> candidates) {}
+
+    /**
+     *  Copy a system (or any visible) template into an org-scoped one with the
+     *  same steps + conditions + subject_type + priority. The copy is created
+     *  inactive (activate via PUT). POST /api/processes/templates/{id}/copy.
+     */
+    @Transactional
+    public TemplateDetail copyTemplate(Authentication auth, UUID sourceId) {
+        AppUser me = currentUser(auth);
+        requireOwner(me);
+        UUID orgId = me.getOrgId();
+
+        List<Map<String, Object>> src = jdbc.queryForList(
+                """
+                select id, key, name, subject_type, conditions::text as conditions, priority
+                from process_template
+                where id = ? and (org_id = ? or org_id is null)
+                """,
+                sourceId, orgId);
+        if (src.isEmpty()) {
+            throw new ResourceNotFoundException("TEMPLATE_NOT_FOUND", "Template introuvable");
+        }
+        Map<String, Object> s = src.get(0);
+        String baseKey = (String) s.get("key");
+        String copyKey = baseKey + "_COPIE_" + UUID.randomUUID().toString().substring(0, 8).toUpperCase();
+        Integer priority = s.get("priority") == null ? 100 : ((Number) s.get("priority")).intValue();
+
+        UUID newId = UUID.randomUUID();
+        jdbc.update(
+                """
+                insert into process_template
+                  (id, key, name, org_id, active, description, created_at, updated_at,
+                   subject_type, conditions, priority)
+                values (?, ?, ?, ?, false, null, now(), now(), ?, ?::jsonb, ?)
+                """,
+                newId, copyKey, ((String) s.get("name")) + " (copie)", orgId,
+                s.get("subject_type"),
+                s.get("conditions") == null ? "{}" : s.get("conditions"),
+                priority);
+
+        // Copy steps verbatim (same step_order/step_key/name/assignee_role/
+        // requires_attachment/approval_mode/due_days).
+        jdbc.update(
+                """
+                insert into process_template_step
+                  (id, template_id, step_order, step_key, name, assignee_role,
+                   requires_attachment, approval_mode, due_days)
+                select gen_random_uuid(), ?, step_order, step_key, name, assignee_role,
+                       requires_attachment, approval_mode, due_days
+                from process_template_step
+                where template_id = ?
+                """,
+                newId, sourceId);
+
+        audit.log("PROCESS_TEMPLATE_COPIED", "process_template", newId,
+                "{\"sourceId\":\"" + sourceId + "\",\"orgId\":\"" + orgId + "\"}");
+
+        return getTemplate(auth, newId);
+    }
+
+    /**
+     *  GET /api/processes/templates/{id}/sentence — the rule as a French sentence.
+     *  Example: "Quand un paiement à partir de 5 000,000 TND est soumis,
+     *  validation par : Finance, puis Gérant (2 jours chacun)."
+     */
+    public String getTemplateSentence(Authentication auth, UUID templateId) {
+        TemplateDetail t = getTemplate(auth, templateId);
+        String cond = conditionClause(t.conditions(), t.orgId());
+        StringBuilder sb = new StringBuilder("Quand un paiement ");
+        if (cond.isEmpty()) {
+            sb.append("sans condition de montant, de nature ou de mode ");
+        } else {
+            sb.append(cond).append(" ");
+        }
+        sb.append("est soumis, validation par : ");
+        List<TemplateStepView> steps = t.steps();
+        // due_days: if every step has a non-null due_days and they are all equal
+        // -> suffix "(N jours chacun)"; otherwise each step carries its own delay.
+        Integer common = null;
+        boolean allSame = !steps.isEmpty();
+        for (TemplateStepView step : steps) {
+            if (step.dueDays() == null) { allSame = false; break; }
+            if (common == null) common = step.dueDays();
+            else if (!common.equals(step.dueDays())) { allSame = false; break; }
+        }
+        for (int i = 0; i < steps.size(); i++) {
+            TemplateStepView step = steps.get(i);
+            if (i > 0) sb.append(", puis ");
+            sb.append(stepRender(step, t.orgId()));
+            if (!allSame && step.dueDays() != null) {
+                sb.append(" (").append(step.dueDays()).append(" jours)");
+            }
+        }
+        if (allSame && common != null) {
+            sb.append(" (").append(common).append(" jours chacun)");
+        }
+        sb.append(".");
+        return sb.toString();
+    }
+
+    /** Render one step: ANY -> role label; ALL -> "tous les {plural}". */
+    private String stepRender(TemplateStepView step, UUID orgId) {
+        String label = roleLabel(step.assigneeRole(), orgId);
+        if ("ALL".equals(step.approvalMode())) {
+            return "tous les " + pluralRole(label);
+        }
+        return label;
+    }
+
+    /** Pluralize the first word of a French role label (Chef -> Chefs, Gérant -> Gérants). */
+    private static String pluralRole(String label) {
+        if (label == null || label.isBlank()) return "approbateurs";
+        String[] parts = label.split(" ", 2);
+        String first = parts[0];
+        if (first.endsWith("s") || first.endsWith("x") || first.endsWith("z")) {
+            return label; // already plural-looking
+        }
+        return first + "s" + (parts.length > 1 ? " " + parts[1] : "");
+    }
+
+    /** Build the condition clause (e.g. "à partir de 5 000,000 TND"), empty if none. */
+    private String conditionClause(Map<String, Object> conditions, UUID orgId) {
+        if (conditions == null || conditions.isEmpty()) return "";
+        StringBuilder sb = new StringBuilder();
+        BigDecimal min = toBdQuiet(conditions.get("amount_min"));
+        BigDecimal max = toBdQuiet(conditions.get("amount_max"));
+        if (min != null && max != null) {
+            sb.append("de ").append(formatAmount(min)).append(" à ").append(formatAmount(max)).append(" TND");
+        } else if (min != null) {
+            sb.append("à partir de ").append(formatAmount(min)).append(" TND");
+        } else if (max != null) {
+            sb.append("jusqu'à ").append(formatAmount(max)).append(" TND");
+        }
+        List<String> natures = toStringListQuiet(conditions.get("natures"));
+        if (!natures.isEmpty()) {
+            if (sb.length() > 0) sb.append(", ");
+            sb.append("de nature ").append(String.join(" ou ", natures));
+        }
+        List<String> modes = toStringListQuiet(conditions.get("payment_modes"));
+        if (!modes.isEmpty()) {
+            if (sb.length() > 0) sb.append(", ");
+            sb.append("réglé par ").append(String.join(" ou ", modes));
+        }
+        List<String> pids = toStringListQuiet(conditions.get("project_ids"));
+        if (!pids.isEmpty()) {
+            if (sb.length() > 0) sb.append(", ");
+            List<String> names = new ArrayList<>();
+            for (String pid : pids) {
+                String name = pid;
+                try {
+                    UUID u = UUID.fromString(pid);
+                    List<String> rows = jdbc.query("select name from project where id = ?",
+                            (rs, rn) -> rs.getString(1), u);
+                    if (!rows.isEmpty()) name = rows.get(0);
+                } catch (Exception ignored) { }
+                names.add(name);
+            }
+            sb.append("sur le chantier ").append(String.join(" ou ", names));
+        }
+        return sb.toString();
+    }
+
+    /**
+     *  POST /api/processes/templates/{id}/test — given a payment description,
+     *  returns which rule would be chosen today and why. The template {id} is
+     *  tested AS IF it were active (even when inactive/draft), alongside the
+     *  other active rules. No data is written.
+     */
+    public TestRuleResponse testRule(Authentication auth, UUID templateId, TestRuleRequest req) {
+        AppUser me = currentUser(auth);
+        requireOwner(me);
+        UUID orgId = me.getOrgId();
+        requireTemplateVisible(templateId, orgId);
+
+        if (req.amount() == null || req.amount().signum() < 0)
+            throw new BadRequestException("INVALID_TEST_INPUT", "Un montant positif est obligatoire");
+
+        RuleMatcher.PaymentFacts facts = new RuleMatcher.PaymentFacts(
+                req.projectId(), req.amount(), req.nature(), req.paymentMode());
+        // Force-include {id} as if active so a draft rule can be tested.
+        ApprovalRuleService.RuleExplanation ex = approvalRuleService.explainRule(
+                orgId, "CASH_PAYMENT", facts, templateId);
+
+        String chosenKey = null, chosenName = null;
+        Integer chosenPriority = null;
+        boolean testedMatched = false;
+        for (ApprovalRuleService.CandidateResult c : ex.candidates()) {
+            if (c.templateId() != null && c.templateId().equals(ex.chosenId())) {
+                chosenKey = c.key();
+                chosenName = c.name();
+                chosenPriority = c.priority();
+            }
+            if (c.templateId() != null && c.templateId().equals(templateId)) {
+                testedMatched = c.matched();
+            }
+        }
+        return new TestRuleResponse(ex.chosenId(), chosenKey, chosenName, chosenPriority,
+                templateId, testedMatched, buildTestReason(ex), ex.candidates());
+    }
+
+    private String buildTestReason(ApprovalRuleService.RuleExplanation ex) {
+        StringBuilder sb = new StringBuilder();
+        for (ApprovalRuleService.CandidateResult c : ex.candidates()) {
+            if (sb.length() > 0) sb.append(" ");
+            sb.append(c.key()).append(" : ")
+              .append(c.matched() ? "correspond" : c.reason())
+              .append(" (priorité ").append(c.priority()).append(").");
+        }
+        if (ex.chosenId() == null) {
+            sb.append(" Aucune règle ne correspond à ce paiement.");
+        } else {
+            for (ApprovalRuleService.CandidateResult c : ex.candidates()) {
+                if (c.templateId() != null && c.templateId().equals(ex.chosenId())) {
+                    sb.append(" Règle choisie : ").append(c.key()).append(".");
+                    break;
+                }
+            }
+        }
+        return sb.toString();
+    }
+
+    private void requireTemplateVisible(UUID templateId, UUID orgId) {
+        Integer cnt = jdbc.queryForObject(
+                "select count(*) from process_template where id = ? and (org_id = ? or org_id is null)",
+                Integer.class, templateId, orgId);
+        if (cnt == null || cnt == 0) {
+            throw new ResourceNotFoundException("TEMPLATE_NOT_FOUND", "Template introuvable");
+        }
+    }
+
+    // ── Condition validation (point 2) ────────────────────────────
+
+    private void validateSubjectType(String subjectType) {
+        if (subjectType == null || subjectType.isBlank())
+            throw new BadRequestException("REQUIRED_FIELDS", "Le type de règle est obligatoire");
+        if (!"CASH_PAYMENT".equals(subjectType))
+            throw new BusinessRuleException("RULE_SUBJECT_TYPE_UNAVAILABLE",
+                    "Ce type de règle n'est pas encore disponible");
+    }
+
+    private String normalizeApprovalMode(String mode) {
+        if (mode == null || mode.isBlank()) return "ANY";
+        String m = mode.trim().toUpperCase();
+        if (!"ANY".equals(m) && !"ALL".equals(m))
+            throw new BadRequestException("INVALID_APPROVAL_MODE",
+                    "Le mode d'approbation doit être ANY ou ALL");
+        return m;
+    }
+
+    /**
+     *  Normalize a step due_days: null stays null (no delay); 0 clears the
+     *  delay (returns null so null is stored); negative is rejected with a
+     *  French error. Positive values pass through.
+     */
+    private static Integer normalizeDueDays(Integer dueDays) {
+        if (dueDays == null) return null;
+        int d = dueDays;
+        if (d < 0)
+            throw new BadRequestException("INVALID_DUE_DAYS",
+                    "Le délai de l'étape (en jours) ne peut pas être négatif");
+        return d == 0 ? null : d;
+    }
+
+    private Map<String, Object> validateConditions(UUID orgId, Map<String, Object> conditions) {
+        if (conditions == null || conditions.isEmpty()) return new HashMap<>();
+        Map<String, Object> normalized = new HashMap<>();
+        BigDecimal amountMin = null, amountMax = null;
+        for (Map.Entry<String, Object> e : conditions.entrySet()) {
+            String key = e.getKey();
+            switch (key) {
+                case "amount_min" -> {
+                    BigDecimal bd = toBd(e.getValue(), "Le montant minimum doit être un nombre");
+                    if (bd.signum() < 0) throw new BadRequestException("INVALID_CONDITION",
+                            "Le montant minimum ne peut pas être négatif");
+                    if (bd.scale() > 3) throw new BadRequestException("INVALID_CONDITION",
+                            "Le montant minimum doit avoir au plus 3 décimales");
+                    amountMin = bd;
+                    normalized.put(key, bd);
+                }
+                case "amount_max" -> {
+                    BigDecimal bd = toBd(e.getValue(), "Le montant maximum doit être un nombre");
+                    if (bd.signum() < 0) throw new BadRequestException("INVALID_CONDITION",
+                            "Le montant maximum ne peut pas être négatif");
+                    if (bd.scale() > 3) throw new BadRequestException("INVALID_CONDITION",
+                            "Le montant maximum doit avoir au plus 3 décimales");
+                    amountMax = bd;
+                    normalized.put(key, bd);
+                }
+                case "natures" -> {
+                    List<String> codes = toStringList(e.getValue(), "Les natures doivent être une liste");
+                    for (String code : codes) {
+                        if (natureCode(code) == null)
+                            throw new BadRequestException("INVALID_CONDITION", "Nature inconnue : " + code);
+                    }
+                    normalized.put(key, codes);
+                }
+                case "payment_modes" -> {
+                    List<String> codes = toStringList(e.getValue(), "Les modes de règlement doivent être une liste");
+                    for (String code : codes) {
+                        if (paymentModeCode(code) == null)
+                            throw new BadRequestException("INVALID_CONDITION", "Mode de règlement inconnu : " + code);
+                    }
+                    normalized.put(key, codes);
+                }
+                case "project_ids" -> {
+                    List<String> ids = toStringList(e.getValue(), "Les chantiers doivent être une liste");
+                    for (String idStr : ids) {
+                        UUID pid = toUuid(idStr);
+                        Integer cnt = jdbc.queryForObject(
+                                "select count(*) from project where id = ? and org_id = ?",
+                                Integer.class, pid, orgId);
+                        if (cnt == null || cnt == 0)
+                            throw new BadRequestException("INVALID_CONDITION",
+                                    "Chantier introuvable dans votre organisation : " + idStr);
+                    }
+                    normalized.put(key, ids);
+                }
+                default -> throw new BadRequestException("UNKNOWN_CONDITION_KEY",
+                        "Clé de condition inconnue : " + key
+                                + " (clés valides : amount_min, amount_max, project_ids, natures, payment_modes)");
+            }
+        }
+        if (amountMin != null && amountMax != null && amountMin.compareTo(amountMax) > 0)
+            throw new BadRequestException("INVALID_CONDITION",
+                    "Le montant minimum ne peut pas dépasser le montant maximum");
+        return normalized;
+    }
+
+    private static String natureCode(String code) {
+        if (code == null || code.isBlank()) return null;
+        try { return MovementNature.valueOf(code.trim().toUpperCase()).name(); }
+        catch (IllegalArgumentException e) { return null; }
+    }
+
+    private static String paymentModeCode(String code) {
+        if (code == null || code.isBlank()) return null;
+        try { return PaymentMode.valueOf(code.trim().toUpperCase()).name(); }
+        catch (IllegalArgumentException e) { return null; }
+    }
+
+    private static BigDecimal toBd(Object value, String errMsg) {
+        if (value == null) throw new BadRequestException("INVALID_CONDITION", errMsg);
+        try {
+            if (value instanceof BigDecimal bd) return bd;
+            if (value instanceof Number n) return new BigDecimal(n.toString());
+            if (value instanceof String s) return new BigDecimal(s.trim());
+            throw new IllegalArgumentException();
+        } catch (BadRequestException e) {
+            throw e;
+        } catch (Exception e) {
+            throw new BadRequestException("INVALID_CONDITION", errMsg);
+        }
+    }
+
+    private static List<String> toStringList(Object value, String errMsg) {
+        if (value == null) throw new BadRequestException("INVALID_CONDITION", errMsg);
+        List<String> out = new ArrayList<>();
+        if (value instanceof List<?> col) {
+            for (Object o : col) out.add(o == null ? null : o.toString());
+        } else {
+            out.add(value.toString());
+        }
+        return out;
+    }
+
+    private static UUID toUuid(String s) {
+        try { return UUID.fromString(s.trim()); }
+        catch (Exception e) {
+            throw new BadRequestException("INVALID_CONDITION", "Identifiant de chantier invalide : " + s);
+        }
+    }
+
+    private static BigDecimal toBdQuiet(Object value) {
+        try { return toBd(value, "x"); } catch (Exception e) { return null; }
+    }
+
+    private static List<String> toStringListQuiet(Object value) {
+        try { return toStringList(value, "x"); } catch (Exception e) { return List.of(); }
+    }
+
+    // ── conditions JSON <-> Map ───────────────────────────────────
+
+    private Map<String, Object> parseConditionsJson(String json) {
+        if (json == null || json.isBlank() || "{}".equals(json.trim())) return new HashMap<>();
+        try {
+            return objectMapper.readValue(json,
+                    new tools.jackson.core.type.TypeReference<Map<String, Object>>() {});
+        } catch (Exception e) {
+            return new HashMap<>();
+        }
+    }
+
+    private String conditionsToJson(Map<String, Object> conditions) {
+        if (conditions == null || conditions.isEmpty()) return "{}";
+        try {
+            return objectMapper.writeValueAsString(conditions);
+        } catch (Exception e) {
+            return "{}";
+        }
+    }
+
+    // ── French formatting + role labels ───────────────────────────
+
+    private static final DecimalFormat AMOUNT_FORMAT;
+    static {
+        DecimalFormatSymbols symbols = new DecimalFormatSymbols(Locale.FRANCE);
+        symbols.setGroupingSeparator(' ');
+        symbols.setDecimalSeparator(',');
+        AMOUNT_FORMAT = new DecimalFormat("#,##0.000", symbols);
+        AMOUNT_FORMAT.setGroupingUsed(true);
+    }
+
+    private static String formatAmount(BigDecimal amount) {
+        return amount == null ? "" : AMOUNT_FORMAT.format(amount);
+    }
+
+    /** Role label from the role table (org-scoped preferred over system); OWNER -> "Gérant"; unknown -> the code. */
+    private String roleLabel(String roleCode, UUID orgId) {
+        if (roleCode == null || roleCode.isBlank()) return "approbateur";
+        String code = roleCode.trim();
+        if ("OWNER".equalsIgnoreCase(code)) return "Gérant";
+        List<String> rows = jdbc.query(
+                "select label from role where code = ? and (org_id = ? or org_id is null) " +
+                        "order by (org_id = ?) desc nulls last limit 1",
+                (rs, rn) -> rs.getString(1), code, orgId, orgId);
+        return rows.isEmpty() ? code : rows.get(0);
     }
 
     // ═══════════════════════════════════════════════════════════════

@@ -55,6 +55,14 @@ public class ApprovalRuleService {
         this.objectMapper = objectMapper;
     }
 
+    // ── Explanation types (used by the /test endpoint) ────────────
+    public record CandidateResult(UUID templateId, String key, String name,
+                                  int priority, boolean matched, String reason) {}
+    public record RuleExplanation(UUID chosenId, List<CandidateResult> candidates) {}
+
+    /** A loaded candidate + its display key/name (RuleCandidate itself has no key/name). */
+    private record LoadedCandidate(RuleMatcher.RuleCandidate candidate, String key, String name) {}
+
     /**
      * @return the chosen template id, or empty if no rule matches.
      */
@@ -62,25 +70,65 @@ public class ApprovalRuleService {
         if (orgId == null || subjectType == null || facts == null) {
             return Optional.empty();
         }
+        List<RuleMatcher.RuleCandidate> cands = loadedCandidates(orgId, subjectType, facts, null).stream()
+                .map(LoadedCandidate::candidate).toList();
+        return RuleMatcher.pick(cands, facts);
+    }
 
-        // 1. Active templates visible to the org with this subject_type.
-        //    org_scoped + created_at are carried into RuleCandidate for the
-        //    tie-break (org before system, then older created_at).
+    /**
+     *  Runs the rule engine and returns, for every active candidate visible to
+     *  the org, whether it matched the facts + a short French reason, plus the
+     *  chosen template id. Used by POST /api/process/templates/{id}/test (no
+     *  data written).
+     */
+    public RuleExplanation explainRule(UUID orgId, String subjectType, RuleMatcher.PaymentFacts facts) {
+        return explainRule(orgId, subjectType, facts, null);
+    }
+
+    /**
+     *  Same as {@link #explainRule} but force-includes {@code forceIncludeId} as
+     *  if it were active (even when inactive/draft), so the /test endpoint can
+     *  test a draft rule alongside the live active rules. No data written.
+     */
+    public RuleExplanation explainRule(UUID orgId, String subjectType, RuleMatcher.PaymentFacts facts,
+                                       UUID forceIncludeId) {
+        if (orgId == null || subjectType == null || facts == null) {
+            return new RuleExplanation(null, List.of());
+        }
+        List<LoadedCandidate> loaded = loadedCandidates(orgId, subjectType, facts, forceIncludeId);
+        List<RuleMatcher.RuleCandidate> cands = loaded.stream().map(LoadedCandidate::candidate).toList();
+        UUID chosen = RuleMatcher.pick(cands, facts).orElse(null);
+        List<CandidateResult> results = new ArrayList<>();
+        for (LoadedCandidate lc : loaded) {
+            RuleMatcher.MatchResult mr = RuleMatcher.explainMatch(lc.candidate(), facts);
+            results.add(new CandidateResult(lc.candidate().templateId(), lc.key(), lc.name(),
+                    lc.candidate().priority(), mr.matched(), mr.reason()));
+        }
+        return new RuleExplanation(chosen, results);
+    }
+
+    /** Load + build RuleCandidates for every active template visible to the org.
+     *  forceIncludeId (nullable) is included as if active — used by /test. */
+    private List<LoadedCandidate> loadedCandidates(UUID orgId, String subjectType, RuleMatcher.PaymentFacts facts,
+                                                   UUID forceIncludeId) {
+        // (active = true or id = ?): when forceIncludeId is null, `id = null` is
+        // never true, so only active templates are loaded; when it is a UUID,
+        // that template is included regardless of active (as if active).
         List<Map<String, Object>> templates = jdbc.queryForList("""
-                select id, priority, conditions::text as conditions,
+                select id, key, name, priority, conditions::text as conditions,
                        (org_id is not null) as org_scoped, created_at
                 from process_template
-                where subject_type = ? and active = true
+                where subject_type = ? and (active = true or id = ?)
                   and (org_id = ? or org_id is null)
-                """, subjectType, orgId);
+                """, subjectType, forceIncludeId, orgId);
 
         if (templates.isEmpty()) {
-            return Optional.empty();
+            return List.of();
         }
 
-        // 2. Whitelist enablement — SAME rule as ProcessService.start:
-        //    no rows for the chantier => all active templates enabled;
-        //    any row => only templates with an enabled = true row are enabled.
+        // Whitelist enablement — SAME rule as ProcessService.start:
+        // no rows for the chantier => all active templates enabled;
+        // any row => only templates with an enabled = true row are enabled.
         boolean projectHasRows = false;
         Map<UUID, Map<String, Object>> perProject = new HashMap<>();
         if (facts.projectId() != null) {
@@ -100,10 +148,7 @@ public class ApprovalRuleService {
             }
         }
 
-        // 3. Build candidates. A template with unparseable conditions is
-        //    skipped (a corrupted rule blob must not silently match every
-        //    payment).
-        List<RuleMatcher.RuleCandidate> candidates = new ArrayList<>();
+        List<LoadedCandidate> out = new ArrayList<>();
         for (Map<String, Object> t : templates) {
             UUID templateId = (UUID) t.get("id");
             int priority = t.get("priority") == null
@@ -130,11 +175,11 @@ public class ApprovalRuleService {
             }
             boolean orgScoped = Boolean.TRUE.equals(t.get("org_scoped"));
             Instant createdAt = toInstant(t.get("created_at"));
-            candidates.add(new RuleMatcher.RuleCandidate(
-                    templateId, priority, conditions, override, enabledForProject, orgScoped, createdAt));
+            RuleMatcher.RuleCandidate cand = new RuleMatcher.RuleCandidate(
+                    templateId, priority, conditions, override, enabledForProject, orgScoped, createdAt);
+            out.add(new LoadedCandidate(cand, (String) t.get("key"), (String) t.get("name")));
         }
-
-        return RuleMatcher.pick(candidates, facts);
+        return out;
     }
 
     private Map<String, Object> parseConditions(String json) throws Exception {
