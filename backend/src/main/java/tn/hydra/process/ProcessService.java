@@ -760,16 +760,21 @@ public class ProcessService {
         }
 
         // ── approval_mode = ALL: record this approver and only flip to DONE when
-        //    every user holding the role on the chantier has approved. The step
-        //    stays PENDING (and the instance stays RUNNING) until the last one.
-        //    Required approvers = project_role_assignee (explicit per-chantier
+        //    every ACTIVE user holding the role on the chantier has approved. The
+        //    step stays PENDING (and the instance stays RUNNING) until the last
+        //    one. Required approvers = project_role_assignee (explicit per-chantier
         //    mapping) UNION project members holding the business role via
-        //    user_role+role.code. The union is needed because
-        //    project_role_assignee is unique per (project, role) (V27) — at most
-        //    one user — so ALL steps that must require several approvers rely on
-        //    the role-holder set. An empty set (nobody holds the role) degrades
-        //    to single-approval completion (ALL == ANY).
+        //    user_role+role.code; both sides join app_user and filter is_active =
+        //    true so a deactivated user neither blocks completion nor counts. The
+        //    union is needed because project_role_assignee is unique per (project,
+        //    role) (V27) — at most one user — so ALL steps that must require
+        //    several approvers rely on the role-holder set. The org owner
+        //    (is_owner) completes an ALL step at once regardless of pending
+        //    approvers (STEP_OWNER_OVERRIDE audit). An empty required set
+        //    (nobody active holds the role) degrades to single-approval
+        //    completion (ALL == ANY).
         if ("ALL".equals(approvalMode)) {
+            // Record this approver (idempotent per user).
             jdbc.update("""
                     insert into process_step_approval
                       (step_instance_id, user_id, org_id, comment)
@@ -777,48 +782,71 @@ public class ProcessService {
                     on conflict (step_instance_id, user_id) do nothing
                     """, stepInstanceId, me.getId(), orgId, req.comment());
 
-            List<UUID> required = jdbc.queryForList("""
-                    select user_id from project_role_assignee
-                    where project_id = ? and upper(role_code) = upper(?)
-                    union
-                    select pm.user_id from project_member pm
-                    join user_role ur on ur.user_id = pm.user_id
-                    join role r on r.id = ur.role_id
-                    where pm.project_id = ? and r.code = ?
-                    """, UUID.class, projectId, assigneeRole, projectId, assigneeRole);
+            // Owner override: the org owner completes an ALL step at once,
+            // regardless of other pending approvers.
+            if (Boolean.TRUE.equals(me.getIsOwner())) {
+                audit.log("STEP_OWNER_OVERRIDE", "process_step_instance", stepInstanceId,
+                        "{\"instanceId\":\"" + instanceId +
+                        "\",\"stepKey\":\"" + jsonEscape(stepKey) +
+                        "\",\"approver\":\"" + me.getId() + "\"" +
+                        (subjectType != null ? ",\"subjectType\":\"" + jsonEscape(subjectType) + "\"" : "") +
+                        (subjectId != null ? ",\"subjectId\":\"" + subjectId + "\"" : "") +
+                        ",\"hasAttachment\":" + hasAttachment +
+                        (assessedAmount != null ? ",\"assessedAmount\":" + assessedAmount : "") +
+                        "}");
+                // fall through to DONE + proceed.
+            } else {
+                // Required approvers = ACTIVE users holding the role on the chantier:
+                // project_role_assignee UNION project members with the business role.
+                // Inactive users are excluded from both sides (join app_user
+                // is_active = true) so a deactivated approver neither blocks nor counts.
+                List<UUID> required = jdbc.queryForList("""
+                        select pra.user_id from project_role_assignee pra
+                        join app_user u on u.id = pra.user_id and u.is_active = true
+                        where pra.project_id = ? and upper(pra.role_code) = upper(?)
+                        union
+                        select pm.user_id from project_member pm
+                        join app_user u on u.id = pm.user_id and u.is_active = true
+                        join user_role ur on ur.user_id = pm.user_id
+                        join role r on r.id = ur.role_id
+                        where pm.project_id = ? and r.code = ?
+                        """, UUID.class, projectId, assigneeRole, projectId, assigneeRole);
 
-            if (!required.isEmpty()) {
-                Integer approvedByRequired = jdbc.queryForObject("""
-                        select count(distinct psa.user_id) from process_step_approval psa
-                        where psa.step_instance_id = ?
-                          and psa.org_id = ?
-                          and psa.user_id in (
-                              select user_id from project_role_assignee
-                              where project_id = ? and upper(role_code) = upper(?)
-                              union
-                              select pm.user_id from project_member pm
-                              join user_role ur on ur.user_id = pm.user_id
-                              join role r on r.id = ur.role_id
-                              where pm.project_id = ? and r.code = ?
-                          )
-                        """, Integer.class, stepInstanceId, orgId,
-                        projectId, assigneeRole, projectId, assigneeRole);
-                int approved = approvedByRequired == null ? 0 : approvedByRequired;
-                if (approved < required.size()) {
-                    // Not everyone yet — step stays PENDING, instance stays RUNNING.
-                    jdbc.update("update process_step_instance set comment = ? where id = ?",
-                            req.comment(), stepInstanceId);
-                    audit.log("STEP_PARTIAL_APPROVAL", "process_step_instance", stepInstanceId,
-                            "{\"instanceId\":\"" + instanceId +
-                            "\",\"stepKey\":\"" + jsonEscape(stepKey) +
-                            "\",\"approver\":\"" + me.getId() + "\"" +
-                            ",\"approvedCount\":" + approved +
-                            ",\"requiredCount\":" + required.size() + "}");
-                    return new StepResult(stepInstanceId, "PENDING");
+                if (!required.isEmpty()) {
+                    Integer approvedByRequired = jdbc.queryForObject("""
+                            select count(distinct psa.user_id) from process_step_approval psa
+                            where psa.step_instance_id = ?
+                              and psa.org_id = ?
+                              and psa.user_id in (
+                                  select pra.user_id from project_role_assignee pra
+                                  join app_user u on u.id = pra.user_id and u.is_active = true
+                                  where pra.project_id = ? and upper(pra.role_code) = upper(?)
+                                  union
+                                  select pm.user_id from project_member pm
+                                  join app_user u on u.id = pm.user_id and u.is_active = true
+                                  join user_role ur on ur.user_id = pm.user_id
+                                  join role r on r.id = ur.role_id
+                                  where pm.project_id = ? and r.code = ?
+                              )
+                            """, Integer.class, stepInstanceId, orgId,
+                            projectId, assigneeRole, projectId, assigneeRole);
+                    int approved = approvedByRequired == null ? 0 : approvedByRequired;
+                    if (approved < required.size()) {
+                        // Not everyone yet — step stays PENDING, instance stays RUNNING.
+                        jdbc.update("update process_step_instance set comment = ? where id = ?",
+                                req.comment(), stepInstanceId);
+                        audit.log("STEP_PARTIAL_APPROVAL", "process_step_instance", stepInstanceId,
+                                "{\"instanceId\":\"" + instanceId +
+                                "\",\"stepKey\":\"" + jsonEscape(stepKey) +
+                                "\",\"approver\":\"" + me.getId() + "\"" +
+                                ",\"approvedCount\":" + approved +
+                                ",\"requiredCount\":" + required.size() + "}");
+                        return new StepResult(stepInstanceId, "PENDING");
+                    }
+                    // All required approvers have approved -> fall through to DONE.
                 }
-                // All required approvers have approved -> fall through to DONE.
+                // required empty -> degenerate (ALL == ANY): fall through to DONE.
             }
-            // required empty -> degenerate (ALL == ANY): fall through to DONE.
         }
 
         // Mark step DONE

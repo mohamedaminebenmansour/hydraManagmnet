@@ -166,4 +166,86 @@ class ProcessApprovalModeAllTest {
                 Integer.class, stepId);
         assertThat(approvalCount2).isEqualTo(2);
     }
+
+    // ══════════════════════════════════════════════════════════════
+    //  Point 1 — a deactivated role-holder neither blocks nor counts: with
+    //  two finance users where one is deactivated, the active one alone DONEs
+    //  the step.
+    // ══════════════════════════════════════════════════════════════
+    @Test
+    void allStep_doneAfterActiveApproverWhenOtherIsDeactivated() {
+        Authentication ownerAuth = as(ownerId);
+        ProcessService.StartProcessResponse started = processService.startByTemplateId(
+                ownerAuth, projectId, templateId, "ALL_TEST", UUID.randomUUID());
+        UUID instanceId = started.id();
+        UUID stepId = pendingStep(instanceId);
+
+        // Deactivate f2 after start -> the active required set is {f1} only.
+        jdbc.update("update app_user set is_active = false where id = ?", f2);
+
+        // The single active finance user approves -> step DONE immediately.
+        ProcessService.StepResult r = processService.completeStep(
+                as(f1), instanceId, stepId, new ProcessService.CompleteStepRequest("ok active", null));
+        assertThat(r.newStatus()).isEqualTo("DONE");
+        assertThat(jdbc.queryForObject("select status from process_step_instance where id = ?",
+                String.class, stepId)).isEqualTo("DONE");
+        assertThat(jdbc.queryForObject("select status from process_instance where id = ?",
+                String.class, instanceId)).isEqualTo("COMPLETED");
+        Integer approvalCount = jdbc.queryForObject(
+                "select count(*) from process_step_approval where step_instance_id = ?",
+                Integer.class, stepId);
+        assertThat(approvalCount).isEqualTo(1);
+    }
+
+    // ══════════════════════════════════════════════════════════════
+    //  Point 2 — org owner override: the owner completes an ALL step at once
+    //  even with two finance users still pending, and exactly one
+    //  STEP_OWNER_OVERRIDE audit event is emitted.
+    // ══════════════════════════════════════════════════════════════
+    @Test
+    void allStep_ownerOverride_completesAtOnceWithOneOwnerOverrideEvent() {
+        Authentication ownerAuth = as(ownerId);
+        ProcessService.StartProcessResponse started = processService.startByTemplateId(
+                ownerAuth, projectId, templateId, "ALL_TEST", UUID.randomUUID());
+        UUID instanceId = started.id();
+        UUID stepId = pendingStep(instanceId);
+
+        // Two finance users are still pending, but the owner overrides.
+        ProcessService.StepResult r = processService.completeStep(
+                ownerAuth, instanceId, stepId, new ProcessService.CompleteStepRequest("owner override", null));
+        assertThat(r.newStatus()).isEqualTo("DONE");
+        assertThat(jdbc.queryForObject("select status from process_step_instance where id = ?",
+                String.class, stepId)).isEqualTo("DONE");
+        assertThat(jdbc.queryForObject("select status from process_instance where id = ?",
+                String.class, instanceId)).isEqualTo("COMPLETED");
+
+        // Exactly one STEP_OWNER_OVERRIDE audit event for this step.
+        Integer overrideCount = jdbc.queryForObject(
+                "select count(*) from event_log where action = 'STEP_OWNER_OVERRIDE' " +
+                        "and entity_type = 'process_step_instance' and entity_id = ?",
+                Integer.class, stepId);
+        assertThat(overrideCount).isEqualTo(1);
+
+        // The owner's approval was recorded; the finance users did not approve.
+        Integer approvalCount = jdbc.queryForObject(
+                "select count(*) from process_step_approval where step_instance_id = ?",
+                Integer.class, stepId);
+        assertThat(approvalCount).isEqualTo(1);
+    }
+
+    // ══════════════════════════════════════════════════════════════
+    //  Point 3 — project_member without project_role succeeds and defaults to
+    //  'VIEWER' (V41 fixes the default that was 'MEMBER' and violated the CHECK).
+    // ══════════════════════════════════════════════════════════════
+    @Test
+    void projectMemberWithoutProjectRole_defaultsToViewer() {
+        // The owner is not yet a project_member in the fixture; insert without
+        // project_role and assert the V41 default 'VIEWER' applies.
+        jdbc.update("insert into project_member (project_id, user_id) values (?, ?)",
+                projectId, ownerId);
+        String role = jdbc.queryForObject(
+                "select project_role from project_member where project_id = ? and user_id = ?",
+                String.class, projectId, ownerId);
+        assertThat(role).isEqualTo("VIEWER");
+    }
 }
