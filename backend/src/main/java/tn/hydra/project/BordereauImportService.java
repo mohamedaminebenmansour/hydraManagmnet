@@ -208,7 +208,7 @@ public class BordereauImportService {
 
                 InsertedLine il = new InsertedLine(lineId, row, normalisedUnit, specs, suggestion, workNature, warnings, montant);
                 allInserted.add(il);
-                if (isFourniture(row.designation)) {
+                if (isFourniture(row.designation, row.sectionPath)) {
                     fournitureLines.add(il);
                 }
 
@@ -227,7 +227,7 @@ public class BordereauImportService {
 
             List<InsertedLine> matches = new ArrayList<>();
             for (InsertedLine candidate : allInserted) {
-                if (!isPose(candidate.row.designation)) continue;
+                if (!isPose(candidate.row.designation, candidate.row.sectionPath)) continue;
                 String cMateriau = (String) candidate.specs.get("materiau");
                 Object cDe = candidate.specs.get("de_mm");
                 Object cPn = candidate.specs.get("pn_bar");
@@ -275,7 +275,7 @@ public class BordereauImportService {
     // EXCEL PARSING (multi-sheet, WorkbookFactory)
     // ═══════════════════════════════════════════════════════════════
 
-    private static List<ParsedSheet> parseWorkbook(byte[] bytes) throws IOException {
+     static List<ParsedSheet> parseWorkbook(byte[] bytes) throws IOException {
         Workbook wb = WorkbookFactory.create(new ByteArrayInputStream(bytes));
         List<ParsedSheet> sheets = new ArrayList<>();
         FormulaEvaluator evaluator = wb.getCreationHelper().createFormulaEvaluator();
@@ -395,7 +395,19 @@ public class BordereauImportService {
                 // This handles merged cells where the section title is in the
                 // first column (which looks like articleNo).
                 if (sectionText != null && isBlank(unitRaw) && isBlank(qtyRaw) && isBlank(priceRaw)) {
-                    currentSection.add(sectionText);
+                    // Determine the section level: roman numerals (I, II, III, IV)
+                    // are level 1 (after sheetName); numbered sections (41., 42., 1., 2.)
+                    // are level 2 (under the current level-1 section). Replace the
+                    // element at that level instead of accumulating all titles.
+                    if (isRomanNumeralSection(sectionText)) {
+                        while (currentSection.size() > 1) currentSection.remove(currentSection.size() - 1);
+                        currentSection.add(sectionText);
+                    } else if (isNumberedSection(sectionText)) {
+                        while (currentSection.size() > 2) currentSection.remove(currentSection.size() - 1);
+                        currentSection.add(sectionText);
+                    } else {
+                        currentSection.add(sectionText);
+                    }
                     rows.add(new ParsedRow(new ArrayList<>(currentSection),
                             null, sectionText, null, null, null, null, false));
                     continue;
@@ -470,6 +482,17 @@ public class BordereauImportService {
     }
 
     private static boolean isBlank(String s) { return s == null || s.isBlank(); }
+
+    /** True when the title starts with a roman numeral (I, II, III, IV, V...). */
+    private static boolean isRomanNumeralSection(String title) {
+        String upper = title.toUpperCase().trim();
+        return upper.matches("^(I{1,3}|IV|V|VI{0,3}|IX|X)[\\s\\-—].*");
+    }
+
+    /** True when the title starts with a number followed by a dot (41., 42., 1., 2.). */
+    private static boolean isNumberedSection(String title) {
+        return title.trim().matches("^\\d+\\..*");
+    }
 
     /** Parse a decimal from text: remove spaces + non-breaking spaces, use comma as decimal separator. */
     static BigDecimal parseDecimal(String s) {
@@ -617,10 +640,26 @@ public class BordereauImportService {
         return lower.contains("fourniture") && !lower.contains("pose");
     }
 
+    static boolean isFourniture(String designation, List<String> sectionPath) {
+        // Check the designation first, then the section path (section title
+        // may contain "FOURNITURE" even if the article designation doesn't).
+        if (isFourniture(designation)) return true;
+        if (sectionPath == null) return false;
+        String sectionLower = String.join(" ", sectionPath).toLowerCase();
+        return sectionLower.contains("fourniture") && !sectionLower.contains("pose");
+    }
+
     static boolean isPose(String designation) {
         if (designation == null) return false;
         String lower = designation.toLowerCase();
         return lower.contains("pose") || lower.contains("essai");
+    }
+
+    static boolean isPose(String designation, List<String> sectionPath) {
+        if (isPose(designation)) return true;
+        if (sectionPath == null) return false;
+        String sectionLower = String.join(" ", sectionPath).toLowerCase();
+        return sectionLower.contains("pose") || sectionLower.contains("essai");
     }
 
     // ═══════════════════════════════════════════════════════════════
