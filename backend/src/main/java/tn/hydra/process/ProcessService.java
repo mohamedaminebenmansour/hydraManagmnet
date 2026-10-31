@@ -1927,7 +1927,7 @@ public class ProcessService {
                     req.stepKey().toUpperCase().trim(),
                     req.name(), req.assigneeRole(), req.requiresAttachment(),
                     normalizeApprovalMode(req.approvalMode()),
-                    req.dueDays());
+                    normalizeDueDays(req.dueDays()));
         } catch (org.springframework.dao.DataIntegrityViolationException e) {
             throw new BusinessRuleException("STEP_EXISTS",
                     "Un step_order ou step_key en conflit existe déjà sur ce template");
@@ -1979,8 +1979,10 @@ public class ProcessService {
                     normalizeApprovalMode(req.approvalMode()), stepId);
         }
         if (req.dueDays() != null) {
+            // dueDays = 0 clears the delay (stores null); negative is rejected.
+            Integer normalized = normalizeDueDays(req.dueDays());
             jdbc.update("update process_template_step set due_days = ? where id = ?",
-                    req.dueDays(), stepId);
+                    normalized, stepId);
         }
 
         audit.log("PROCESS_STEP_UPDATED", "process_template_step", stepId,
@@ -2034,6 +2036,7 @@ public class ProcessService {
     /** Response for POST /api/processes/templates/{id}/test. */
     public record TestRuleResponse(UUID chosenTemplateId, String chosenTemplateKey,
                                    String chosenTemplateName, Integer chosenPriority,
+                                   UUID testedTemplateId, boolean testedMatched,
                                    String reason,
                                    List<ApprovalRuleService.CandidateResult> candidates) {}
 
@@ -2098,8 +2101,8 @@ public class ProcessService {
 
     /**
      *  GET /api/processes/templates/{id}/sentence — the rule as a French sentence.
-     *  Example: "Quand un paiement de plus de 5 000,000 TND est soumis, demander
-     *  au Finance puis au Gérant (2 jours chacun)."
+     *  Example: "Quand un paiement à partir de 5 000,000 TND est soumis,
+     *  validation par : Finance, puis Gérant (2 jours chacun)."
      */
     public String getTemplateSentence(Authentication auth, UUID templateId) {
         TemplateDetail t = getTemplate(auth, templateId);
@@ -2110,38 +2113,63 @@ public class ProcessService {
         } else {
             sb.append(cond).append(" ");
         }
-        sb.append("est soumis, demander");
+        sb.append("est soumis, validation par : ");
         List<TemplateStepView> steps = t.steps();
-        for (int i = 0; i < steps.size(); i++) {
-            sb.append(i == 0 ? " au " : " puis au ").append(roleLabel(steps.get(i).assigneeRole()));
+        // due_days: if every step has a non-null due_days and they are all equal
+        // -> suffix "(N jours chacun)"; otherwise each step carries its own delay.
+        Integer common = null;
+        boolean allSame = !steps.isEmpty();
+        for (TemplateStepView step : steps) {
+            if (step.dueDays() == null) { allSame = false; break; }
+            if (common == null) common = step.dueDays();
+            else if (!common.equals(step.dueDays())) { allSame = false; break; }
         }
-        // due_days: if all steps share the same non-null due_days -> "(N jours chacun)".
-        if (!steps.isEmpty()) {
-            Integer common = null;
-            boolean allSame = true, any = false;
-            for (TemplateStepView step : steps) {
-                if (step.dueDays() == null) { allSame = false; break; }
-                any = true;
-                if (common == null) common = step.dueDays();
-                else if (!common.equals(step.dueDays())) { allSame = false; break; }
+        for (int i = 0; i < steps.size(); i++) {
+            TemplateStepView step = steps.get(i);
+            if (i > 0) sb.append(", puis ");
+            sb.append(stepRender(step, t.orgId()));
+            if (!allSame && step.dueDays() != null) {
+                sb.append(" (").append(step.dueDays()).append(" jours)");
             }
-            if (any && allSame) {
-                sb.append(" (").append(common).append(" jours chacun)");
-            }
+        }
+        if (allSame && common != null) {
+            sb.append(" (").append(common).append(" jours chacun)");
         }
         sb.append(".");
         return sb.toString();
     }
 
-    /** Build the condition clause (e.g. "de plus de 5 000,000 TND"), empty if none. */
+    /** Render one step: ANY -> role label; ALL -> "tous les {plural}". */
+    private String stepRender(TemplateStepView step, UUID orgId) {
+        String label = roleLabel(step.assigneeRole(), orgId);
+        if ("ALL".equals(step.approvalMode())) {
+            return "tous les " + pluralRole(label);
+        }
+        return label;
+    }
+
+    /** Pluralize the first word of a French role label (Chef -> Chefs, Gérant -> Gérants). */
+    private static String pluralRole(String label) {
+        if (label == null || label.isBlank()) return "approbateurs";
+        String[] parts = label.split(" ", 2);
+        String first = parts[0];
+        if (first.endsWith("s") || first.endsWith("x") || first.endsWith("z")) {
+            return label; // already plural-looking
+        }
+        return first + "s" + (parts.length > 1 ? " " + parts[1] : "");
+    }
+
+    /** Build the condition clause (e.g. "à partir de 5 000,000 TND"), empty if none. */
     private String conditionClause(Map<String, Object> conditions, UUID orgId) {
         if (conditions == null || conditions.isEmpty()) return "";
         StringBuilder sb = new StringBuilder();
         BigDecimal min = toBdQuiet(conditions.get("amount_min"));
         BigDecimal max = toBdQuiet(conditions.get("amount_max"));
-        if (min != null) sb.append("de plus de ").append(formatAmount(min)).append(" TND");
-        if (max != null) {
-            if (sb.length() > 0) sb.append(" et ");
+        if (min != null && max != null) {
+            sb.append("de ").append(formatAmount(min)).append(" à ").append(formatAmount(max)).append(" TND");
+        } else if (min != null) {
+            sb.append("à partir de ").append(formatAmount(min)).append(" TND");
+        } else if (max != null) {
             sb.append("jusqu'à ").append(formatAmount(max)).append(" TND");
         }
         List<String> natures = toStringListQuiet(conditions.get("natures"));
@@ -2175,7 +2203,9 @@ public class ProcessService {
 
     /**
      *  POST /api/processes/templates/{id}/test — given a payment description,
-     *  returns which rule would be chosen today and why (no data written).
+     *  returns which rule would be chosen today and why. The template {id} is
+     *  tested AS IF it were active (even when inactive/draft), alongside the
+     *  other active rules. No data is written.
      */
     public TestRuleResponse testRule(Authentication auth, UUID templateId, TestRuleRequest req) {
         AppUser me = currentUser(auth);
@@ -2188,20 +2218,25 @@ public class ProcessService {
 
         RuleMatcher.PaymentFacts facts = new RuleMatcher.PaymentFacts(
                 req.projectId(), req.amount(), req.nature(), req.paymentMode());
-        ApprovalRuleService.RuleExplanation ex = approvalRuleService.explainRule(orgId, "CASH_PAYMENT", facts);
+        // Force-include {id} as if active so a draft rule can be tested.
+        ApprovalRuleService.RuleExplanation ex = approvalRuleService.explainRule(
+                orgId, "CASH_PAYMENT", facts, templateId);
 
         String chosenKey = null, chosenName = null;
         Integer chosenPriority = null;
+        boolean testedMatched = false;
         for (ApprovalRuleService.CandidateResult c : ex.candidates()) {
             if (c.templateId() != null && c.templateId().equals(ex.chosenId())) {
                 chosenKey = c.key();
                 chosenName = c.name();
                 chosenPriority = c.priority();
-                break;
+            }
+            if (c.templateId() != null && c.templateId().equals(templateId)) {
+                testedMatched = c.matched();
             }
         }
         return new TestRuleResponse(ex.chosenId(), chosenKey, chosenName, chosenPriority,
-                buildTestReason(ex), ex.candidates());
+                templateId, testedMatched, buildTestReason(ex), ex.candidates());
     }
 
     private String buildTestReason(ApprovalRuleService.RuleExplanation ex) {
@@ -2251,6 +2286,20 @@ public class ProcessService {
             throw new BadRequestException("INVALID_APPROVAL_MODE",
                     "Le mode d'approbation doit être ANY ou ALL");
         return m;
+    }
+
+    /**
+     *  Normalize a step due_days: null stays null (no delay); 0 clears the
+     *  delay (returns null so null is stored); negative is rejected with a
+     *  French error. Positive values pass through.
+     */
+    private static Integer normalizeDueDays(Integer dueDays) {
+        if (dueDays == null) return null;
+        int d = dueDays;
+        if (d < 0)
+            throw new BadRequestException("INVALID_DUE_DAYS",
+                    "Le délai de l'étape (en jours) ne peut pas être négatif");
+        return d == 0 ? null : d;
     }
 
     private Map<String, Object> validateConditions(UUID orgId, Map<String, Object> conditions) {
@@ -2406,16 +2455,16 @@ public class ProcessService {
         return amount == null ? "" : AMOUNT_FORMAT.format(amount);
     }
 
-    private static String roleLabel(String roleCode) {
-        if (roleCode == null) return "approbateur";
-        return switch (roleCode.trim().toUpperCase()) {
-            case "OWNER" -> "Gérant";
-            case "FINANCE" -> "Finance";
-            case "CHEF_CHANTIER" -> "Chef de chantier";
-            case "CHEF_PROJET" -> "Chef de projet";
-            case "ACHAT" -> "Achats";
-            default -> roleCode;
-        };
+    /** Role label from the role table (org-scoped preferred over system); OWNER -> "Gérant"; unknown -> the code. */
+    private String roleLabel(String roleCode, UUID orgId) {
+        if (roleCode == null || roleCode.isBlank()) return "approbateur";
+        String code = roleCode.trim();
+        if ("OWNER".equalsIgnoreCase(code)) return "Gérant";
+        List<String> rows = jdbc.query(
+                "select label from role where code = ? and (org_id = ? or org_id is null) " +
+                        "order by (org_id = ?) desc nulls last limit 1",
+                (rs, rn) -> rs.getString(1), code, orgId, orgId);
+        return rows.isEmpty() ? code : rows.get(0);
     }
 
     // ═══════════════════════════════════════════════════════════════

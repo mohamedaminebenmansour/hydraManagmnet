@@ -70,7 +70,7 @@ public class ApprovalRuleService {
         if (orgId == null || subjectType == null || facts == null) {
             return Optional.empty();
         }
-        List<RuleMatcher.RuleCandidate> cands = loadedCandidates(orgId, subjectType, facts).stream()
+        List<RuleMatcher.RuleCandidate> cands = loadedCandidates(orgId, subjectType, facts, null).stream()
                 .map(LoadedCandidate::candidate).toList();
         return RuleMatcher.pick(cands, facts);
     }
@@ -82,10 +82,20 @@ public class ApprovalRuleService {
      *  data written).
      */
     public RuleExplanation explainRule(UUID orgId, String subjectType, RuleMatcher.PaymentFacts facts) {
+        return explainRule(orgId, subjectType, facts, null);
+    }
+
+    /**
+     *  Same as {@link #explainRule} but force-includes {@code forceIncludeId} as
+     *  if it were active (even when inactive/draft), so the /test endpoint can
+     *  test a draft rule alongside the live active rules. No data written.
+     */
+    public RuleExplanation explainRule(UUID orgId, String subjectType, RuleMatcher.PaymentFacts facts,
+                                       UUID forceIncludeId) {
         if (orgId == null || subjectType == null || facts == null) {
             return new RuleExplanation(null, List.of());
         }
-        List<LoadedCandidate> loaded = loadedCandidates(orgId, subjectType, facts);
+        List<LoadedCandidate> loaded = loadedCandidates(orgId, subjectType, facts, forceIncludeId);
         List<RuleMatcher.RuleCandidate> cands = loaded.stream().map(LoadedCandidate::candidate).toList();
         UUID chosen = RuleMatcher.pick(cands, facts).orElse(null);
         List<CandidateResult> results = new ArrayList<>();
@@ -97,15 +107,20 @@ public class ApprovalRuleService {
         return new RuleExplanation(chosen, results);
     }
 
-    /** Load + build RuleCandidates for every active template visible to the org. */
-    private List<LoadedCandidate> loadedCandidates(UUID orgId, String subjectType, RuleMatcher.PaymentFacts facts) {
+    /** Load + build RuleCandidates for every active template visible to the org.
+     *  forceIncludeId (nullable) is included as if active — used by /test. */
+    private List<LoadedCandidate> loadedCandidates(UUID orgId, String subjectType, RuleMatcher.PaymentFacts facts,
+                                                   UUID forceIncludeId) {
+        // (active = true or id = ?): when forceIncludeId is null, `id = null` is
+        // never true, so only active templates are loaded; when it is a UUID,
+        // that template is included regardless of active (as if active).
         List<Map<String, Object>> templates = jdbc.queryForList("""
                 select id, key, name, priority, conditions::text as conditions,
                        (org_id is not null) as org_scoped, created_at
                 from process_template
-                where subject_type = ? and active = true
+                where subject_type = ? and (active = true or id = ?)
                   and (org_id = ? or org_id is null)
-                """, subjectType, orgId);
+                """, subjectType, forceIncludeId, orgId);
 
         if (templates.isEmpty()) {
             return List.of();

@@ -188,8 +188,8 @@ class RuleBuilderTest {
         svc.addStep(ownerAuth, t, new ProcessService.CreateStepRequest(2, "APPROVE", "Approve", "OWNER", false, "ANY", 2));
 
         String s = svc.getTemplateSentence(ownerAuth, t);
-        assertThat(s).contains("de plus de 5 000,000 TND")
-                .contains("au Finance puis au Gérant")
+        assertThat(s).contains("à partir de 5 000,000 TND")
+                .contains("validation par : Finance, puis Gérant")
                 .contains("(2 jours chacun)");
     }
 
@@ -200,7 +200,7 @@ class RuleBuilderTest {
 
         String s = svc.getTemplateSentence(ownerAuth, t);
         assertThat(s).contains("jusqu'à 1 000,000 TND")
-                .contains("au Finance");
+                .contains("validation par : Finance");
         assertThat(s).doesNotContain("jours");
     }
 
@@ -210,7 +210,7 @@ class RuleBuilderTest {
         svc.addStep(ownerAuth, t, new ProcessService.CreateStepRequest(1, "APPROVE", "Approve", "OWNER", false, "ANY", null));
 
         String s = svc.getTemplateSentence(ownerAuth, t);
-        assertThat(s).contains("sans condition").contains("au Gérant");
+        assertThat(s).contains("sans condition").contains("validation par : Gérant");
     }
 
     // ══════════════════════════════════════════════════════════════
@@ -233,5 +233,83 @@ class RuleBuilderTest {
                 new ProcessService.TestRuleRequest(projectId, new BigDecimal("5000"), "SOUS_TRAITANCE", "CHEQUE"));
         assertThat(r5000.chosenTemplateKey()).isEqualTo("PAYMENT_APPROVAL");
         assertThat(r5000.reason()).contains("PAYMENT_APPROVAL");
+    }
+
+    // ══════════════════════════════════════════════════════════════
+    //  Fix 1 — /test on an INACTIVE copy of FINANCE_ONLY: the copy is tested
+    //  as if active, wins for 500 TND, matched = true, nothing is written.
+    // ══════════════════════════════════════════════════════════════
+    @Test
+    void testEndpoint_inactiveCopyOfFinanceOnly_winsMatchedTrueNothingWritten() {
+        UUID finOnlyId = systemTemplateId("FINANCE_ONLY");
+        // Copy FINANCE_ONLY (inactive) into an org-scoped inactive copy.
+        ProcessService.TemplateDetail copy = svc.copyTemplate(ownerAuth, finOnlyId);
+        assertThat(copy.active()).isFalse();
+        UUID copyId = copy.id();
+
+        long countBefore = jdbc.queryForObject("select count(*) from process_template", Long.class);
+
+        ProcessService.TestRuleResponse r = svc.testRule(ownerAuth, copyId,
+                new ProcessService.TestRuleRequest(projectId, new BigDecimal("500"), "SOUS_TRAITANCE", "CHEQUE"));
+
+        // The inactive copy wins (tested as if active) for a 500 TND payment.
+        assertThat(r.chosenTemplateId()).isEqualTo(copyId);
+        assertThat(r.testedTemplateId()).isEqualTo(copyId);
+        assertThat(r.testedMatched()).isTrue();
+
+        // Nothing was written: template count unchanged, copy still inactive.
+        long countAfter = jdbc.queryForObject("select count(*) from process_template", Long.class);
+        assertThat(countAfter).isEqualTo(countBefore);
+        Boolean stillInactive = jdbc.queryForObject(
+                "select active from process_template where id = ?", Boolean.class, copyId);
+        assertThat(stillInactive).isFalse();
+    }
+
+    // ══════════════════════════════════════════════════════════════
+    //  Fix 2 — sentence with two different delays (inline per step).
+    // ══════════════════════════════════════════════════════════════
+    @Test
+    void sentence_twoDifferentDelays() {
+        UUID t = createRule(new HashMap<>());
+        svc.addStep(ownerAuth, t, new ProcessService.CreateStepRequest(1, "DRAFT", "Draft", "FINANCE", false, "ANY", 2));
+        svc.addStep(ownerAuth, t, new ProcessService.CreateStepRequest(2, "APPROVE", "Approve", "OWNER", false, "ANY", 5));
+
+        String s = svc.getTemplateSentence(ownerAuth, t);
+        assertThat(s).contains("Finance (2 jours)")
+                .contains("puis Gérant (5 jours)");
+        assertThat(s).doesNotContain("chacun");
+    }
+
+    @Test
+    void sentence_allModeStep_tousLesPluralRole() {
+        // Org-scoped role with a label that pluralizes nicely.
+        jdbc.update("insert into role (id, org_id, code, label) values (?, ?, 'CHEF_PROJET', 'Chef de projet')",
+                UUID.randomUUID(), orgId);
+        UUID t = createRule(new HashMap<>());
+        svc.addStep(ownerAuth, t, new ProcessService.CreateStepRequest(1, "APPROVE", "Approve", "CHEF_PROJET", false, "ALL", null));
+
+        String s = svc.getTemplateSentence(ownerAuth, t);
+        assertThat(s).contains("tous les Chefs de projet");
+    }
+
+    // ══════════════════════════════════════════════════════════════
+    //  Fix 3 — updateStep dueDays = 0 clears the delay (stores null).
+    // ══════════════════════════════════════════════════════════════
+    @Test
+    void updateStep_dueDaysZeroClearsTheDelay() {
+        UUID t = createRule(new HashMap<>());
+        UUID step = svc.addStep(ownerAuth, t,
+                new ProcessService.CreateStepRequest(1, "APPROVE", "Approve", "FINANCE", false, "ANY", 2))
+                .steps().get(0).id();
+        Integer before = jdbc.queryForObject(
+                "select due_days from process_template_step where id = ?", Integer.class, step);
+        assertThat(before).isEqualTo(2);
+
+        svc.updateStep(ownerAuth, t, step,
+                new ProcessService.UpdateStepRequest(null, null, false, null, null, 0));
+
+        Integer after = jdbc.queryForObject(
+                "select due_days from process_template_step where id = ?", Integer.class, step);
+        assertThat(after).isNull();
     }
 }
