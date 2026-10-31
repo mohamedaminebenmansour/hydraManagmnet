@@ -295,8 +295,9 @@ interface DraftStep {
             </div>
             @if (testResult(); as tr) {
               <div class="test-result">
-                <div class="tr-chosen"><i class="pi pi-bolt"></i> Règle choisie : <strong>{{ tr.chosenTemplateKey ?? 'aucune' }}</strong></div>
-                <div class="tr-matched">Cette règle correspond : <strong>{{ tr.testedMatched ? 'Oui' : 'Non' }}</strong></div>
+                @if (testVerdict(); as v) {
+                  <div class="verdict {{ v.cls }}">{{ v.msg }}</div>
+                }
                 <div class="tr-reason">{{ tr.reason }}</div>
               </div>
             }
@@ -414,15 +415,17 @@ export class ProcessBuilderComponent implements OnInit {
     });
   }
 
-  /** Map a backend condition error message to the chip it concerns. */
-  private chipForError(msg: string): string {
-    const m = (msg ?? '').toLowerCase();
-    if (m.includes('minimum')) return 'amount_min';
-    if (m.includes('maximum')) return 'amount_max';
-    if (m.includes('nature')) return 'natures';
-    if (m.includes('règlement') || m.includes('reglement') || m.includes('mode')) return 'payment_modes';
-    if (m.includes('chantier')) return 'project_ids';
-    return '';
+  /** Map a backend condition error CODE to the chip it concerns. */
+  private chipForError(code: string | undefined): string {
+    switch (code) {
+      case 'INVALID_AMOUNT_MIN':
+      case 'INVALID_AMOUNT_RANGE': return 'amount_min';
+      case 'INVALID_AMOUNT_MAX': return 'amount_max';
+      case 'INVALID_NATURES': return 'natures';
+      case 'INVALID_PAYMENT_MODES': return 'payment_modes';
+      case 'INVALID_PROJECT_IDS': return 'project_ids';
+      default: return '';
+    }
   }
 
   toAmount(v: any): number | null {
@@ -476,7 +479,7 @@ export class ProcessBuilderComponent implements OnInit {
       if (r.ok) {
         this.goto(3);
       } else {
-        const field = this.chipForError(r.error ?? '');
+        const field = this.chipForError(r.code);
         if (field) this.chipErrors.update(m => ({ ...m, [field]: r.error! }));
         this.msgs.add({ severity: 'error', summary: 'Condition invalide', detail: r.error });
       }
@@ -537,19 +540,26 @@ export class ProcessBuilderComponent implements OnInit {
   private persistOrder(): void {
     const id = this.templateId();
     if (!id) return;
-    const steps = this.steps();
-    // Two-phase: push to a temp range first to avoid the (template_id, step_order)
-    // unique constraint clashing on swap, then set the final 1..N order.
-    const temp = steps.map((s, i) => ({ stepId: s.id, stepOrder: 1000 + i + 1 }));
-    const final = steps.map((s, i) => ({ stepId: s.id, stepOrder: i + 1 }));
+    // Single call — the backend does the swap in one transaction (temp offset
+    // then final order), so one request is enough.
+    const items = this.steps().map((s, i) => ({ stepId: s.id, stepOrder: i + 1 }));
     this.saving.set(true);
-    this.processService.reorderSteps(id, temp).subscribe(ok1 => {
-      if (!ok1) { this.saving.set(false); this.reloadTemplate(); return; }
-      this.processService.reorderSteps(id, final).subscribe(ok2 => {
-        this.saving.set(false);
-        if (!ok2) this.reloadTemplate();
-      });
+    this.processService.reorderSteps(id, items).subscribe(ok => {
+      this.saving.set(false);
+      if (!ok) this.reloadTemplate();
     });
+  }
+
+  /** One-line verdict for the test box: green if this rule wins, orange if
+   *  another wins, grey if this rule doesn't match. Uses chosenTemplateName. */
+  testVerdict(): { msg: string; cls: string } | null {
+    const tr = this.testResult();
+    if (!tr) return null;
+    if (!tr.testedMatched) return { msg: 'Cette règle ne correspond pas à ce paiement', cls: 'verdict-grey' };
+    if (tr.chosenTemplateId && tr.chosenTemplateId === this.templateId()) {
+      return { msg: 'Cette règle s’appliquerait à ce paiement', cls: 'verdict-green' };
+    }
+    return { msg: `Une autre règle s'appliquerait : ${tr.chosenTemplateName ?? '—'}`, cls: 'verdict-orange' };
   }
 
   // ── Screen 4 — Aperçu ─────────────────────────────────────────

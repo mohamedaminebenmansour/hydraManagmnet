@@ -188,8 +188,10 @@ export class ProcessHubComponent implements OnInit {
   loading = signal(true);
   copyingId = signal<string | null>(null);
 
-  // System templates (org_id null) — the "Modèles prêts" quick-start section.
-  readyTemplates = computed(() => this.templates().filter(t => !t.orgId));
+  // System templates (org_id null) with subjectType CASH_PAYMENT — the
+  // "Modèles prêts" quick-start section.
+  readyTemplates = computed(() =>
+    this.templates().filter(t => !t.orgId && t.subjectType === 'CASH_PAYMENT'));
 
   // Helpers exposed to template
   typeV = processTypeVisual;

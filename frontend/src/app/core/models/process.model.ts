@@ -301,11 +301,12 @@ export interface TestRuleResponse {
   candidates: CandidateResult[];
 }
 
-/** Generic save result that surfaces the backend error message (no toast). */
+/** Generic save result that surfaces the backend error code + message (no toast). */
 export interface SaveResult<T> {
   ok: boolean;
   detail?: T;
   error?: string;
+  code?: string;
 }
 
 /** Mapper: convertit n'importe quelle réponse backend en TemplateDetail. */

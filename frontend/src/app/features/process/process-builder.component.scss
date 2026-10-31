@@ -384,4 +384,8 @@
   .tr-chosen { font-size: 15px; margin-bottom: 4px; i { color: #0ea5e9; } }
   .tr-matched { color: #475569; margin-bottom: 4px; }
   .tr-reason { color: #64748b; font-style: italic; }
+  .verdict { font-weight: 700; font-size: 14px; margin-bottom: 4px; }
+  .verdict-green { color: #16a34a; }
+  .verdict-orange { color: #ea580c; }
+  .verdict-grey { color: #64748b; }
 }

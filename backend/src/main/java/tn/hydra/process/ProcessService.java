@@ -1886,6 +1886,11 @@ public class ProcessService {
                     "Template introuvable ou non modifiable (template système)");
         }
 
+        // Two-phase in one transaction: first shift ALL steps of the template to a
+        // temp range so the (template_id, step_order) unique constraint cannot
+        // clash during the swap, then set the final orders from the items.
+        jdbc.update("update process_template_step set step_order = step_order + 100000 where template_id = ?",
+                templateId);
         if (items != null) {
             for (ReorderStepItem item : items) {
                 jdbc.update(
@@ -2310,48 +2315,50 @@ public class ProcessService {
             String key = e.getKey();
             switch (key) {
                 case "amount_min" -> {
-                    BigDecimal bd = toBd(e.getValue(), "Le montant minimum doit être un nombre");
-                    if (bd.signum() < 0) throw new BadRequestException("INVALID_CONDITION",
+                    BigDecimal bd = toBd(e.getValue(), "INVALID_AMOUNT_MIN",
+                            "Le montant minimum doit être un nombre");
+                    if (bd.signum() < 0) throw new BadRequestException("INVALID_AMOUNT_MIN",
                             "Le montant minimum ne peut pas être négatif");
-                    if (bd.scale() > 3) throw new BadRequestException("INVALID_CONDITION",
+                    if (bd.scale() > 3) throw new BadRequestException("INVALID_AMOUNT_MIN",
                             "Le montant minimum doit avoir au plus 3 décimales");
                     amountMin = bd;
                     normalized.put(key, bd);
                 }
                 case "amount_max" -> {
-                    BigDecimal bd = toBd(e.getValue(), "Le montant maximum doit être un nombre");
-                    if (bd.signum() < 0) throw new BadRequestException("INVALID_CONDITION",
+                    BigDecimal bd = toBd(e.getValue(), "INVALID_AMOUNT_MAX",
+                            "Le montant maximum doit être un nombre");
+                    if (bd.signum() < 0) throw new BadRequestException("INVALID_AMOUNT_MAX",
                             "Le montant maximum ne peut pas être négatif");
-                    if (bd.scale() > 3) throw new BadRequestException("INVALID_CONDITION",
+                    if (bd.scale() > 3) throw new BadRequestException("INVALID_AMOUNT_MAX",
                             "Le montant maximum doit avoir au plus 3 décimales");
                     amountMax = bd;
                     normalized.put(key, bd);
                 }
                 case "natures" -> {
-                    List<String> codes = toStringList(e.getValue(), "Les natures doivent être une liste");
+                    List<String> codes = toStringList(e.getValue(), "INVALID_NATURES", "Les natures doivent être une liste");
                     for (String code : codes) {
                         if (natureCode(code) == null)
-                            throw new BadRequestException("INVALID_CONDITION", "Nature inconnue : " + code);
+                            throw new BadRequestException("INVALID_NATURES", "Nature inconnue : " + code);
                     }
                     normalized.put(key, codes);
                 }
                 case "payment_modes" -> {
-                    List<String> codes = toStringList(e.getValue(), "Les modes de règlement doivent être une liste");
+                    List<String> codes = toStringList(e.getValue(), "INVALID_PAYMENT_MODES", "Les modes de règlement doivent être une liste");
                     for (String code : codes) {
                         if (paymentModeCode(code) == null)
-                            throw new BadRequestException("INVALID_CONDITION", "Mode de règlement inconnu : " + code);
+                            throw new BadRequestException("INVALID_PAYMENT_MODES", "Mode de règlement inconnu : " + code);
                     }
                     normalized.put(key, codes);
                 }
                 case "project_ids" -> {
-                    List<String> ids = toStringList(e.getValue(), "Les chantiers doivent être une liste");
+                    List<String> ids = toStringList(e.getValue(), "INVALID_PROJECT_IDS", "Les chantiers doivent être une liste");
                     for (String idStr : ids) {
                         UUID pid = toUuid(idStr);
                         Integer cnt = jdbc.queryForObject(
                                 "select count(*) from project where id = ? and org_id = ?",
                                 Integer.class, pid, orgId);
                         if (cnt == null || cnt == 0)
-                            throw new BadRequestException("INVALID_CONDITION",
+                            throw new BadRequestException("INVALID_PROJECT_IDS",
                                     "Chantier introuvable dans votre organisation : " + idStr);
                     }
                     normalized.put(key, ids);
@@ -2362,7 +2369,7 @@ public class ProcessService {
             }
         }
         if (amountMin != null && amountMax != null && amountMin.compareTo(amountMax) > 0)
-            throw new BadRequestException("INVALID_CONDITION",
+            throw new BadRequestException("INVALID_AMOUNT_RANGE",
                     "Le montant minimum ne peut pas dépasser le montant maximum");
         return normalized;
     }
@@ -2379,8 +2386,8 @@ public class ProcessService {
         catch (IllegalArgumentException e) { return null; }
     }
 
-    private static BigDecimal toBd(Object value, String errMsg) {
-        if (value == null) throw new BadRequestException("INVALID_CONDITION", errMsg);
+    private static BigDecimal toBd(Object value, String code, String errMsg) {
+        if (value == null) throw new BadRequestException(code, errMsg);
         try {
             if (value instanceof BigDecimal bd) return bd;
             if (value instanceof Number n) return new BigDecimal(n.toString());
@@ -2389,12 +2396,12 @@ public class ProcessService {
         } catch (BadRequestException e) {
             throw e;
         } catch (Exception e) {
-            throw new BadRequestException("INVALID_CONDITION", errMsg);
+            throw new BadRequestException(code, errMsg);
         }
     }
 
-    private static List<String> toStringList(Object value, String errMsg) {
-        if (value == null) throw new BadRequestException("INVALID_CONDITION", errMsg);
+    private static List<String> toStringList(Object value, String code, String errMsg) {
+        if (value == null) throw new BadRequestException(code, errMsg);
         List<String> out = new ArrayList<>();
         if (value instanceof List<?> col) {
             for (Object o : col) out.add(o == null ? null : o.toString());
@@ -2407,16 +2414,16 @@ public class ProcessService {
     private static UUID toUuid(String s) {
         try { return UUID.fromString(s.trim()); }
         catch (Exception e) {
-            throw new BadRequestException("INVALID_CONDITION", "Identifiant de chantier invalide : " + s);
+            throw new BadRequestException("INVALID_PROJECT_IDS", "Identifiant de chantier invalide : " + s);
         }
     }
 
     private static BigDecimal toBdQuiet(Object value) {
-        try { return toBd(value, "x"); } catch (Exception e) { return null; }
+        try { return toBd(value, "INVALID_CONDITION", "x"); } catch (Exception e) { return null; }
     }
 
     private static List<String> toStringListQuiet(Object value) {
-        try { return toStringList(value, "x"); } catch (Exception e) { return List.of(); }
+        try { return toStringList(value, "INVALID_CONDITION", "x"); } catch (Exception e) { return List.of(); }
     }
 
     // ── conditions JSON <-> Map ───────────────────────────────────

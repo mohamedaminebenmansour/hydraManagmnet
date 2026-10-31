@@ -67,7 +67,7 @@ export class ProcessService {
   createTemplate(body: CreateTemplateBody): Observable<SaveResult<TemplateDetail>> {
     return this.http.post<AnyRaw>('/api/processes/templates', body).pipe(
       map(raw => ({ ok: true, detail: this.normalizeTemplateDetail(raw) })),
-      catchError(err => of({ ok: false, error: this.errMsg(err, 'Impossible de créer la règle') }))
+      catchError(err => of({ ok: false, error: this.errMsg(err, 'Impossible de créer la règle'), code: this.errCode(err) }))
     );
   }
 
@@ -75,7 +75,7 @@ export class ProcessService {
   updateTemplate(id: string, body: UpdateTemplateBody): Observable<SaveResult<TemplateDetail>> {
     return this.http.put<AnyRaw>(`/api/processes/templates/${id}`, body).pipe(
       map(raw => ({ ok: true, detail: this.normalizeTemplateDetail(raw) })),
-      catchError(err => of({ ok: false, error: this.errMsg(err, 'Impossible de mettre à jour la règle') }))
+      catchError(err => of({ ok: false, error: this.errMsg(err, 'Impossible de mettre à jour la règle'), code: this.errCode(err) }))
     );
   }
 
@@ -123,7 +123,7 @@ export class ProcessService {
   addStep(templateId: string, body: CreateStepBody): Observable<SaveResult<TemplateDetail>> {
     return this.http.post<AnyRaw>(`/api/processes/templates/${templateId}/steps`, body).pipe(
       map(raw => ({ ok: true, detail: this.normalizeTemplateDetail(raw) })),
-      catchError(err => of({ ok: false, error: this.errMsg(err, 'Impossible d\'ajouter l\'étape') }))
+      catchError(err => of({ ok: false, error: this.errMsg(err, 'Impossible d\'ajouter l\'étape'), code: this.errCode(err) }))
     );
   }
 
@@ -131,7 +131,7 @@ export class ProcessService {
   updateStep(templateId: string, stepId: string, body: UpdateStepBody): Observable<SaveResult<TemplateDetail>> {
     return this.http.put<AnyRaw>(`/api/processes/templates/${templateId}/steps/${stepId}`, body).pipe(
       map(raw => ({ ok: true, detail: this.normalizeTemplateDetail(raw) })),
-      catchError(err => of({ ok: false, error: this.errMsg(err, 'Impossible de modifier l\'étape') }))
+      catchError(err => of({ ok: false, error: this.errMsg(err, 'Impossible de modifier l\'étape'), code: this.errCode(err) }))
     );
   }
 
@@ -204,6 +204,10 @@ export class ProcessService {
 
   private errMsg(err: any, fallback: string): string {
     return err?.error?.message ?? err?.message ?? fallback;
+  }
+
+  private errCode(err: any): string | undefined {
+    return err?.error?.code ?? undefined;
   }
 
   /** POST /api/processes/start */
