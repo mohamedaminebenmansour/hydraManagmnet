@@ -20,8 +20,9 @@ import { ProjectService } from '@app/core/services/project.service';
 import { TicketService } from '@app/core/services/ticket.service';
 import {
   DocType, DOC_TYPE_OPTS, DOC_TYPE_LABELS,
-  DOC_STATUS_LABELS, DOC_STATUS_SEVERITY, Document
+  DOC_STATUS_LABELS, DOC_STATUS_SEVERITY, Document, Revision
 } from '@app/core/models/document.model';
+import { OpenOutcome, isPreviewable } from '@app/core/services/document.service';
 import { Ticket } from '@app/core/models/ticket.model';
 import { Folder } from '@app/core/models/folder.model';
 import { EmptyStateComponent } from '@app/shared/empty-state.component';
@@ -194,6 +195,31 @@ export class DocumentsComponent implements OnInit {
       },
       error: () => this.msgs.add({ severity: 'error', summary: 'Erreur', detail: 'Téléchargement impossible' })
     });
+  }
+
+  // PHASE-B-DOC-VIEW — Ouvrir (preview pdf/image in new tab) with French toasts.
+  latestRevByDoc = signal<Record<string, Revision>>({});
+  openDoc(d: Document): void {
+    this.documentService.revisions(d.id).subscribe({
+      next: revs => {
+        const latest = revs && revs.length ? revs[revs.length - 1] : null;
+        if (!latest) { this.msgs.add({ severity: 'warn', summary: 'Aucune révision' }); return; }
+        this.latestRevByDoc.update(m => ({ ...m, [d.id]: latest }));
+        this.documentService.openRevision(d.id, latest.id, latest.fileName ?? d.reference).subscribe(o => this.onOpenOutcome(o));
+      },
+      error: () => this.msgs.add({ severity: 'error', summary: 'Erreur', detail: 'Ouverture impossible' })
+    });
+  }
+  canPreview(d: Document): boolean {
+    const r = this.latestRevByDoc()[d.id];
+    return !!r && isPreviewable(r.mimeType);
+  }
+  onOpenOutcome(o: OpenOutcome): void {
+    if (o.kind === 'error') {
+      this.msgs.add({ severity: 'error', summary: 'Ouverture impossible', detail: o.message });
+    } else if (o.kind === 'downloaded' && o.reason === 'popup-blocked') {
+      this.msgs.add({ severity: 'info', summary: 'Fenêtre bloquée', detail: 'Le fichier a été téléchargé à la place.' });
+    }
   }
 
   private doDownload(d: Document, revId: string, name?: string | null): void {

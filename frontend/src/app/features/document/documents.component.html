@@ -66,6 +66,11 @@
               <span class="c-actions">
                 <p-button icon="pi pi-eye" [rounded]="true" [text]="true"
                           (onClick)="view(d)" [attr.aria-label]="'Voir ' + d.reference" />
+                <!-- PHASE-B-DOC-VIEW: Ouvrir (preview pdf/image in new tab) -->
+                <p-button icon="pi pi-external-link" [rounded]="true" [text]="true"
+                          severity="info" (onClick)="openDoc(d)"
+                          [attr.aria-label]="'Ouvrir ' + d.reference"
+                          [disabled]="!canPreview(d)" />
                 <p-button icon="pi pi-download" [rounded]="true" [text]="true"
                           (onClick)="download(d)" [attr.aria-label]="'Télécharger ' + d.reference" />
                 @if (canUpload()) {

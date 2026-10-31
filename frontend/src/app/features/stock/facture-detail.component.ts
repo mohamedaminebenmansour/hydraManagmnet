@@ -4,6 +4,7 @@ import { DocumentPickerDialogComponent } from './document-picker-dialog.componen
 import { ButtonModule } from 'primeng/button';
 import { MessageService } from 'primeng/api';
 import { PurchaseService } from '@app/core/services/purchase.service';
+import { DocumentService, OpenOutcome } from '@app/core/services/document.service';
 import { AuthService } from '@app/core/auth.service';
 import { PERM } from '@app/core/permissions';
 import { Facture, factureStatusVisual, formatDate, formatQty } from '@app/core/models/stock.model';
@@ -35,7 +36,10 @@ import { Facture, factureStatusVisual, formatDate, formatQty } from '@app/core/m
           @if (fac()?.documentId) {
             <div class="doc-link">
               <i class="pi pi-file-pdf"></i>
-              <a [routerLink]="'/documents/' + fac()?.documentId" class="doc-open">Voir le justificatif (PDF)</a>
+              <span class="doc-label">Justificatif lié</span>
+              <button pButton label="Ouvrir" icon="pi pi-external-link" [text]="true" severity="info" (click)="openProof()"></button>
+              <button pButton label="Télécharger" icon="pi pi-download" [text]="true" (click)="downloadProof()"></button>
+              <!-- PHASE-B-DOC-VIEW -->
             </div>
           } @else if (canMove()) {
             <div class="doc-link">
@@ -100,11 +104,13 @@ import { Facture, factureStatusVisual, formatDate, formatQty } from '@app/core/m
     .doc-link { display: flex; align-items: center; gap: 8px; margin-bottom: 16px; padding: 10px 12px; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; font-size: 14px; }
     .doc-link i { color: #dc2626; }
     .doc-open { color: #2563eb; text-decoration: none; font-weight: 600; }
+    .doc-label { font-weight: 600; color: #475569; margin-right: 4px; }
     .doc-open:hover { text-decoration: underline; }
   `]
 })
 export class FactureDetailComponent implements OnInit {
   private purchase = inject(PurchaseService);
+  private documentService = inject(DocumentService); // PHASE-B-DOC-VIEW
   private auth = inject(AuthService);
   private route = inject(ActivatedRoute);
   private msgs = inject(MessageService);
@@ -126,6 +132,21 @@ export class FactureDetailComponent implements OnInit {
         this.purchase.getFacture(f.id).subscribe(refreshed => { if (refreshed) this.fac.set(refreshed); });
       }
     });
+  }
+
+  // PHASE-B-DOC-VIEW — Ouvrir / Télécharger the linked justificatif (latest revision).
+  onProofOutcome(o: OpenOutcome, verb: 'Ouverture' | 'Téléchargement'): void {
+    if (o.kind === 'error') this.msgs.add({ severity: 'error', summary: verb + ' impossible', detail: o.message });
+    else if (o.kind === 'downloaded' && o.reason === 'popup-blocked')
+      this.msgs.add({ severity: 'info', summary: 'Fenêtre bloquée', detail: 'Le fichier a été téléchargé à la place.' });
+  }
+  openProof(): void {
+    const f = this.fac(); if (!f?.documentId) return;
+    this.documentService.openDocument(f.documentId, f.reference).subscribe(o => this.onProofOutcome(o, 'Ouverture'));
+  }
+  downloadProof(): void {
+    const f = this.fac(); if (!f?.documentId) return;
+    this.documentService.downloadDocument(f.documentId, f.reference).subscribe(o => this.onProofOutcome(o, 'Téléchargement'));
   }
 
   validate(): void {

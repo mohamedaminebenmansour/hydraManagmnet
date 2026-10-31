@@ -12,7 +12,7 @@ import { ProgressBarModule } from 'primeng/progressbar';
 import { MessageService } from 'primeng/api';
 import { AuthService } from '@app/core/auth.service';
 import { PERM } from '@app/core/permissions';
-import { DocumentService } from '@app/core/services/document.service';
+import { DocumentService, OpenOutcome, isPreviewable } from '@app/core/services/document.service';
 import { TicketService } from '@app/core/services/ticket.service';
 import {
   DOC_TYPE_LABELS, DOC_STATUS_LABELS, DOC_STATUS_SEVERITY, Document, Revision
@@ -126,6 +126,17 @@ export class DocumentDetailComponent implements OnInit {
       error: () => this.msgs.add({ severity: 'error', summary: 'Erreur', detail: 'Téléchargement impossible' })
     });
   }
+
+  // PHASE-B-DOC-VIEW — Ouvrir (preview pdf/image in new tab) with French toasts.
+  open(r: Revision): void {
+    if (!this.docId) { return; }
+    this.documentService.openRevision(this.docId, r.id, r.fileName ?? r.revLabel).subscribe(o => {
+      if (o.kind === 'error') this.msgs.add({ severity: 'error', summary: 'Ouverture impossible', detail: o.message });
+      else if (o.kind === 'downloaded' && o.reason === 'popup-blocked')
+        this.msgs.add({ severity: 'info', summary: 'Fenêtre bloquée', detail: 'Le fichier a été téléchargé à la place.' });
+    });
+  }
+  canPreview(r: Revision): boolean { return isPreviewable(r.mimeType); }
 
   openRev(): void { this.revLabel = ''; this.revNote = ''; this.showRevDialog = true; }
 

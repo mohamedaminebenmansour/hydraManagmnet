@@ -4,6 +4,7 @@ import { ButtonModule } from 'primeng/button';
 import { DialogModule } from 'primeng/dialog';
 import { MessageService } from 'primeng/api';
 import { PurchaseService } from '@app/core/services/purchase.service';
+import { DocumentService, OpenOutcome } from '@app/core/services/document.service';
 import { AuthService } from '@app/core/auth.service';
 import { PERM } from '@app/core/permissions';
 import { PurchaseOrder, bcStatusVisual } from '@app/core/models/stock.model';
@@ -30,6 +31,15 @@ import { PurchaseOrder, bcStatusVisual } from '@app/core/models/stock.model';
             <div class="info"><label>Lignes</label><span>{{ bc()?.lineCount ?? 0 }}</span></div>
           </div>
           @if (bc()?.notes) { <div class="notes"><i class="pi pi-info-circle"></i> {{ bc()?.notes }}</div> }
+          @if (bc()?.documentId) {
+            <div class="doc-link">
+              <i class="pi pi-file-pdf"></i>
+              <span class="doc-label">BC numérisé</span>
+              <button pButton label="Ouvrir" icon="pi pi-external-link" [text]="true" severity="info" (click)="openProof()"></button>
+              <button pButton label="Télécharger" icon="pi pi-download" [text]="true" (click)="downloadProof()"></button>
+              <!-- PHASE-B-DOC-VIEW -->
+            </div>
+          }
           <table class="lines-table">
             <thead><tr><th>Article</th><th class="num">Qté</th><th>Unité</th></tr></thead>
             <tbody>
@@ -86,6 +96,9 @@ import { PurchaseOrder, bcStatusVisual } from '@app/core/models/stock.model';
     .lines-table td { padding: 10px 12px; border-bottom: 1px solid #f1f5f9; }
     .lines-table td.num { text-align: right; font-variant-numeric: tabular-nums; }
     .actions { display: flex; gap: 8px; border-top: 1px solid #e2e8f0; padding-top: 16px; }
+    .doc-link { display: flex; align-items: center; gap: 8px; margin-bottom: 16px; padding: 10px 12px; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; font-size: 14px; }
+    .doc-link i { color: #dc2626; }
+    .doc-label { font-weight: 600; color: #475569; margin-right: 4px; }
     .chip { display: inline-flex; align-items: center; gap: 5px; padding: 3px 10px; border-radius: 999px; font-size: 12px; font-weight: 700; background: var(--s); color: var(--c); }
     .loading { text-align: center; padding: 40px; color: #64748b; }
     .close-hint { font-size: 14px; color: #475569; line-height: 1.5; }
@@ -95,6 +108,7 @@ import { PurchaseOrder, bcStatusVisual } from '@app/core/models/stock.model';
 })
 export class BcDetailComponent implements OnInit {
   private purchase = inject(PurchaseService);
+  private documentService = inject(DocumentService); // PHASE-B-DOC-VIEW
   private auth = inject(AuthService);
   private route = inject(ActivatedRoute);
   private router = inject(Router);
@@ -134,5 +148,21 @@ export class BcDetailComponent implements OnInit {
   cancel(): void {
     const bc = this.bc(); if (!bc) return;
     this.purchase.cancelBc(bc.id, 'Annulé depuis le détail').subscribe(updated => { if (updated) { this.bc.set(updated); this.msgs.add({ severity: 'info', summary: 'BC annulé' }); } });
+  }
+
+
+  // PHASE-B-DOC-VIEW — Ouvrir / Télécharger the linked BC document (latest revision).
+  onProofOutcome(o: OpenOutcome, verb: 'Ouverture' | 'Téléchargement'): void {
+    if (o.kind === 'error') this.msgs.add({ severity: 'error', summary: verb + ' impossible', detail: o.message });
+    else if (o.kind === 'downloaded' && o.reason === 'popup-blocked')
+      this.msgs.add({ severity: 'info', summary: 'Fenêtre bloquée', detail: 'Le fichier a été téléchargé à la place.' });
+  }
+  openProof(): void {
+    const bc = this.bc(); if (!bc?.documentId) return;
+    this.documentService.openDocument(bc.documentId, bc.reference).subscribe(o => this.onProofOutcome(o, 'Ouverture'));
+  }
+  downloadProof(): void {
+    const bc = this.bc(); if (!bc?.documentId) return;
+    this.documentService.downloadDocument(bc.documentId, bc.reference).subscribe(o => this.onProofOutcome(o, 'Téléchargement'));
   }
 }

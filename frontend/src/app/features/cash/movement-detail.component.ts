@@ -8,6 +8,7 @@ import { InputTextModule } from 'primeng/inputtext';
 import { TextareaModule } from 'primeng/textarea';
 import { MessageService } from 'primeng/api';
 import { CashService } from '@app/core/services/cash.service';
+import { DocumentService, OpenOutcome } from '@app/core/services/document.service';
 import { PartyService } from '@app/core/services/party.service';
 import { ProcessService } from '@app/core/services/process.service';
 import { AuthService } from '@app/core/auth.service';
@@ -185,9 +186,7 @@ import {
                 <i class="pi pi-file-pdf"></i>
                 <span class="proof-name" [title]="proofDocumentName()">{{ proofDocumentName() }}</span>
                 @if (canReadDocs) {
-                  <a class="proof-btn" [routerLink]="['/documents', proofDocumentId()]">
-                    <i class="pi pi-eye"></i> Voir la pièce
-                  </a>
+<span class="proof-btn"><i class="pi pi-file-pdf"></i><span class="proof-label">Voir la pièce justificative</span><button pButton label="Ouvrir" icon="pi pi-external-link" [text]="true" severity="info" (click)="openProof()"></button><button pButton label="Télécharger" icon="pi pi-download" [text]="true" (click)="downloadProof()"></button><!-- PHASE-B-DOC-VIEW --></span>
                 }
               </div>
             </div>
@@ -327,6 +326,7 @@ import {
 })
 export class MovementDetailComponent implements OnInit {
   private route = inject(ActivatedRoute);
+  private documentService = inject(DocumentService); // PHASE-B-DOC-VIEW
   private router = inject(Router);
   private cashService = inject(CashService);
   private partyService = inject(PartyService);
@@ -516,5 +516,21 @@ export class MovementDetailComponent implements OnInit {
         this.load();
       }
     });
+  }
+
+
+  // PHASE-B-DOC-VIEW — Ouvrir / Télécharger the proof document (latest revision).
+  onProofOutcome(o: OpenOutcome, verb: 'Ouverture' | 'Téléchargement'): void {
+    if (o.kind === 'error') this.msgs.add({ severity: 'error', summary: verb + ' impossible', detail: o.message });
+    else if (o.kind === 'downloaded' && o.reason === 'popup-blocked')
+      this.msgs.add({ severity: 'info', summary: 'Fenêtre bloquée', detail: 'Le fichier a été téléchargé à la place.' });
+  }
+  openProof(): void {
+    const id = this.proofDocumentId(); if (!id) return;
+    this.documentService.openDocument(id, this.proofDocumentName()).subscribe(o => this.onProofOutcome(o, 'Ouverture'));
+  }
+  downloadProof(): void {
+    const id = this.proofDocumentId(); if (!id) return;
+    this.documentService.downloadDocument(id, this.proofDocumentName()).subscribe(o => this.onProofOutcome(o, 'Téléchargement'));
   }
 }

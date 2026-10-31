@@ -177,11 +177,28 @@ public class DocumentController {
                                              Authentication auth) {
         DownloadFile file = revisions.download(auth, id, revId);
         String encoded = URLEncoder.encode(file.fileName(), StandardCharsets.UTF_8).replace("+", "%20");
+        // Phase B (DOC-VIEW): inline for browser-previewable types (PDF + images)
+        // so a new-tab/window.open() shows the file; attachment otherwise so the
+        // browser saves it with the correct filename. Filename header is RFC 5987.
+        String disposition = isInlinePreviewable(file.contentType())
+                ? "inline; filename*=UTF-8''" + encoded
+                : "attachment; filename*=UTF-8''" + encoded;
         return ResponseEntity.ok()
                 .contentType(file.contentType() == null
                         ? MediaType.APPLICATION_OCTET_STREAM
                         : MediaType.parseMediaType(file.contentType()))
-                .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename*=UTF-8''" + encoded)
+                .header(HttpHeaders.CONTENT_DISPOSITION, disposition)
                 .body(file.resource());
+    }
+
+    /** PDF and any raster image type can be inlined by the browser. */
+    private static boolean isInlinePreviewable(String contentType) {
+        if (contentType == null) return false;
+        String ct = contentType.toLowerCase().trim();
+        int semi = ct.indexOf(';');
+        if (semi >= 0) { ct = ct.substring(0, semi).trim(); }
+        return ct.equals("application/pdf")
+                || ct.equals("application/x-pdf")
+                || ct.startsWith("image/");
     }
 }
