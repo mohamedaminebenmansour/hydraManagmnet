@@ -19,6 +19,7 @@ import {
   ReorderStepItem,
   TestRuleRequest, TestRuleResponse,
   SaveResult,
+  ProjectTemplateConfig, AssignTemplateBody, PendingApproval,
   RoleAssignee, RoleNeeded, UpsertRoleAssigneesBody,
   mapRoleAssignee, mapRoleNeeded,
   ApprovalDesk, mapApprovalDesk,
@@ -303,6 +304,61 @@ export class ProcessService {
         return of(templates);
       })
     );
+  }
+
+  /** GET /api/projects/{projectId}/process-templates — per-chantier config (enabled + threshold). */
+  listProjectTemplateConfigs(projectId: string): Observable<ProjectTemplateConfig[]> {
+    return this.http.get<AnyRaw[]>(`/api/projects/${projectId}/process-templates`).pipe(
+      map(list => (Array.isArray(list) ? list : []).map(r => this.normalizeProjectTemplateConfig(r))),
+      catchError(() => of([]))
+    );
+  }
+
+  /** PUT /api/projects/{projectId}/process-templates — enable/disable + threshold override. */
+  assignTemplate(projectId: string, body: AssignTemplateBody): Observable<boolean> {
+    return this.http.put<AnyRaw>(`/api/projects/${projectId}/process-templates`, body).pipe(
+      map(() => true),
+      catchError(err => {
+        this.msgs.add({ severity: 'error', summary: 'Erreur', detail: this.errMsg(err, 'Impossible d\'activer la règle') });
+        return of(false);
+      })
+    );
+  }
+
+  /** GET /api/projects/{projectId}/pending-approvals — pending steps with who + days + late. */
+  listPendingApprovals(projectId: string): Observable<PendingApproval[]> {
+    return this.http.get<AnyRaw[]>(`/api/projects/${projectId}/pending-approvals`).pipe(
+      map(list => (Array.isArray(list) ? list : []).map(r => this.normalizePendingApproval(r))),
+      catchError(() => of([]))
+    );
+  }
+
+  private normalizeProjectTemplateConfig(raw: any): ProjectTemplateConfig {
+    return {
+      templateId: String(raw?.templateId ?? raw?.template_id ?? ''),
+      templateKey: String(raw?.templateKey ?? raw?.template_key ?? ''),
+      templateName: String(raw?.templateName ?? raw?.template_name ?? ''),
+      enabled: Boolean(raw?.enabled ?? false),
+      defaultForSubjectType: raw?.defaultForSubjectType ?? raw?.default_for_subject_type ?? null,
+      amountThresholdOverride: raw?.amountThresholdOverride ?? raw?.amount_threshold_override ?? null,
+    };
+  }
+
+  private normalizePendingApproval(raw: any): PendingApproval {
+    return {
+      stepInstanceId: String(raw?.stepInstanceId ?? raw?.step_instance_id ?? ''),
+      instanceId: String(raw?.instanceId ?? raw?.instance_id ?? ''),
+      templateName: String(raw?.templateName ?? raw?.template_name ?? ''),
+      stepName: String(raw?.stepName ?? raw?.step_name ?? ''),
+      assigneeRole: String(raw?.assigneeRole ?? raw?.assignee_role ?? ''),
+      assigneeName: raw?.assigneeName ?? raw?.assignee_name ?? null,
+      subjectLabel: raw?.subjectLabel ?? raw?.subject_label ?? null,
+      subjectAmount: raw?.subjectAmount != null ? Number(raw.subjectAmount) : null,
+      startedAt: raw?.startedAt ?? raw?.started_at ?? null,
+      dueDays: raw?.dueDays ?? raw?.due_days ?? null,
+      late: Boolean(raw?.late),
+      daysWaiting: raw?.daysWaiting ?? raw?.days_waiting ?? null,
+    };
   }
 
   /** POST /api/processes/{instanceId}/steps/{stepInstanceId}/complete */

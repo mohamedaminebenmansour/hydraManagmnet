@@ -1,0 +1,155 @@
+package tn.hydra.process;
+
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
+import org.springframework.security.core.Authentication;
+import org.springframework.security.core.context.SecurityContextHolder;
+import org.springframework.test.annotation.Rollback;
+import org.springframework.transaction.annotation.Transactional;
+
+import java.util.List;
+import java.util.UUID;
+
+import static org.assertj.core.api.Assertions.assertThat;
+
+/**
+ * ============================================================================
+ *  ChantierRulesTest — the chantier "Règles" tab backend: substitute
+ *  resolution + pending-approvals list.
+ * ============================================================================
+ *
+ *  @SpringBootTest against hydra_test; @Transactional + @Rollback keep the DB
+ *  clean.
+ * ============================================================================
+ */
+@SpringBootTest
+@Transactional
+@Rollback
+class ChantierRulesTest {
+
+    @Autowired private ProcessService svc;
+    @Autowired private JdbcTemplate jdbc;
+
+    private UUID orgId;
+    private UUID ownerId;
+    private UUID projectId;
+    private UUID financeRoleId;
+    private Authentication ownerAuth;
+
+    @BeforeEach
+    void provisionWorld() {
+        orgId = UUID.randomUUID();
+        ownerId = UUID.randomUUID();
+        projectId = UUID.randomUUID();
+
+        jdbc.update("insert into organization (id, name) values (?, ?)", orgId, "ChantierRules Org " + orgId);
+        jdbc.update("""
+                insert into app_user (id, org_id, email, password_hash, full_name, is_owner, is_active)
+                values (?, ?, ?, ?, ?, true, true)
+                """, ownerId, orgId, "chantier.owner." + ownerId + "@hydra.test", "hash", "Chantier Owner");
+        jdbc.update("insert into project (id, org_id, name, status, created_by) values (?, ?, ?, 'ACTIF', ?)",
+                projectId, orgId, "Chantier " + projectId, ownerId);
+
+        financeRoleId = jdbc.queryForObject(
+                "select id from role where code = 'FINANCE' and org_id is null", UUID.class);
+
+        ownerAuth = new UsernamePasswordAuthenticationToken(
+                "chantier.owner." + ownerId + "@hydra.test", null, List.of());
+        SecurityContextHolder.getContext().setAuthentication(ownerAuth);
+    }
+
+    @AfterEach
+    void clearContext() {
+        SecurityContextHolder.clearContext();
+    }
+
+    private UUID newFinanceUser(String email, String fullName) {
+        UUID id = UUID.randomUUID();
+        jdbc.update("""
+                insert into app_user (id, org_id, email, password_hash, full_name, is_owner, is_active)
+                values (?, ?, ?, ?, ?, false, true)
+                """, id, orgId, email, "hash", fullName);
+        jdbc.update("insert into user_role (user_id, role_id) values (?, ?)", id, financeRoleId);
+        jdbc.update("""
+                insert into project_member (project_id, user_id, project_role, can_upload, created_by)
+                values (?, ?, 'MANAGER', true, ?)
+                """, projectId, id, ownerId);
+        return id;
+    }
+
+    private UUID paymentApprovalId() {
+        return jdbc.queryForObject(
+                "select id from process_template where key = 'PAYMENT_APPROVAL' and org_id is null",
+                UUID.class);
+    }
+
+    private UUID firstStepAssignee(UUID instanceId) {
+        return jdbc.queryForObject(
+                "select assignee_user_id from process_step_instance where instance_id = ? and step_order = 1",
+                UUID.class, instanceId);
+    }
+
+    // ══════════════════════════════════════════════════════════════
+    //  Substitute — when the main person is inactive, the substitute acts.
+    // ══════════════════════════════════════════════════════════════
+    @Test
+    void substitute_resolvesWhenMainPersonInactive() {
+        UUID main = newFinanceUser("chantier.main@hydra.test", "Main Finance");
+        UUID sub = newFinanceUser("chantier.sub@hydra.test", "Sub Finance");
+
+        // Map FINANCE → main, substitute → sub.
+        svc.upsertRoleAssignees(ownerAuth, projectId, new ProcessService.UpsertRoleAssigneesRequest(
+                List.of(new ProcessService.RoleAssigneeItem("FINANCE", main, sub))));
+
+        // Main person is marked absent (is_active = false).
+        jdbc.update("update app_user set is_active = false where id = ?", main);
+
+        // Start a PAYMENT_APPROVAL process — the first step is DRAFT (FINANCE).
+        ProcessService.StartProcessResponse started = svc.startByTemplateId(
+                ownerAuth, projectId, paymentApprovalId(), "CASH_MOVEMENT", UUID.randomUUID());
+
+        // The step's assignee is the SUBSTITUTE (main is absent).
+        assertThat(firstStepAssignee(started.id())).isEqualTo(sub);
+    }
+
+    @Test
+    void substitute_notUsedWhenMainActive() {
+        UUID main = newFinanceUser("chantier.main2@hydra.test", "Main Finance 2");
+        UUID sub = newFinanceUser("chantier.sub2@hydra.test", "Sub Finance 2");
+        svc.upsertRoleAssignees(ownerAuth, projectId, new ProcessService.UpsertRoleAssigneesRequest(
+                List.of(new ProcessService.RoleAssigneeItem("FINANCE", main, sub))));
+
+        // Main is active → the step is assigned to the MAIN person, not the substitute.
+        ProcessService.StartProcessResponse started = svc.startByTemplateId(
+                ownerAuth, projectId, paymentApprovalId(), "CASH_MOVEMENT", UUID.randomUUID());
+        assertThat(firstStepAssignee(started.id())).isEqualTo(main);
+    }
+
+    // ══════════════════════════════════════════════════════════════
+    //  Pending approvals — a PENDING step shows up with who + days + late.
+    // ══════════════════════════════════════════════════════════════
+    @Test
+    void pendingApprovals_listsThePendingStep() {
+        UUID fin = newFinanceUser("chantier.fin@hydra.test", "Finance Pending");
+        svc.upsertRoleAssignees(ownerAuth, projectId, new ProcessService.UpsertRoleAssigneesRequest(
+                List.of(new ProcessService.RoleAssigneeItem("FINANCE", fin, null))));
+
+        ProcessService.StartProcessResponse started = svc.startByTemplateId(
+                ownerAuth, projectId, paymentApprovalId(), "CASH_MOVEMENT", UUID.randomUUID());
+
+        List<ProcessService.PendingApproval> pending = svc.listPendingApprovals(ownerAuth, projectId);
+        assertThat(pending).hasSize(1);
+        ProcessService.PendingApproval p = pending.get(0);
+        assertThat(p.instanceId()).isEqualTo(started.id());
+        assertThat(p.assigneeName()).isEqualTo("Finance Pending");
+        assertThat(p.late()).isFalse();
+        // Just started → 0 days waiting (whole days).
+        assertThat(p.daysWaiting()).isNotNull();
+        assertThat(p.daysWaiting()).isGreaterThanOrEqualTo(0);
+    }
+}

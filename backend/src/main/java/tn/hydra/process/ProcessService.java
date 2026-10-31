@@ -220,6 +220,21 @@ public class ProcessService {
             // days ago (null due_days => never late).
             boolean late) {}
 
+    /** One pending approval on a chantier (the "En attente" block). */
+    public record PendingApproval(
+            UUID stepInstanceId,
+            UUID instanceId,
+            String templateName,
+            String stepName,
+            String assigneeRole,
+            String assigneeName,
+            String subjectLabel,
+            java.math.BigDecimal subjectAmount,
+            Instant startedAt,
+            Integer dueDays,
+            boolean late,
+            Integer daysWaiting) {}
+
     /** Summary row for the project chantier screen. */
     public record ProcessInstanceSummary(
             UUID id,
@@ -312,11 +327,13 @@ public class ProcessService {
 
     // Project template assignment
     public record AssignTemplateRequest(String templateKey, boolean enabled,
-                                        String defaultForSubjectType) {}
+                                        String defaultForSubjectType,
+                                        BigDecimal amountThresholdOverride) {}
 
     public record ProjectTemplateConfig(
             UUID templateId, String templateKey, String templateName,
-            boolean enabled, String defaultForSubjectType) {}
+            boolean enabled, String defaultForSubjectType,
+            BigDecimal amountThresholdOverride) {}
 
     // ═══════════════════════════════════════════════════════════════
     // V27 (TASK 1) — Project role assignee records
@@ -327,12 +344,14 @@ public class ProcessService {
             String roleCode,
             UUID userId,
             String userName,
-            String userEmail) {}
+            String userEmail,
+            UUID substituteUserId,
+            String substituteUserName) {}
 
     /** Body for PUT /api/projects/{id}/process-role-assignees — upsert batch. */
     public record UpsertRoleAssigneesRequest(List<RoleAssigneeItem> items) {}
 
-    public record RoleAssigneeItem(String roleCode, UUID userId) {}
+    public record RoleAssigneeItem(String roleCode, UUID userId, UUID substituteUserId) {}
 
     /**
      * Composite view returned by GET /process-roles-needed: for each distinct
@@ -475,9 +494,11 @@ public class ProcessService {
         List<Map<String, Object>> mappingRows = jdbc.queryForList(
                 """
                 select pra.user_id, u.is_owner as user_is_owner, u.is_active as user_active,
-                       pm.user_id as pm_user_id
+                       pm.user_id as pm_user_id,
+                       pra.substitute_user_id, su.is_active as substitute_active
                 from project_role_assignee pra
                 join app_user u on u.id = pra.user_id
+                left join app_user su on su.id = pra.substitute_user_id
                 left join project_member pm on pm.project_id = pra.project_id
                                           and pm.user_id = pra.user_id
                 where pra.project_id = ? and upper(pra.role_code) = upper(?)
@@ -496,7 +517,16 @@ public class ProcessService {
             if (userActive && (isOwnerRole || pmFound)) {
                 return mappedUser;
             }
-            // Mapping is stale (user inactive or no longer member) → fall through
+            // Main person absent (inactive) — fall back to the substitute if set + active.
+            UUID substitute = (UUID) row.get("substitute_user_id");
+            if (substitute != null) {
+                boolean subActive = row.get("substitute_active") == null
+                        || Boolean.TRUE.equals(row.get("substitute_active"));
+                if (subActive) {
+                    return substitute;
+                }
+            }
+            // Mapping is stale (user inactive, no usable substitute) → fall through
             // to the legacy path so the process still starts. The owner will be
             // able to reassign via the UI; for now the role-based fallback keeps
             // the workflow alive.
@@ -2486,7 +2516,7 @@ public class ProcessService {
         return jdbc.query(
                 """
                 select pt.id as template_id, pt.key as template_key, pt.name as template_name,
-                       ppt.enabled, ppt.default_for_subject_type
+                       ppt.enabled, ppt.default_for_subject_type, ppt.amount_threshold_override
                 from process_template pt
                 left join project_process_template ppt
                        on ppt.template_id = pt.id and ppt.project_id = ?
@@ -2498,7 +2528,8 @@ public class ProcessService {
                         rs.getString("template_key"),
                         rs.getString("template_name"),
                         Boolean.TRUE.equals(rs.getObject("enabled")),
-                        rs.getString("default_for_subject_type")),
+                        rs.getString("default_for_subject_type"),
+                        rs.getBigDecimal("amount_threshold_override")),
                 projectId, orgId);
     }
 
@@ -2527,13 +2558,14 @@ public class ProcessService {
         jdbc.update(
                 """
                 insert into project_process_template
-                  (project_id, template_id, enabled, default_for_subject_type)
-                values (?, ?, ?, ?)
+                  (project_id, template_id, enabled, default_for_subject_type, amount_threshold_override)
+                values (?, ?, ?, ?, ?)
                 on conflict (project_id, template_id)
                 do update set enabled = excluded.enabled,
-                              default_for_subject_type = excluded.default_for_subject_type
+                              default_for_subject_type = excluded.default_for_subject_type,
+                              amount_threshold_override = excluded.amount_threshold_override
                 """,
-                projectId, templateId, req.enabled(), req.defaultForSubjectType());
+                projectId, templateId, req.enabled(), req.defaultForSubjectType(), req.amountThresholdOverride());
 
         audit.log("PROCESS_TEMPLATE_ASSIGNED", "project_process_template", projectId,
                 "{\"templateKey\":\"" + jsonEscape(req.templateKey()) +
@@ -2546,7 +2578,54 @@ public class ProcessService {
     public void assignTemplateToProject(Authentication auth, UUID projectId,
                                         String templateKey, boolean enabled) {
         assignTemplateToProject(auth, projectId,
-                new AssignTemplateRequest(templateKey, enabled, null));
+                new AssignTemplateRequest(templateKey, enabled, null, null));
+    }
+
+    /**
+     *  GET /api/projects/{projectId}/pending-approvals — pending approval steps
+     *  for this chantier (the "En attente" block): who, days waiting, due_days,
+     *  and a late flag (started more than due_days days ago).
+     */
+    public List<PendingApproval> listPendingApprovals(Authentication auth, UUID projectId) {
+        AppUser me = currentUser(auth);
+        requireProjectAccess(me, projectId);
+        return jdbc.query(
+                """
+                select psi.id as step_instance_id, pi.id as instance_id,
+                       pt.name as template_name, psi.name as step_name,
+                       psi.assignee_role, u.full_name as assignee_name,
+                       cm.label as subject_label, cm.amount as subject_amount,
+                       psi.started_at, pts.due_days,
+                       (psi.started_at is not null and pts.due_days is not null
+                            and psi.started_at < now() - (pts.due_days * interval '1 day')) as late,
+                       (case when psi.started_at is not null
+                             then (extract(epoch from now() - psi.started_at) / 86400)::int
+                             else null end) as days_waiting
+                from process_step_instance psi
+                join process_instance pi on pi.id = psi.instance_id
+                join process_template pt on pt.id = pi.template_id
+                left join process_template_step pts
+                       on pts.template_id = pi.template_id and pts.step_order = psi.step_order
+                left join app_user u on u.id = psi.assignee_user_id
+                left join cash_movement cm
+                       on pi.subject_type = 'CASH_MOVEMENT' and cm.id = pi.subject_id
+                where psi.status = 'PENDING' and pi.status = 'RUNNING' and pi.project_id = ?
+                order by psi.started_at asc nulls last
+                """,
+                (rs, rowNum) -> new PendingApproval(
+                        (UUID) rs.getObject("step_instance_id"),
+                        (UUID) rs.getObject("instance_id"),
+                        rs.getString("template_name"),
+                        rs.getString("step_name"),
+                        rs.getString("assignee_role"),
+                        rs.getString("assignee_name"),
+                        rs.getString("subject_label"),
+                        rs.getBigDecimal("subject_amount"),
+                        toInstant(rs.getTimestamp("started_at")),
+                        (Integer) rs.getObject("due_days"),
+                        rs.getBoolean("late"),
+                        (Integer) rs.getObject("days_waiting")),
+                projectId);
     }
 
     // ═══════════════════════════════════════════════════════════════
@@ -2563,9 +2642,11 @@ public class ProcessService {
         requireProjectAccess(me, projectId);
         return jdbc.queryForList(
                 """
-                select pra.role_code, pra.user_id, u.full_name as user_name, u.email as user_email
+                select pra.role_code, pra.user_id, u.full_name as user_name, u.email as user_email,
+                       pra.substitute_user_id, su.full_name as substitute_name
                 from project_role_assignee pra
                 join app_user u on u.id = pra.user_id
+                left join app_user su on su.id = pra.substitute_user_id
                 where pra.project_id = ?
                 order by pra.role_code asc
                 """,
@@ -2575,7 +2656,9 @@ public class ProcessService {
                         (String) r.get("role_code"),
                         (UUID) r.get("user_id"),
                         (String) r.get("user_name"),
-                        (String) r.get("user_email")))
+                        (String) r.get("user_email"),
+                        (UUID) r.get("substitute_user_id"),
+                        (String) r.get("substitute_name")))
                 .toList();
     }
 
@@ -2643,15 +2726,34 @@ public class ProcessService {
                         "Pour le rôle OWNER : l'utilisateur doit être gérant de l'organisation ou membre du projet");
             }
 
+            // Validate the substitute (if any): must be in the org; for non-OWNER
+            // roles, must be a project member (same rules as the main user).
+            UUID substituteId = item.substituteUserId();
+            if (substituteId != null) {
+                Integer subCnt = jdbc.queryForObject(
+                        "select count(*) from app_user where id = ? and org_id = ?",
+                        Integer.class, substituteId, orgId);
+                if (subCnt == null || subCnt == 0) {
+                    throw new BadRequestException("UNKNOWN_USER",
+                            "Remplaçant introuvable ou hors de votre organisation");
+                }
+                if (!isOwnerRole && !projectMembers.contains(substituteId)) {
+                    throw new BadRequestException("USER_NOT_PROJECT_MEMBER",
+                            "Le remplaçant n'est pas membre de ce projet (rôle " + item.roleCode() + ")");
+                }
+            }
+
             // Upsert: ON CONFLICT (project_id, role_code) DO UPDATE
             jdbc.update(
                     """
-                    insert into project_role_assignee (project_id, role_code, user_id, updated_at)
-                    values (?, upper(?), ?, now())
+                    insert into project_role_assignee (project_id, role_code, user_id, substitute_user_id, updated_at)
+                    values (?, upper(?), ?, ?, now())
                     on conflict (project_id, role_code)
-                    do update set user_id = excluded.user_id, updated_at = now()
+                    do update set user_id = excluded.user_id,
+                                  substitute_user_id = excluded.substitute_user_id,
+                                  updated_at = now()
                     """,
-                    projectId, item.roleCode().trim(), item.userId());
+                    projectId, item.roleCode().trim(), item.userId(), substituteId);
 
             audit.log("PROJECT_ROLE_ASSIGNED", "project_role_assignee", projectId,
                     "{\"roleCode\":\"" + item.roleCode().trim().toUpperCase() +
@@ -2733,9 +2835,11 @@ public class ProcessService {
         Map<String, RoleAssigneeResponse> current = new HashMap<>();
         for (Map<String, Object> r : jdbc.queryForList(
                 """
-                select pra.role_code, pra.user_id, u.full_name as user_name, u.email as user_email
+                select pra.role_code, pra.user_id, u.full_name as user_name, u.email as user_email,
+                       pra.substitute_user_id, su.full_name as substitute_name
                 from project_role_assignee pra
                 join app_user u on u.id = pra.user_id
+                left join app_user su on su.id = pra.substitute_user_id
                 where pra.project_id = ?
                 """, projectId)) {
             current.put(
@@ -2744,7 +2848,9 @@ public class ProcessService {
                             (String) r.get("role_code"),
                             (UUID) r.get("user_id"),
                             (String) r.get("user_name"),
-                            (String) r.get("user_email")));
+                            (String) r.get("user_email"),
+                            (UUID) r.get("substitute_user_id"),
+                            (String) r.get("substitute_name")));
         }
 
         // ── (3) candidate users — project members + org owner (single query) ──

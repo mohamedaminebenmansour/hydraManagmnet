@@ -33,6 +33,7 @@ import {
 import { UserOptionDto, UserDto } from '@app/core/models/user.model';
 import { EmptyStateComponent } from '@app/shared/empty-state.component';
 import { OuvragesTabComponent } from './ouvrages-tab.component'; // PHASE-OUVRAGE-EXTRACT
+import { ProjectRulesTabComponent } from './project-rules-tab.component';
 import {
   typeVisual, statusVisual, folderIcon,
   processTypeVisual, roleVisual, stepStatusVisual,
@@ -61,6 +62,7 @@ import { ProjectRoleAssigneesComponent } from './project-role-assignees.componen
     DatePipe,
     EmptyStateComponent,
     OuvragesTabComponent,
+    ProjectRulesTabComponent,
     FolderAccessDialogComponent,
     ProjectRoleAssigneesComponent
   ],

@@ -352,11 +352,13 @@ export interface RoleAssignee {
   userId: string;
   userName: string;
   userEmail: string;
+  substituteUserId?: string | null;
+  substituteUserName?: string | null;
 }
 
 /** Body for PUT /api/projects/:id/process-role-assignees — upsert batch. */
 export interface UpsertRoleAssigneesBody {
-  items: { roleCode: string; userId: string }[];
+  items: { roleCode: string; userId: string; substituteUserId?: string | null }[];
 }
 
 /** One candidate user the owner can pick from. */
@@ -366,6 +368,40 @@ export interface RoleCandidate {
   userEmail: string;
   isOwner: boolean;
   isProjectMember: boolean;
+}
+
+/** Body PUT /api/projects/{id}/process-templates (enable/disable + threshold). */
+export interface AssignTemplateBody {
+  templateKey: string;
+  enabled: boolean;
+  defaultForSubjectType?: string | null;
+  amountThresholdOverride?: number | null;
+}
+
+/** Per-chantier config of a template (GET /api/projects/{id}/process-templates). */
+export interface ProjectTemplateConfig {
+  templateId: string;
+  templateKey: string;
+  templateName: string;
+  enabled: boolean;
+  defaultForSubjectType?: string | null;
+  amountThresholdOverride?: number | null;
+}
+
+/** One pending approval on a chantier (GET /api/projects/{id}/pending-approvals). */
+export interface PendingApproval {
+  stepInstanceId: string;
+  instanceId: string;
+  templateName: string;
+  stepName: string;
+  assigneeRole: string;
+  assigneeName: string | null;
+  subjectLabel: string | null;
+  subjectAmount: number | null;
+  startedAt: string | null;
+  dueDays: number | null;
+  late: boolean;
+  daysWaiting: number | null;
 }
 
 /** Composite view returned by GET /process-roles-needed. */
@@ -382,6 +418,8 @@ export function mapRoleAssignee(raw: any): RoleAssignee {
     userId: String(raw?.userId ?? raw?.user_id ?? ''),
     userName: String(raw?.userName ?? raw?.user_name ?? ''),
     userEmail: String(raw?.userEmail ?? raw?.user_email ?? ''),
+    substituteUserId: raw?.substituteUserId ?? raw?.substitute_user_id ?? null,
+    substituteUserName: raw?.substituteUserName ?? raw?.substitute_name ?? raw?.substituteName ?? null,
   };
 }
 
