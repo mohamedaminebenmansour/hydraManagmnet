@@ -8,3 +8,6 @@
 7. Never modify or delete a test to make it pass. If a test fails, stop and explain why.
 8. Before saying done: run `cd backend && ./mvnw test` and `cd frontend && npm run build`, and paste the last 20 lines of each output.
 9. Finish with a report: files changed, what was not done, open questions.
+10. Always work on a branch feature/<topic> or chore/<topic>. Never push to main. Never merge.
+11. Never run git stash drop, git reset --hard, git clean, git push --force, or any command that deletes uncommitted work. Commit work in progress on the branch instead.
+12. Never commit files with passwords, tokens, PDFs from upload/, or sandbox scripts.

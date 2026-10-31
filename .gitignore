@@ -29,3 +29,10 @@ tool-results/
 
 # Skills (not part of the project)
 skills/
+
+# Sandbox scripts (not part of the project)
+scripts/
+# User uploads (PDFs, docs for analysis)
+upload/
+# PDFs
+*.pdf
