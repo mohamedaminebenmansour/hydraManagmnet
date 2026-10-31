@@ -7,36 +7,23 @@ import { DocumentService, OpenOutcome, isPreviewable } from '@app/core/services/
 
 /**
  * PHASE-B-DOC-ACTIONS — Shared document open/download actions.
+ * PHASE-B-DOC-ACTIONS-UX — added variant input (compact vs full).
  *
- * Replaces the icon-only buttons that were broken in production (R1-R6).
- * Used by every screen that surfaces a document:
- *   - documents list (latest revision, auto-load on init)
- *   - document detail (one component per revision row)
- *   - facture / BL / BC / cash movement detail (documentId only → latest rev)
+ * Two visual variants:
+ *   - variant="compact" (default for table rows): icon-only buttons with
+ *     tooltips. Fits in a narrow grid column (80–150px). Used by the
+ *     documents list and the document-detail revision history.
+ *   - variant="full" (default for detail pages): text + icon buttons.
+ *     Used by facture/BL/BC/cash linked-doc blocks where there is space.
  *
- * UX:
- *   - Always shows TEXT labels "Ouvrir" / "Télécharger" (icons beside text).
- *   - Both buttons are type="button" (never form-submit).
- *   - "Ouvrir" is enabled only when the file is browser-previewable
- *     (PDF + image/*). When disabled, a tooltip explains why:
- *     "Aperçu non disponible pour ce type (ex. PSD, Excel). Utilisez Télécharger."
- *   - "Télécharger" is always enabled when a documentId is present.
- *   - Both show a loading spinner while the HTTP call is in flight.
- *   - Errors surface as French toasts via the global <p-toast> (added to
- *     app.component). No silent failures.
- *
- * Mime-type resolution (so a real PDF stored as octet-stream still previews):
- *   1. Caller passes mimeType? → use it directly.
- *   2. mimeType is null/blank/'application/octet-stream' AND fileName has a
- *      known extension → infer locally (.pdf → application/pdf, .png → image/png…).
- *   3. Otherwise treat as non-previewable → Ouvrir disabled with tooltip.
- *
- * Revision resolution:
- *   - Caller passes revisionId → use it directly (no extra HTTP call).
- *   - revisionId not passed → component auto-loads the latest revision on
- *     init via GET /api/documents/{id}/revisions (one HTTP call). Used by
- *     the documents list and by linked-doc surfaces that only know the
- *     documentId.
+ * Both variants share the same behavior:
+ *   - type="button" (never form-submit)
+ *   - "Ouvrir" disabled when not previewable, with a tooltip explaining why
+ *   - "Télécharger" always enabled when documentId is present
+ *   - loading spinner on click
+ *   - French error toasts via global <p-toast>
+ *   - JSON-error blob guard (never saves JSON as .pdf)
+ *   - popup-blocked fallback to download
  */
 @Component({
   selector: 'app-document-file-actions',
@@ -44,30 +31,56 @@ import { DocumentService, OpenOutcome, isPreviewable } from '@app/core/services/
   imports: [CommonModule, ButtonModule, TooltipModule],
   template: `
     <span class="dfa" role="group" aria-label="Actions sur le fichier">
-      <button pButton type="button"
-              class="dfa-btn dfa-open"
-              [label]="previewable() ? 'Ouvrir' : 'Ouvrir'"
-              icon="pi pi-external-link"
-              severity="info" [text]="true" size="small"
-              [disabled]="!previewable() || loading()"
-              [loading]="loading() && opening()"
-              [pTooltip]="openTooltip()"
-              tooltipPosition="top"
-              (click)="open()">
-      </button>
-      <button pButton type="button"
-              class="dfa-btn dfa-download"
-              label="Télécharger"
-              icon="pi pi-download"
-              [text]="true" size="small"
-              [disabled]="!documentId || loading()"
-              [loading]="loading() && downloading()"
-              (click)="download()">
-      </button>
+      @if (variant === 'compact') {
+        <!-- COMPACT: icon-only buttons with tooltips — for dense table rows -->
+        <button pButton type="button"
+                class="dfa-btn dfa-open"
+                icon="pi pi-external-link"
+                [text]="true" [rounded]="true" size="small"
+                severity="info"
+                [disabled]="!previewable() || loading()"
+                [loading]="loading() && opening()"
+                [pTooltip]="openTooltip()"
+                tooltipPosition="top"
+                (click)="open()">
+        </button>
+        <button pButton type="button"
+                class="dfa-btn dfa-download"
+                icon="pi pi-download"
+                [text]="true" [rounded]="true" size="small"
+                [disabled]="!documentId || loading()"
+                [loading]="loading() && downloading()"
+                pTooltip="Télécharger le fichier"
+                tooltipPosition="top"
+                (click)="download()">
+        </button>
+      } @else {
+        <!-- FULL: text + icon buttons — for detail pages with space -->
+        <button pButton type="button"
+                class="dfa-btn dfa-open"
+                label="Ouvrir"
+                icon="pi pi-external-link"
+                severity="info" [text]="true" size="small"
+                [disabled]="!previewable() || loading()"
+                [loading]="loading() && opening()"
+                [pTooltip]="openTooltip()"
+                tooltipPosition="top"
+                (click)="open()">
+        </button>
+        <button pButton type="button"
+                class="dfa-btn dfa-download"
+                label="Télécharger"
+                icon="pi pi-download"
+                [text]="true" size="small"
+                [disabled]="!documentId || loading()"
+                [loading]="loading() && downloading()"
+                (click)="download()">
+        </button>
+      }
     </span>
   `,
   styles: [`
-    .dfa { display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; }
+    .dfa { display: inline-flex; align-items: center; gap: 2px; white-space: nowrap; }
     .dfa-btn { font-size: 13px; font-weight: 600; }
     :host { display: inline-flex; }
   `]
@@ -86,6 +99,8 @@ export class DocumentFileActionsComponent implements OnInit {
   @Input() mimeType?: string | null;
   /** When true (default), loads the latest revision on init if revisionId is not provided. */
   @Input() autoLoadLatest = true;
+  /** PHASE-B-DOC-ACTIONS-UX: visual variant. 'compact' = icon-only (table rows), 'full' = text+icon (detail pages). */
+  @Input() variant: 'compact' | 'full' = 'full';
 
   private _latestRevId = signal<string | null>(null);
   private _latestFileName = signal<string | null>(null);

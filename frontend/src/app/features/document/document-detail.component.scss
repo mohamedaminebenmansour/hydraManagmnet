@@ -23,7 +23,7 @@
   color: #0369a1; background: #f0f9ff; padding: 3px 9px; border-radius: 6px; border: 1px solid #bae6fd; }
 .v .ticket-chip:hover { background: #e0f2fe; }
 .rtable { display: flex; flex-direction: column; }
-.rrow { display: grid; grid-template-columns: 110px 1.6fr 90px 1.2fr 110px 44px;
+.rrow { display: grid; grid-template-columns: 110px 1.6fr 90px 1.2fr 110px 80px; /* PHASE-B-DOC-ACTIONS-UX: widened for compact shared component */
   align-items: center; gap: 10px; padding: 11px 4px; border-bottom: 1px solid #f1f5f9; }
 .rrow:last-child { border-bottom: none; }
 .rrow.current { background: #f8fafc; }
@@ -45,6 +45,6 @@
 :host ::ng-deep .p-progressbar { height: 8px; margin-top: 10px; }
 @media (max-width: 900px) {
   .grid2 { grid-template-columns: 1fr; }
-  .rrow { grid-template-columns: 100px 1fr 44px; }
+  .rrow { grid-template-columns: 100px 1fr 80px; } /* PHASE-B-DOC-ACTIONS-UX: widened for compact shared component */
   .rrow .size, .rrow .note, .rrow .date { display: none; }
 }

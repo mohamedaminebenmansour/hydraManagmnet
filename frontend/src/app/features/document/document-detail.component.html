@@ -78,13 +78,14 @@
               <span class="note">{{ r.changeNote ?? '—' }}</span>
               <span class="date">{{ fmtDate(r.uploadedAt) }}</span>
               <span class="act">
-                <!-- PHASE-B-DOC-ACTIONS: shared Ouvrir/Télécharger per revision -->
+                <!-- PHASE-B-DOC-ACTIONS-UX: compact variant for the revision row -->
                 <app-document-file-actions
                   [documentId]="docId!"
                   [revisionId]="r.id"
                   [fileName]="r.fileName"
                   [mimeType]="r.mimeType"
-                  [autoLoadLatest]="false" />
+                  [autoLoadLatest]="false"
+                  variant="compact" />
               </span>
             </div>
           }

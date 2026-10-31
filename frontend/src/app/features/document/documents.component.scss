@@ -10,7 +10,7 @@
 .loading i { margin-right: 8px; }
 .panel { background: #fff; border: 1px solid #e2e8f0; border-radius: 12px; padding: 8px 18px 18px; }
 .dtable { display: flex; flex-direction: column; }
-.drow { display: grid; grid-template-columns: 130px 2.2fr 1fr 90px 120px 1.1fr 110px 132px;
+.drow { display: grid; grid-template-columns: 130px 2.2fr 1fr 90px 120px 1.1fr 110px 150px; /* PHASE-B-DOC-ACTIONS-UX: widened for compact shared component */
   align-items: center; gap: 10px; padding: 12px 4px; border-bottom: 1px solid #f1f5f9; }
 .drow:last-child { border-bottom: none; }
 .dthead { font-size: 12px; font-weight: 700; color: #94a3b8; text-transform: uppercase;

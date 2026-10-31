@@ -8,6 +8,7 @@ import { DropdownModule } from 'primeng/dropdown';
 import { DialogModule } from 'primeng/dialog';
 import { TagModule } from 'primeng/tag';
 import { ChipModule } from 'primeng/chip';
+import { TooltipModule } from 'primeng/tooltip'; // PHASE-B-DOC-ACTIONS-UX
 import { MultiSelectModule } from 'primeng/multiselect';
 import { FileUpload, FileUploadModule } from 'primeng/fileupload';
 import { ProgressBarModule } from 'primeng/progressbar';
@@ -35,6 +36,7 @@ import { docTypeVisual, docStatusVisual } from '@app/shared/chantier-visual';
   imports: [
     FormsModule, ButtonModule, InputTextModule, TextareaModule, DropdownModule,
     DialogModule, TagModule, ChipModule, MultiSelectModule, FileUploadModule,
+    TooltipModule,
     ProgressBarModule, EmptyStateComponent,
     DocumentFileActionsComponent // PHASE-B-DOC-ACTIONS
   ],

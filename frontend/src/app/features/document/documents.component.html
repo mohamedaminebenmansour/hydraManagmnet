@@ -64,17 +64,21 @@
               </span>
               <span class="c-date">{{ fmtDate(d.createdAt) }}</span>
               <span class="c-actions">
-                <p-button icon="pi pi-eye" [rounded]="true" [text]="true"
-                          (onClick)="view(d)" [attr.aria-label]="'Voir ' + d.reference" />
-                <!-- PHASE-B-DOC-ACTIONS: shared Ouvrir/Télécharger (loads latest rev on init) -->
-                <app-document-file-actions [documentId]="d.id" [autoLoadLatest]="true" />
+                <!-- PHASE-B-DOC-ACTIONS-UX: compact variant for the table row -->
+                <p-button icon="pi pi-eye" [rounded]="true" [text]="true" size="small"
+                          (onClick)="view(d)" [attr.aria-label]="'Voir ' + d.reference"
+                          pTooltip="Voir les détails" tooltipPosition="top" />
+                <app-document-file-actions [documentId]="d.id" [autoLoadLatest]="true"
+                                           variant="compact" />
                 @if (canUpload()) {
-                  <p-button icon="pi pi-refresh" [rounded]="true" [text]="true"
-                            (onClick)="openRev(d)" [attr.aria-label]="'Nouvelle révision ' + d.reference" />
+                  <p-button icon="pi pi-refresh" [rounded]="true" [text]="true" size="small"
+                            (onClick)="openRev(d)" [attr.aria-label]="'Nouvelle révision ' + d.reference"
+                            pTooltip="Nouvelle révision" tooltipPosition="top" />
                 }
                 @if (canDelete()) {
-                  <p-button icon="pi pi-trash" [rounded]="true" [text]="true" severity="danger"
-                            (onClick)="confirmRemove(d)" [attr.aria-label]="'Supprimer ' + d.reference" />
+                  <p-button icon="pi pi-trash" [rounded]="true" [text]="true" size="small" severity="danger"
+                            (onClick)="confirmRemove(d)" [attr.aria-label]="'Supprimer ' + d.reference"
+                            pTooltip="Supprimer" tooltipPosition="top" />
                 }
               </span>
             </div>
