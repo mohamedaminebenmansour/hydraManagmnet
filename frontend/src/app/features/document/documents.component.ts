@@ -26,6 +26,7 @@ import { OpenOutcome, isPreviewable } from '@app/core/services/document.service'
 import { Ticket } from '@app/core/models/ticket.model';
 import { Folder } from '@app/core/models/folder.model';
 import { EmptyStateComponent } from '@app/shared/empty-state.component';
+import { DocumentFileActionsComponent } from '@app/shared/document-file-actions.component'; // PHASE-B-DOC-ACTIONS
 import { docTypeVisual, docStatusVisual } from '@app/shared/chantier-visual';
 
 @Component({
@@ -34,7 +35,8 @@ import { docTypeVisual, docStatusVisual } from '@app/shared/chantier-visual';
   imports: [
     FormsModule, ButtonModule, InputTextModule, TextareaModule, DropdownModule,
     DialogModule, TagModule, ChipModule, MultiSelectModule, FileUploadModule,
-    ProgressBarModule, EmptyStateComponent
+    ProgressBarModule, EmptyStateComponent,
+    DocumentFileActionsComponent // PHASE-B-DOC-ACTIONS
   ],
   templateUrl: './documents.component.html',
   styleUrl: './documents.component.scss'

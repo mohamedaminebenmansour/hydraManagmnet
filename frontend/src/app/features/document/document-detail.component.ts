@@ -19,13 +19,15 @@ import {
 } from '@app/core/models/document.model';
 import { Ticket, TICKET_STATUS_LABELS, TICKET_STATUS_SEVERITY } from '@app/core/models/ticket.model';
 import { EmptyStateComponent } from '@app/shared/empty-state.component';
+import { DocumentFileActionsComponent } from '@app/shared/document-file-actions.component'; // PHASE-B-DOC-ACTIONS
 
 @Component({
   selector: 'app-document-detail',
   standalone: true,
   imports: [
     CommonModule, FormsModule, ButtonModule, DialogModule, SelectModule, TagModule, ChipModule,
-    FileUploadModule, ProgressBarModule, EmptyStateComponent
+    FileUploadModule, ProgressBarModule, EmptyStateComponent,
+    DocumentFileActionsComponent // PHASE-B-DOC-ACTIONS
   ],
   templateUrl: './document-detail.component.html',
   styleUrl: './document-detail.component.scss'

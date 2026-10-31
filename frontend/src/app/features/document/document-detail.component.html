@@ -78,12 +78,13 @@
               <span class="note">{{ r.changeNote ?? '—' }}</span>
               <span class="date">{{ fmtDate(r.uploadedAt) }}</span>
               <span class="act">
-                <!-- PHASE-B-DOC-VIEW: Ouvrir (preview pdf/image in new tab) -->
-                <p-button icon="pi pi-external-link" [rounded]="true" [text]="true" severity="info"
-                          (onClick)="open(r)" [attr.aria-label]="'Ouvrir ' + r.revLabel"
-                          [disabled]="!canPreview(r)" />
-                <p-button icon="pi pi-download" [rounded]="true" [text]="true"
-                          (onClick)="download(r)" [attr.aria-label]="'Télécharger ' + r.revLabel" />
+                <!-- PHASE-B-DOC-ACTIONS: shared Ouvrir/Télécharger per revision -->
+                <app-document-file-actions
+                  [documentId]="docId!"
+                  [revisionId]="r.id"
+                  [fileName]="r.fileName"
+                  [mimeType]="r.mimeType"
+                  [autoLoadLatest]="false" />
               </span>
             </div>
           }

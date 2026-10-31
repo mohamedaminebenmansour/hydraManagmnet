@@ -9,6 +9,7 @@ import { TextareaModule } from 'primeng/textarea';
 import { MessageService } from 'primeng/api';
 import { CashService } from '@app/core/services/cash.service';
 import { DocumentService, OpenOutcome } from '@app/core/services/document.service';
+import { DocumentFileActionsComponent } from '@app/shared/document-file-actions.component'; // PHASE-B-DOC-ACTIONS
 import { PartyService } from '@app/core/services/party.service';
 import { ProcessService } from '@app/core/services/process.service';
 import { AuthService } from '@app/core/auth.service';
@@ -36,7 +37,8 @@ import {
 @Component({
   selector: 'app-movement-detail',
   standalone: true,
-  imports: [ButtonModule, DialogModule, InputTextModule, TextareaModule, FormsModule, DatePipe, RouterLink],
+  imports: [ButtonModule, DialogModule, InputTextModule, TextareaModule, FormsModule, DatePipe, RouterLink,
+  DocumentFileActionsComponent], // PHASE-B-DOC-ACTIONS
   styleUrl: './movement-detail.component.scss',
   template: `
     <section class="mv-detail">
@@ -186,7 +188,12 @@ import {
                 <i class="pi pi-file-pdf"></i>
                 <span class="proof-name" [title]="proofDocumentName()">{{ proofDocumentName() }}</span>
                 @if (canReadDocs) {
-<span class="proof-btn"><i class="pi pi-file-pdf"></i><span class="proof-label">Voir la pièce justificative</span><button pButton label="Ouvrir" icon="pi pi-external-link" [text]="true" severity="info" (click)="openProof()"></button><button pButton label="Télécharger" icon="pi pi-download" [text]="true" (click)="downloadProof()"></button><!-- PHASE-B-DOC-VIEW --></span>
+<span class="proof-btn">
+                  <i class="pi pi-file-pdf"></i>
+                  <span class="proof-label">{{ proofDocumentName() }}</span>
+                  <!-- PHASE-B-DOC-ACTIONS: shared Ouvrir/Télécharger -->
+                  <app-document-file-actions [documentId]="proofDocumentId()" [autoLoadLatest]="true" />
+                </span>
                 }
               </div>
             </div>

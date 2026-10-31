@@ -1,6 +1,7 @@
 import { Component, OnInit, computed, inject, signal } from '@angular/core';
 import { Router, RouterLink, ActivatedRoute } from '@angular/router';
 import { ButtonModule } from 'primeng/button';
+import { DocumentFileActionsComponent } from '@app/shared/document-file-actions.component'; // PHASE-B-DOC-ACTIONS
 import { MessageService } from 'primeng/api';
 import { PurchaseService } from '@app/core/services/purchase.service';
 import { DocumentService, OpenOutcome } from '@app/core/services/document.service';
@@ -11,7 +12,7 @@ import { BonLivraison, blStatusVisual, formatDateTime } from '@app/core/models/s
 @Component({
   selector: 'app-bl-detail',
   standalone: true,
-  imports: [RouterLink, ButtonModule],
+  imports: [RouterLink, ButtonModule, DocumentFileActionsComponent], // PHASE-B-DOC-ACTIONS
   template: `
     <section class="bl-detail">
       @if (bl()) {
@@ -33,9 +34,8 @@ import { BonLivraison, blStatusVisual, formatDateTime } from '@app/core/models/s
             <div class="doc-link">
               <i class="pi pi-file-pdf"></i>
               <span class="doc-label">BL numérisé</span>
-              <button pButton label="Ouvrir" icon="pi pi-external-link" [text]="true" severity="info" (click)="openProof()"></button>
-              <button pButton label="Télécharger" icon="pi pi-download" [text]="true" (click)="downloadProof()"></button>
-              <!-- PHASE-B-DOC-VIEW -->
+              <!-- PHASE-B-DOC-ACTIONS: shared Ouvrir/Télécharger -->
+              <app-document-file-actions [documentId]="bl()?.documentId" [autoLoadLatest]="true" />
             </div>
           }
           <table class="lines-table">

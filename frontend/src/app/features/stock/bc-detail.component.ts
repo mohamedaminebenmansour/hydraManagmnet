@@ -1,6 +1,7 @@
 import { Component, OnInit, computed, inject, signal } from '@angular/core';
 import { Router, RouterLink, ActivatedRoute } from '@angular/router';
 import { ButtonModule } from 'primeng/button';
+import { DocumentFileActionsComponent } from '@app/shared/document-file-actions.component'; // PHASE-B-DOC-ACTIONS
 import { DialogModule } from 'primeng/dialog';
 import { MessageService } from 'primeng/api';
 import { PurchaseService } from '@app/core/services/purchase.service';
@@ -12,7 +13,8 @@ import { PurchaseOrder, bcStatusVisual } from '@app/core/models/stock.model';
 @Component({
   selector: 'app-bc-detail',
   standalone: true,
-  imports: [RouterLink, ButtonModule, DialogModule],
+  imports: [RouterLink, ButtonModule, DialogModule,
+  DocumentFileActionsComponent], // PHASE-B-DOC-ACTIONS
   template: `
     <section class="bc-detail">
       @if (bc()) {
@@ -35,9 +37,8 @@ import { PurchaseOrder, bcStatusVisual } from '@app/core/models/stock.model';
             <div class="doc-link">
               <i class="pi pi-file-pdf"></i>
               <span class="doc-label">BC numérisé</span>
-              <button pButton label="Ouvrir" icon="pi pi-external-link" [text]="true" severity="info" (click)="openProof()"></button>
-              <button pButton label="Télécharger" icon="pi pi-download" [text]="true" (click)="downloadProof()"></button>
-              <!-- PHASE-B-DOC-VIEW -->
+              <!-- PHASE-B-DOC-ACTIONS: shared Ouvrir/Télécharger -->
+              <app-document-file-actions [documentId]="bc()?.documentId" [autoLoadLatest]="true" />
             </div>
           }
           <table class="lines-table">

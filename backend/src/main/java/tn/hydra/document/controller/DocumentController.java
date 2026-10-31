@@ -177,16 +177,19 @@ public class DocumentController {
                                              Authentication auth) {
         DownloadFile file = revisions.download(auth, id, revId);
         String encoded = URLEncoder.encode(file.fileName(), StandardCharsets.UTF_8).replace("+", "%20");
-        // Phase B (DOC-VIEW): inline for browser-previewable types (PDF + images)
-        // so a new-tab/window.open() shows the file; attachment otherwise so the
-        // browser saves it with the correct filename. Filename header is RFC 5987.
-        String disposition = isInlinePreviewable(file.contentType())
+        // Phase B (DOC-ACTIONS): if revision.mimeType is null/blank/octet-stream
+        // (common for legacy/curl uploads), infer the real Content-Type from the
+        // fileName extension. Without this, a PDF served as octet-stream triggers
+        // a download instead of inline preview even when window.open(blobUrl) is used.
+        String effectiveContentType = resolveContentType(file.contentType(), file.fileName());
+        // inline for browser-previewable types (PDF + images) so a new-tab/window.open()
+        // shows the file; attachment otherwise so the browser saves it with the correct
+        // filename. Filename header is RFC 5987.
+        String disposition = isInlinePreviewable(effectiveContentType)
                 ? "inline; filename*=UTF-8''" + encoded
                 : "attachment; filename*=UTF-8''" + encoded;
         return ResponseEntity.ok()
-                .contentType(file.contentType() == null
-                        ? MediaType.APPLICATION_OCTET_STREAM
-                        : MediaType.parseMediaType(file.contentType()))
+                .contentType(MediaType.parseMediaType(effectiveContentType))
                 .header(HttpHeaders.CONTENT_DISPOSITION, disposition)
                 .body(file.resource());
     }
@@ -200,5 +203,52 @@ public class DocumentController {
         return ct.equals("application/pdf")
                 || ct.equals("application/x-pdf")
                 || ct.startsWith("image/");
+    }
+
+    /**
+     * Phase B (DOC-ACTIONS): resolve the effective Content-Type.
+     * Returns the stored mimeType when it is informative; otherwise falls back
+     * to a filename-extension lookup. Always returns a non-null, non-blank
+     * MIME (defaults to {@code application/octet-stream} when nothing fits).
+     */
+    private static String resolveContentType(String stored, String fileName) {
+        if (stored != null) {
+            String ct = stored.toLowerCase().trim();
+            int semi = ct.indexOf(';');
+            if (semi >= 0) { ct = ct.substring(0, semi).trim(); }
+            if (!ct.isEmpty() && !ct.equals("application/octet-stream")
+                    && !ct.equals("application/x-www-form-urlencoded")
+                    && !ct.equals("multipart/form-data")) {
+                return ct;
+            }
+        }
+        String inferred = inferContentTypeFromExtension(fileName);
+        return inferred != null ? inferred : MediaType.APPLICATION_OCTET_STREAM_VALUE;
+    }
+
+    /** Filename-extension → MIME map for the types HYDRA accepts on upload. */
+    private static String inferContentTypeFromExtension(String fileName) {
+        if (fileName == null) return null;
+        String lower = fileName.toLowerCase();
+        if (lower.endsWith(".pdf"))  return "application/pdf";
+        if (lower.endsWith(".png"))  return "image/png";
+        if (lower.endsWith(".jpg") || lower.endsWith(".jpeg")) return "image/jpeg";
+        if (lower.endsWith(".gif"))  return "image/gif";
+        if (lower.endsWith(".webp")) return "image/webp";
+        if (lower.endsWith(".heic") || lower.endsWith(".heif")) return "image/heic";
+        if (lower.endsWith(".xlsx")) return "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+        if (lower.endsWith(".xls"))  return "application/vnd.ms-excel";
+        if (lower.endsWith(".docx")) return "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+        if (lower.endsWith(".doc"))  return "application/msword";
+        if (lower.endsWith(".pptx")) return "application/vnd.openxmlformats-officedocument.presentationml.presentation";
+        if (lower.endsWith(".ppt"))  return "application/vnd.ms-powerpoint";
+        if (lower.endsWith(".csv"))  return "text/csv";
+        if (lower.endsWith(".txt"))  return "text/plain";
+        if (lower.endsWith(".zip"))  return "application/zip";
+        if (lower.endsWith(".msg") || lower.endsWith(".eml")) return "application/vnd.ms-outlook";
+        if (lower.endsWith(".dwg") || lower.endsWith(".dxf")) return "application/acad";
+        if (lower.endsWith(".ifc"))  return "application/x-step";
+        if (lower.endsWith(".psd"))   return "image/vnd.adobe.photoshop";
+        return null;
     }
 }
