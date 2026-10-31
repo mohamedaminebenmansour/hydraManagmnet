@@ -1,4 +1,4 @@
-import { Component, OnInit, inject, signal } from '@angular/core';
+import { Component, OnInit, inject, signal, computed } from '@angular/core';
 import { Router, RouterLink } from '@angular/router';
 import { ButtonModule } from 'primeng/button';
 import { MessageService } from 'primeng/api';
@@ -54,6 +54,30 @@ import { processTypeVisual, roleVisual } from '@app/shared/process-visual';
           </a>
         }
       </nav>
+
+      @if (isOwner && readyTemplates().length > 0) {
+        <section class="hub-ready">
+          <div class="section-head">
+            <h2><i class="pi pi-bookmark"></i> Modèles prêts</h2>
+            <p>Utilisez un modèle système comme point de départ : une copie est créée dans votre organisation.</p>
+          </div>
+          <div class="ready-grid">
+            @for (tpl of readyTemplates(); track tpl.id) {
+              <article class="ready-card"
+                       [style.--card-color]="typeV(tpl.key).color"
+                       [style.--card-soft]="typeV(tpl.key).soft">
+                <div class="ready-icon"><i class="pi {{ typeV(tpl.key).icon }}"></i></div>
+                <div class="ready-body">
+                  <div class="ready-name">{{ tpl.name }}</div>
+                  <div class="ready-key">{{ tpl.key }}</div>
+                </div>
+                <button pButton label="Utiliser" icon="pi pi-copy" size="small" severity="success"
+                        (click)="useTemplate(tpl)" [loading]="copyingId() === tpl.id"></button>
+              </article>
+            }
+          </div>
+        </section>
+      }
 
       <section class="hub-templates">
         <div class="section-head">
@@ -162,6 +186,10 @@ export class ProcessHubComponent implements OnInit {
 
   templates = signal<TemplateDetail[]>([]);
   loading = signal(true);
+  copyingId = signal<string | null>(null);
+
+  // System templates (org_id null) — the "Modèles prêts" quick-start section.
+  readyTemplates = computed(() => this.templates().filter(t => !t.orgId));
 
   // Helpers exposed to template
   typeV = processTypeVisual;
@@ -169,6 +197,18 @@ export class ProcessHubComponent implements OnInit {
 
   ngOnInit(): void {
     this.loadTemplates();
+  }
+
+  /** Copy a system template into an org-scoped one and open it in the builder. */
+  useTemplate(tpl: TemplateDetail): void {
+    this.copyingId.set(tpl.id);
+    this.processService.copyTemplate(tpl.id).subscribe(copy => {
+      this.copyingId.set(null);
+      if (copy && copy.id) {
+        this.msgs.add({ severity: 'success', summary: 'Modèle copié', detail: 'Personnalisez votre copie' });
+        this.router.navigate(['/processes/builder', copy.id]);
+      }
+    });
   }
 
   private loadTemplates(): void {

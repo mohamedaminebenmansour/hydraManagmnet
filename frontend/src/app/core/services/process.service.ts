@@ -16,6 +16,9 @@ import {
   UpdateTemplateBody,
   CreateStepBody,
   UpdateStepBody,
+  ReorderStepItem,
+  TestRuleRequest, TestRuleResponse,
+  SaveResult,
   RoleAssignee, RoleNeeded, UpsertRoleAssigneesBody,
   mapRoleAssignee, mapRoleNeeded,
   ApprovalDesk, mapApprovalDesk,
@@ -61,62 +64,74 @@ export class ProcessService {
   }
 
   /** POST /api/processes/templates — create a new template (owner only). */
-  createTemplate(body: CreateTemplateBody): Observable<TemplateDetail | null> {
+  createTemplate(body: CreateTemplateBody): Observable<SaveResult<TemplateDetail>> {
     return this.http.post<AnyRaw>('/api/processes/templates', body).pipe(
+      map(raw => ({ ok: true, detail: this.normalizeTemplateDetail(raw) })),
+      catchError(err => of({ ok: false, error: this.errMsg(err, 'Impossible de créer la règle') }))
+    );
+  }
+
+  /** PUT /api/processes/templates/{id} — update name / active / conditions / etc. */
+  updateTemplate(id: string, body: UpdateTemplateBody): Observable<SaveResult<TemplateDetail>> {
+    return this.http.put<AnyRaw>(`/api/processes/templates/${id}`, body).pipe(
+      map(raw => ({ ok: true, detail: this.normalizeTemplateDetail(raw) })),
+      catchError(err => of({ ok: false, error: this.errMsg(err, 'Impossible de mettre à jour la règle') }))
+    );
+  }
+
+  /** POST /api/processes/templates/{id}/copy — copy a system template into an org-scoped one. */
+  copyTemplate(id: string): Observable<TemplateDetail | null> {
+    return this.http.post<AnyRaw>(`/api/processes/templates/${id}/copy`, {}).pipe(
       map(raw => this.normalizeTemplateDetail(raw)),
       catchError(err => {
-        this.msgs.add({
-          severity: 'error',
-          summary: 'Erreur',
-          detail: err?.error?.message ?? 'Impossible de créer le processus',
-        });
+        this.msgs.add({ severity: 'error', summary: 'Erreur', detail: this.errMsg(err, 'Impossible de copier le modèle') });
         return of(null);
       })
     );
   }
 
-  /** PUT /api/processes/templates/{id} — update name / active. */
-  updateTemplate(id: string, body: UpdateTemplateBody): Observable<TemplateDetail | null> {
-    return this.http.put<AnyRaw>(`/api/processes/templates/${id}`, body).pipe(
-      map(raw => this.normalizeTemplateDetail(raw)),
+  /** GET /api/processes/templates/{id}/sentence — the rule as a French sentence. */
+  getTemplateSentence(id: string): Observable<string> {
+    return this.http.get(`/api/processes/templates/${id}/sentence`, { responseType: 'text' }).pipe(
+      catchError(() => of(''))
+    );
+  }
+
+  /** POST /api/processes/templates/{id}/test — which rule would be chosen + why (no data written). */
+  testRule(id: string, body: TestRuleRequest): Observable<TestRuleResponse | null> {
+    return this.http.post<AnyRaw>(`/api/processes/templates/${id}/test`, body).pipe(
+      map(raw => this.normalizeTestRuleResponse(raw)),
       catchError(err => {
-        this.msgs.add({
-          severity: 'error',
-          summary: 'Erreur',
-          detail: err?.error?.message ?? 'Impossible de mettre à jour le processus',
-        });
+        this.msgs.add({ severity: 'error', summary: 'Erreur', detail: this.errMsg(err, 'Impossible de tester la règle') });
         return of(null);
+      })
+    );
+  }
+
+  /** PUT /api/processes/templates/{id}/steps/reorder — batch step_order update. */
+  reorderSteps(templateId: string, items: ReorderStepItem[]): Observable<boolean> {
+    return this.http.put<AnyRaw>(`/api/processes/templates/${templateId}/steps/reorder`, items).pipe(
+      map(() => true),
+      catchError(err => {
+        this.msgs.add({ severity: 'error', summary: 'Erreur', detail: this.errMsg(err, 'Impossible de réordonner les étapes') });
+        return of(false);
       })
     );
   }
 
   /** POST /api/processes/templates/{id}/steps — add a step. */
-  addStep(templateId: string, body: CreateStepBody): Observable<TemplateDetail | null> {
+  addStep(templateId: string, body: CreateStepBody): Observable<SaveResult<TemplateDetail>> {
     return this.http.post<AnyRaw>(`/api/processes/templates/${templateId}/steps`, body).pipe(
-      map(raw => this.normalizeTemplateDetail(raw)),
-      catchError(err => {
-        this.msgs.add({
-          severity: 'error',
-          summary: 'Erreur',
-          detail: err?.error?.message ?? 'Impossible d\'ajouter l\'étape',
-        });
-        return of(null);
-      })
+      map(raw => ({ ok: true, detail: this.normalizeTemplateDetail(raw) })),
+      catchError(err => of({ ok: false, error: this.errMsg(err, 'Impossible d\'ajouter l\'étape') }))
     );
   }
 
   /** PUT /api/processes/templates/{id}/steps/{stepId} — update a step. */
-  updateStep(templateId: string, stepId: string, body: UpdateStepBody): Observable<TemplateDetail | null> {
+  updateStep(templateId: string, stepId: string, body: UpdateStepBody): Observable<SaveResult<TemplateDetail>> {
     return this.http.put<AnyRaw>(`/api/processes/templates/${templateId}/steps/${stepId}`, body).pipe(
-      map(raw => this.normalizeTemplateDetail(raw)),
-      catchError(err => {
-        this.msgs.add({
-          severity: 'error',
-          summary: 'Erreur',
-          detail: err?.error?.message ?? 'Impossible de modifier l\'étape',
-        });
-        return of(null);
-      })
+      map(raw => ({ ok: true, detail: this.normalizeTemplateDetail(raw) })),
+      catchError(err => of({ ok: false, error: this.errMsg(err, 'Impossible de modifier l\'étape') }))
     );
   }
 
@@ -148,14 +163,47 @@ export class ProcessService {
       name: String(s?.['name'] ?? s?.['stepName'] ?? ''),
       assigneeRole: String(s?.['assigneeRole'] ?? s?.['assignee_role'] ?? ''),
       requiresAttachment: Boolean(s?.['requiresAttachment'] ?? s?.['requires_attachment'] ?? false),
+      approvalMode: String(s?.['approvalMode'] ?? s?.['approval_mode'] ?? 'ANY'),
+      dueDays: s?.['dueDays'] ?? s?.['due_days'] ?? null,
     }));
     return {
       id: String(raw['id'] ?? raw['templateId'] ?? ''),
       key: String(raw['key'] ?? raw['templateKey'] ?? ''),
       name: String(raw['name'] ?? raw['templateName'] ?? ''),
       active: Boolean(raw['active'] ?? true),
+      description: raw['description'] ?? null,
+      orgId: raw['orgId'] ?? raw['org_id'] ?? null,
+      subjectType: raw['subjectType'] ?? raw['subject_type'] ?? null,
+      conditions: (raw['conditions'] ?? null) ?? undefined,
+      priority: raw['priority'] ?? null,
       steps: steps.sort((a, b) => a.stepOrder - b.stepOrder),
     };
+  }
+
+  /** Normalize a /test response. */
+  private normalizeTestRuleResponse(raw: any): TestRuleResponse {
+    const cands = Array.isArray(raw?.candidates) ? raw.candidates : [];
+    return {
+      chosenTemplateId: raw?.chosenTemplateId ?? null,
+      chosenTemplateKey: raw?.chosenTemplateKey ?? null,
+      chosenTemplateName: raw?.chosenTemplateName ?? null,
+      chosenPriority: raw?.chosenPriority ?? null,
+      testedTemplateId: raw?.testedTemplateId ?? null,
+      testedMatched: Boolean(raw?.testedMatched),
+      reason: String(raw?.reason ?? ''),
+      candidates: cands.map((c: any) => ({
+        templateId: String(c?.templateId ?? ''),
+        key: String(c?.key ?? ''),
+        name: String(c?.name ?? ''),
+        priority: Number(c?.priority ?? 0),
+        matched: Boolean(c?.matched),
+        reason: c?.reason ?? null,
+      })),
+    };
+  }
+
+  private errMsg(err: any, fallback: string): string {
+    return err?.error?.message ?? err?.message ?? fallback;
   }
 
   /** POST /api/processes/start */

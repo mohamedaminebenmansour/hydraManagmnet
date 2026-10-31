@@ -204,6 +204,9 @@ export interface TemplateStep {
   name: string;
   assigneeRole: string;
   requiresAttachment: boolean;
+  // Rule-builder (V38):
+  approvalMode?: 'ANY' | 'ALL' | string;
+  dueDays?: number | null;
 }
 
 /** Détail complet d'un template (avec ses étapes). */
@@ -213,6 +216,11 @@ export interface TemplateDetail {
   name: string;
   active: boolean;
   description?: string | null;
+  orgId?: string | null;
+  // Rule-builder (V38):
+  subjectType?: string | null;
+  conditions?: Record<string, any>;
+  priority?: number | null;
   steps: TemplateStep[];
 }
 
@@ -221,13 +229,19 @@ export interface CreateTemplateBody {
   key: string;
   name: string;
   description?: string;
+  subjectType: string;
+  conditions?: Record<string, any>;
+  priority?: number;
 }
 
-/** Body PUT /api/processes/templates/{id}. */
+/** Body PUT /api/processes/templates/{id}. Tous les champs sont optionnels. */
 export interface UpdateTemplateBody {
-  name: string;
-  active: boolean;
+  name?: string;
+  active?: boolean;
   description?: string;
+  subjectType?: string;
+  conditions?: Record<string, any>;
+  priority?: number;
 }
 
 /** Body POST /api/processes/templates/{id}/steps. */
@@ -237,15 +251,61 @@ export interface CreateStepBody {
   name: string;
   assigneeRole: string;
   requiresAttachment: boolean;
+  approvalMode?: 'ANY' | 'ALL' | string;
+  dueDays?: number | null;
 }
 
-/** Body PUT /api/processes/templates/{id}/steps/{stepId}.
- *  Tous les champs sont optionnels côté backend ; le front envoie tout. */
+/** Body PUT /api/processes/templates/{id}/steps/{stepId}. */
 export interface UpdateStepBody {
-  name: string;
-  assigneeRole: string;
-  requiresAttachment: boolean;
+  name?: string;
+  assigneeRole?: string;
+  requiresAttachment?: boolean;
+  stepOrder?: number;
+  approvalMode?: 'ANY' | 'ALL' | string;
+  dueDays?: number | null;
+}
+
+/** Item for PUT /api/processes/templates/{id}/steps/reorder. */
+export interface ReorderStepItem {
+  stepId: string;
   stepOrder: number;
+}
+
+/** Body POST /api/processes/templates/{id}/test. */
+export interface TestRuleRequest {
+  projectId?: string | null;
+  amount: number;
+  nature?: string | null;
+  paymentMode?: string | null;
+}
+
+/** One candidate in a /test response. */
+export interface CandidateResult {
+  templateId: string;
+  key: string;
+  name: string;
+  priority: number;
+  matched: boolean;
+  reason: string | null;
+}
+
+/** Response POST /api/processes/templates/{id}/test. */
+export interface TestRuleResponse {
+  chosenTemplateId: string | null;
+  chosenTemplateKey: string | null;
+  chosenTemplateName: string | null;
+  chosenPriority: number | null;
+  testedTemplateId: string | null;
+  testedMatched: boolean;
+  reason: string;
+  candidates: CandidateResult[];
+}
+
+/** Generic save result that surfaces the backend error message (no toast). */
+export interface SaveResult<T> {
+  ok: boolean;
+  detail?: T;
+  error?: string;
 }
 
 /** Mapper: convertit n'importe quelle réponse backend en TemplateDetail. */
@@ -261,6 +321,8 @@ export function mapTemplateDetail(raw: any): TemplateDetail {
     name: String(s?.name ?? s?.stepName ?? ''),
     assigneeRole: String(s?.assigneeRole ?? s?.assignee_role ?? ''),
     requiresAttachment: Boolean(s?.requiresAttachment ?? s?.requires_attachment ?? false),
+    approvalMode: String(s?.approvalMode ?? s?.approval_mode ?? 'ANY'),
+    dueDays: s?.dueDays ?? s?.due_days ?? null,
   }));
   return {
     id: String(raw?.id ?? raw?.templateId ?? ''),
@@ -268,6 +330,10 @@ export function mapTemplateDetail(raw: any): TemplateDetail {
     name: String(raw?.name ?? raw?.templateName ?? ''),
     active: Boolean(raw?.active ?? true),
     description: raw?.description ?? null,
+    orgId: raw?.orgId ?? raw?.org_id ?? null,
+    subjectType: raw?.subjectType ?? raw?.subject_type ?? null,
+    conditions: (raw?.conditions ?? null) as Record<string, any> | undefined,
+    priority: raw?.priority ?? null,
     steps: steps.sort((a, b) => a.stepOrder - b.stepOrder),
   };
 }
@@ -360,6 +426,41 @@ export function roleLabel(code: string | null | undefined): string {
   if (!code) return '';
   return ROLE_LABEL[code.toUpperCase()] ?? code;
 }
+
+// ============================================================================
+//  Rule-builder — condition option lists (MovementNature / PaymentMode codes).
+//  Mirrors the backend enums (tn.hydra.cash.MovementNature / PaymentMode).
+// ============================================================================
+
+export const MOVEMENT_NATURES: string[] = [
+  'ALIM_CAISSE', 'SOUS_TRAITANCE', 'MATERIEL', 'TRANSPORT', 'MAIN_OEUVRE',
+  'LOCATION', 'LABO', 'CARBURANT', 'DIVERS',
+];
+
+export const NATURE_LABELS: Record<string, string> = {
+  ALIM_CAISSE: 'Alimentation caisse',
+  SOUS_TRAITANCE: 'Sous-traitance',
+  MATERIEL: 'Matériel',
+  TRANSPORT: 'Transport',
+  MAIN_OEUVRE: 'Main d\u2019œuvre',
+  LOCATION: 'Location',
+  LABO: 'Laboratoire',
+  CARBURANT: 'Carburant',
+  DIVERS: 'Divers',
+};
+
+export const PAYMENT_MODES: string[] = [
+  'ESPECE', 'CHEQUE', 'VIREMENT', 'VERSEMENT', 'MANDAT', 'AUTRE',
+];
+
+export const PAYMENT_MODE_LABELS: Record<string, string> = {
+  ESPECE: 'Espèces',
+  CHEQUE: 'Chèque',
+  VIREMENT: 'Virement',
+  VERSEMENT: 'Versement',
+  MANDAT: 'Mandat',
+  AUTRE: 'Autre',
+};
 
 // ============================================================================
 //  TASK 1 (backend) — APPROVAL DESK (single payload for payment approvers)
