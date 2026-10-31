@@ -2,10 +2,11 @@ package tn.hydra.process;
 
 import java.math.BigDecimal;
 import java.math.BigInteger;
+import java.time.Instant;
 import java.util.Collection;
+import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
-import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -34,8 +35,10 @@ import java.util.UUID;
  *     amount_min for that candidate (per-project override of the lower bound).
  *     amount_max is NOT affected.
  *   * Among matching candidates, return the one with the LOWEST priority int
- *     (1000 is the seeded fallback -> matches last). Ties broken by templateId
- *     natural order so the result is deterministic.
+ *     (1000 is the seeded fallback -> matches last). Ties broken by:
+ *       1. org-scoped template (orgScoped == true) before system template;
+ *       2. older created_at first (nulls last);
+ *       3. templateId natural order (final determinism).
  *   * Empty list, or no match -> Optional.empty().
  *
  *  Money (AI-RULES 3): all amount comparisons use BigDecimal; condition values
@@ -58,11 +61,17 @@ public final class RuleMatcher {
      *                                when non-null
      * @param enabledForProject       false => the template is disabled on the
      *                                chantier; the candidate is ignored
+     * @param orgScoped               true => org-scoped template (org_id not null);
+     *                                wins tie-break over system templates
+     * @param createdAt               process_template.created_at; older wins on
+     *                                tie-break (nulls last)
      */
     public record RuleCandidate(UUID templateId, int priority,
                                 Map<String, Object> conditions,
                                 BigDecimal amountThresholdOverride,
-                                boolean enabledForProject) {}
+                                boolean enabledForProject,
+                                boolean orgScoped,
+                                Instant createdAt) {}
 
     private RuleMatcher() {}
 
@@ -73,8 +82,7 @@ public final class RuleMatcher {
         if (rules == null || rules.isEmpty()) {
             return Optional.empty();
         }
-        UUID bestId = null;
-        int bestPriority = Integer.MAX_VALUE;
+        RuleCandidate best = null;
         for (RuleCandidate c : rules) {
             if (c == null || !c.enabledForProject()) {
                 continue;
@@ -82,16 +90,24 @@ public final class RuleMatcher {
             if (!matches(c, facts)) {
                 continue;
             }
-            // Lowest priority wins; tie-break by templateId for determinism.
-            if (c.priority() < bestPriority
-                    || (c.priority() == bestPriority
-                        && compareNullable(bestId, c.templateId()) > 0)) {
-                bestPriority = c.priority();
-                bestId = c.templateId();
+            if (best == null || TIE_BREAK.compare(c, best) < 0) {
+                best = c;
             }
         }
-        return Optional.ofNullable(bestId);
+        return best == null ? Optional.empty() : Optional.of(best.templateId());
     }
+
+    /**
+     * Order: priority asc, then org-scoped before system, then older
+     * created_at first (nulls last), then templateId for final determinism.
+     */
+    private static final Comparator<RuleCandidate> TIE_BREAK =
+            Comparator.comparingInt(RuleCandidate::priority)
+                    .thenComparingInt(c -> c.orgScoped() ? 0 : 1)
+                    .thenComparing(RuleCandidate::createdAt,
+                            Comparator.nullsLast(Comparator.naturalOrder()))
+                    .thenComparing(RuleCandidate::templateId,
+                            Comparator.nullsFirst(Comparator.naturalOrder()));
 
     // ══════════════════════════════════════════════════════════════
     //  Condition evaluation
@@ -179,10 +195,4 @@ public final class RuleMatcher {
         throw new IllegalArgumentException("Cannot convert to BigDecimal: " + o);
     }
 
-    private static int compareNullable(UUID a, UUID b) {
-        if (a == null && b == null) return 0;
-        if (a == null) return -1;
-        if (b == null) return 1;
-        return Objects.compare(a, b, UUID::compareTo);
-    }
 }
