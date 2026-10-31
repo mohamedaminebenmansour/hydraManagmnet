@@ -5,6 +5,7 @@ import {
   Project, ProjectCreate, ProjectUpdate, ProjectMember, ProjectFolder,
   MemberCreate, MemberUpdate, MyPermissions, mapMyPermissions, mapProject
 } from '@app/core/models/project.model';
+import { Ouvrage, OuvrageCreate, OuvrageUpdate, mapOuvrage } from '@app/core/models/ouvrage.model';
 
 @Injectable({ providedIn: 'root' })
 export class ProjectService {
@@ -73,6 +74,34 @@ export class ProjectService {
       map(raw => mapMyPermissions(raw)),
       // Backend always returns 200 here; the catchError keeps callers resilient.
     );
+  }
+
+  // ── Ouvrages (structured objects of a chantier) ──────────────────────
+  // GET /api/projects/{projectId}/ouvrages
+  listOuvrages(projectId: string): Observable<Ouvrage[]> {
+    return this.http.get<any[]>(`/api/projects/${projectId}/ouvrages`).pipe(
+      map(list => (list ?? []).map(mapOuvrage))
+    );
+  }
+
+  // GET /api/projects/{projectId}/ouvrages/{ouvrageId}
+  getOuvrage(projectId: string, ouvrageId: string): Observable<Ouvrage> {
+    return this.http.get<any>(`/api/projects/${projectId}/ouvrages/${ouvrageId}`).pipe(map(mapOuvrage));
+  }
+
+  // POST /api/projects/{projectId}/ouvrages
+  createOuvrage(projectId: string, body: OuvrageCreate): Observable<Ouvrage> {
+    return this.http.post<any>(`/api/projects/${projectId}/ouvrages`, body).pipe(map(mapOuvrage));
+  }
+
+  // PUT /api/projects/{projectId}/ouvrages/{ouvrageId}
+  updateOuvrage(projectId: string, ouvrageId: string, body: OuvrageUpdate): Observable<Ouvrage> {
+    return this.http.put<any>(`/api/projects/${projectId}/ouvrages/${ouvrageId}`, body).pipe(map(mapOuvrage));
+  }
+
+  // DELETE /api/projects/{projectId}/ouvrages/{ouvrageId}
+  deleteOuvrage(projectId: string, ouvrageId: string): Observable<void> {
+    return this.http.delete<void>(`/api/projects/${projectId}/ouvrages/${ouvrageId}`);
   }
 
   /** Backend expects yyyy-MM-dd date strings, not full ISO datetimes. */

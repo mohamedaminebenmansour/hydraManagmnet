@@ -175,7 +175,7 @@ curl -s -c jar http://127.0.0.1:8080/api/auth/me > /dev/null
 XSRF=$(grep XSRF-TOKEN jar | awk '{print $7}')
 curl -s -b jar -c jar -X POST http://127.0.0.1:8080/api/auth/login \
   -H "Content-Type: application/json" -H "X-XSRF-TOKEN: $XSRF" \
-  -d '{"email":"owner@hydra.tn","password":"HydraOwner2026!"}'
+  -d '{"email":"owner@hydra.tn","password":"<OWNER_PASSWORD>"}'
 
 # IN 100 at CENTRAL
 curl -s -b jar -H "X-XSRF-TOKEN: $XSRF" -H "Content-Type: application/json" \

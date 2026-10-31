@@ -89,7 +89,7 @@ curl -c /tmp/c.txt http://localhost:8080/api/auth/me
 XSRF=$(grep XSRF-TOKEN /tmp/c.txt | awk '{print $7}')
 curl -b /tmp/c.txt -X POST http://localhost:8080/api/auth/login \
   -H "Content-Type: application/json" -H "X-XSRF-TOKEN: $XSRF" \
-  -d '{"email":"owner@hydra.tn","password":"HydraOwner2026!"}'
+  -d '{"email":"owner@hydra.tn","password":"<OWNER_PASSWORD>"}'
 
 # 2. Create a DRAFT movement (IN, 1000 TND)
 MOVEMENT=$(curl -s -b /tmp/c.txt -X POST http://localhost:8080/api/cash/movements \

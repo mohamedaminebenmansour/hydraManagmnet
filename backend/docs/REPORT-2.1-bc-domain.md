@@ -150,7 +150,7 @@ curl -s -c jar http://127.0.0.1:8080/api/auth/me > /dev/null
 XSRF=$(grep XSRF-TOKEN jar | awk '{print $7}')
 curl -s -b jar -c jar -X POST http://127.0.0.1:8080/api/auth/login \
   -H "Content-Type: application/json" -H "X-XSRF-TOKEN: $XSRF" \
-  -d '{"email":"owner@hydra.tn","password":"HydraOwner2026!"}'
+  -d '{"email":"owner@hydra.tn","password":"<OWNER_PASSWORD>"}'
 
 # Create DRAFT BC + 2 lines
 curl -s -b jar -H "X-XSRF-TOKEN: $XSRF" -H "Content-Type: application/json" \
@@ -242,7 +242,7 @@ The 8 new files are 100% additive — no existing lines modified.
 cd /tmp/my-project/backend
 export JAVA_HOME=/tmp/my-project/.jdk && export PATH=$JAVA_HOME/bin:$PATH
 export DB_URL="jdbc:postgresql://127.0.0.1:5432/hydra" DB_USER=postgres DB_PASSWORD=hydra
-export OWNER_EMAIL=owner@hydra.tn OWNER_PASSWORD=HydraOwner2026!
+export OWNER_EMAIL=owner@hydra.tn OWNER_PASSWORD=<OWNER_PASSWORD>
 export HYDRA_STORAGE_TYPE=local HYDRA_STORAGE_ROOT=/tmp/my-project/backend/data/files
 java -jar target/hydra-0.0.1-SNAPSHOT.jar
 

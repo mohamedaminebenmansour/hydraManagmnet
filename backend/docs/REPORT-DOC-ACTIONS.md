@@ -146,7 +146,7 @@ Setup: upload 4 files to any project folder — `plan.pdf`, `photo.jpg`, `decomp
 
 ### Quick smoke after deploy
 1. Open the live frontend URL in your browser.
-2. Log in as `owner@hydra.tn` / `HydraOwner2026!`.
+2. Log in as `owner@hydra.tn` / `<OWNER_PASSWORD>`.
 3. Go to any project → folder → upload `plan.pdf` + `logo.psd`.
 4. Run tests 1, 2, 4, 8 from the table above.
 

@@ -1,5 +1,6 @@
 package tn.hydra.project;
 
+import org.springframework.context.ApplicationContext;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.security.core.Authentication;
 import org.springframework.stereotype.Service;
@@ -27,7 +28,7 @@ public class ProjectService {
 
     /** Column list shared by list/get so member_count is computed the same way everywhere. */
     private static final String PROJECT_COLUMNS = """
-            select p.id, p.code, p.name, p.status,
+            select p.id, p.org_id, p.code, p.name, p.status,
                    p.client_name, p.location, p.governorate,
                    p.start_date, p.end_date, p.project_type, p.description,
                    p.contract_value, p.currency, p.created_at,
@@ -48,10 +49,21 @@ public class ProjectService {
     private final AppUserRepository users;
     private final EventLogService audit;
     private final FolderAccessService folderAccess;
+    private final ApplicationContext ctx;
 
     public ProjectService(JdbcTemplate jdbc, AppUserRepository users, EventLogService audit,
-                          FolderAccessService folderAccess) {
-        this.jdbc = jdbc; this.users = users; this.audit = audit; this.folderAccess = folderAccess;
+                          FolderAccessService folderAccess, ApplicationContext ctx) {
+        this.jdbc = jdbc; this.users = users; this.audit = audit;
+        this.folderAccess = folderAccess; this.ctx = ctx;
+    }
+
+    /**
+     * Lazy lookup of {@link OuvrageService} to avoid a constructor cycle
+     * (OuvrageService also depends on ProjectService). Spring resolves the
+     * bean on first call, after both services are constructed.
+     */
+    private OuvrageService ouvrages() {
+        return ctx.getBean(OuvrageService.class);
     }
 
     // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• RESPONSE SHAPE â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
@@ -61,7 +73,7 @@ public class ProjectService {
                                   LocalDate startDate, LocalDate endDate,
                                   String projectType, String description,
                                   BigDecimal contractValue, String currency,
-                                  Integer memberCount, Instant createdAt) {}
+                                  Integer memberCount, String ouvrageSummary, Instant createdAt) {}
 
     public record ProjectOption(UUID id, String name, String projectType) {}
 
@@ -77,7 +89,8 @@ public class ProjectService {
                                        LocalDate startDate, LocalDate endDate,
                                        String projectType, String description,
                                        BigDecimal contractValue, String currency,
-                                       List<UUID> memberUserIds) {}
+                                       List<UUID> memberUserIds,
+                                       List<OuvrageService.CreateOuvrageRequest> ouvrages) {}
 
     public record UpdateProjectRequest(String name, String code, String status,
                                        String clientName, String location, String governorate,
@@ -92,14 +105,14 @@ public class ProjectService {
         if (companyWide(auth, me)) {
             return jdbc.queryForList(PROJECT_COLUMNS +
                             " where p.org_id = ? order by p.name", me.getOrgId())
-                    .stream().map(ProjectService::toResponse).toList();
+                    .stream().map(r -> toResponse(r)).toList();
         }
         // non-admin: only projects the user belongs to
         return jdbc.queryForList(PROJECT_COLUMNS +
                         " where p.org_id = ? and exists (select 1 from project_member pm " +
                         " where pm.project_id = p.id and pm.user_id = ?) order by p.name",
                 me.getOrgId(), me.getId())
-                .stream().map(ProjectService::toResponse).toList();
+                .stream().map(r -> toResponse(r)).toList();
     }
 
     public List<ProjectOption> projectOptions(Authentication auth) {
@@ -202,7 +215,26 @@ public class ProjectService {
                 "{\"name\":\"" + jsonEscape(body.name().trim()) +
                         "\",\"folders\":" + folderCount + "}");
 
-        // g) return full response
+        // g) auto-create the single COMMUN ouvrage for this chantier
+        // (installation, repli, essais globaux, raccordement au réseau existant,
+        // sécurité). Idempotent — see OuvrageService.ensureCommunOuvrage.
+        ouvrages().ensureCommunOuvrage(id, me.getOrgId(), me.getId());
+
+        // h) atomic insert of the requested ouvrages (if any). Each is
+        // validated by OuvrageService.createInTransaction — an invalid
+        // ouvrage throws BusinessRuleException, which rolls back the whole
+        // @Transactional (project + folders + members + COMMUN + ouvrages).
+        // The error message names the ouvrage index and the bad field.
+        if (body.ouvrages() != null && !body.ouvrages().isEmpty()) {
+            int idx = 0;
+            for (OuvrageService.CreateOuvrageRequest o : body.ouvrages()) {
+                idx++;
+                if (o == null) continue;
+                ouvrages().createInTransaction(id, me.getOrgId(), me.getId(), o, idx);
+            }
+        }
+
+        // i) return full response
         return get(auth, id);
     }
 
@@ -392,6 +424,18 @@ public class ProjectService {
 
     // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• FOLDER TEMPLATES / REPAIR â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
+    // ── OUVRAGE HELPERS ─────────────────────────────────────
+
+    /** Package-private hook for {@link OuvrageService} to check read access on a chantier. */
+    void requireReadableForOuvrage(Authentication auth, AppUser me, UUID projectId) {
+        requireReadable(auth, me, projectId);
+    }
+
+    /** Package-private hook for {@link OuvrageService} to check write access on a chantier. */
+    void requireManageableForOuvrage(Authentication auth, AppUser me, UUID projectId) {
+        requireManageable(auth, me, projectId);
+    }
+
     /**
      * Clones folder templates for a project (flat, parent_id null): org-specific if any
      * exist, else global (org_id is null); if the table is somehow empty, a hardcoded
@@ -544,9 +588,16 @@ public class ProjectService {
         return toMemberResponse(rows.get(0));
     }
 
-    private static ProjectResponse toResponse(Map<String, Object> row) {
+    private ProjectResponse toResponse(Map<String, Object> row) {
+        UUID projectId = (UUID) row.get("id");
+        UUID orgId = (UUID) row.get("org_id");
+        String ouvrageSummary = "";
+        if (projectId != null && orgId != null) {
+            try { ouvrageSummary = ouvrages().ouvrageSummary(projectId, orgId); }
+            catch (Exception ignored) { /* never fail the project list because of ouvrages */ }
+        }
         return new ProjectResponse(
-                (UUID) row.get("id"),
+                projectId,
                 (String) row.get("code"),
                 (String) row.get("name"),
                 (String) row.get("status"),
@@ -560,6 +611,7 @@ public class ProjectService {
                 toBigDecimal(row.get("contract_value")),
                 (String) row.get("currency"),
                 row.get("member_count") == null ? null : ((Number) row.get("member_count")).intValue(),
+                ouvrageSummary,
                 toInstant(row.get("created_at")));
     }
 

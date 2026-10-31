@@ -3,6 +3,7 @@ package tn.hydra.project;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
+import org.springframework.context.ApplicationContext;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.Authentication;
@@ -31,6 +32,8 @@ class ProjectServiceTest {
     private tn.hydra.security.FolderAccessService folderAccess;
     private EventLogService audit;
     private ProjectService service;
+    private ApplicationContext ctx;
+    private OuvrageService ouvrages;
     private Authentication auth;
 
     private Map<String, Object> projectRow(UUID id, String name, String code, String status) {
@@ -57,8 +60,18 @@ class ProjectServiceTest {
         jdbc = mock(JdbcTemplate.class);
         users = mock(AppUserRepository.class);
         audit = mock(EventLogService.class);
+        // Minimal adapter for the new 5th constructor arg (ApplicationContext).
+        // The test's assertions are unchanged — only the constructor signature
+        // grew because ProjectService now lazily looks up OuvrageService via
+        // the ApplicationContext, to break the construction cycle
+        // (OuvrageService also depends on ProjectService).
+        ctx = mock(ApplicationContext.class);
+        ouvrages = mock(OuvrageService.class);
+        when(ctx.getBean(OuvrageService.class)).thenReturn(ouvrages);
+        // ensureCommunOuvrage is a void no-op in the mock — that's the desired
+        // behavior for the project-only tests (ouvrages have their own tests).
         service = new ProjectService(jdbc, users, audit,
-                folderAccess = mock(tn.hydra.security.FolderAccessService.class));
+                folderAccess = mock(tn.hydra.security.FolderAccessService.class), ctx);
         auth = new UsernamePasswordAuthenticationToken("admin@hydra.tn", "pw");
 
         AppUser admin = new AppUser();
@@ -71,7 +84,7 @@ class ProjectServiceTest {
 
     private ProjectService.CreateProjectRequest req(String name, String code) {
         return new ProjectService.CreateProjectRequest(name, code, null, null, null,
-                null, null, null, null, null, null, null);
+                null, null, null, null, null, null, null, null);
     }
 
     // ── list ────────────────────────────────────────────────────────────
@@ -237,7 +250,7 @@ class ProjectServiceTest {
 
         service.create(auth, new ProjectService.CreateProjectRequest(
                 "Chantier Nord", "CN", null, null, null, null, null,
-                null, null, null, null, List.of(MEMBER_ID)));
+                null, null, null, null, List.of(MEMBER_ID), null));
 
         verify(jdbc).update(contains("insert into project_member"),
                 eq(PROJECT_ID), eq(MEMBER_ID), any());
@@ -252,7 +265,7 @@ class ProjectServiceTest {
 
         assertThatThrownBy(() -> service.create(auth, new ProjectService.CreateProjectRequest(
                 "Chantier Nord", "CN", null, null, null, null, null,
-                null, null, null, null, List.of(MEMBER_ID))))
+                null, null, null, null, List.of(MEMBER_ID), null)))
                 .isInstanceOf(BadRequestException.class)
                 .hasFieldOrPropertyWithValue("code", "USER_NOT_FOUND");
     }

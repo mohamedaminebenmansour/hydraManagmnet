@@ -64,7 +64,7 @@ Supabase        ──→ PostgreSQL (base de données, gratuit)
    | `DB_USER` | `postgres` |
    | `DB_PASSWORD` | votre mot de passe Supabase |
    | `OWNER_EMAIL` | `owner@hydra.tn` |
-   | `OWNER_PASSWORD` | `HydraOwner2026!` |
+   | `OWNER_PASSWORD` | `<OWNER_PASSWORD>` |
    | `HYDRA_STORAGE_TYPE` | `local` |
    | `HYDRA_STORAGE_ROOT` | `/opt/data/files` |
 
@@ -121,7 +121,7 @@ Si votre URL Render est différente (ex: `hydra-backend-xyz.onrender.com`), modi
 
 1. Ouvrir `https://hydra-managmnet.vercel.app`
 2. Page de connexion HYDRA s'affiche
-3. Login : `owner@hydra.tn` / `HydraOwner2026!`
+3. Login : `owner@hydra.tn` / `<OWNER_PASSWORD>`
 4. Cliquer **Matériel** → voir le stock
 5. 🎉 C'est en ligne !
 

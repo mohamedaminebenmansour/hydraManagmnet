@@ -1,0 +1,183 @@
+<div class="ouvrages-tab">
+  <p class="note">
+    <i class="pi pi-info-circle"></i>
+    Les ouvrages structurent le chantier (réservoir, conduite, station…).
+    L'ouvrage « Commun » (installation, repli, essais) est créé automatiquement.
+  </p>
+
+  @if (canWrite()) {
+    <div class="ouvrage-add-btns">
+      @for (t of ADDABLE_OUVRAGE_TYPES; track t) {
+        <button type="button" class="ouvrage-add-btn"
+                [style.--c]="ouvrageTypeVisual(t).color"
+                [style.--s]="ouvrageTypeVisual(t).soft"
+                (click)="openAdd(t)"
+                [attr.aria-label]="'Ajouter ' + ouvrageTypeLabel(t)">
+          <i class="pi pi-plus"></i>
+          <i class="pi" [class]="ouvrageTypeVisual(t).icon"></i>
+          <span>{{ ouvrageTypeLabel(t) }}</span>
+        </button>
+      }
+    </div>
+  }
+
+  @if (loading()) {
+    <div class="loading"><i class="pi pi-spin pi-spinner"></i> Chargement…</div>
+  } @else if (!ouvrages().length) {
+    <app-empty-state icon="pi pi-database" message="Aucun ouvrage pour le moment."></app-empty-state>
+  } @else {
+    <div class="ouvrage-grid">
+      @for (o of ouvrages(); track o.id) {
+        <div class="ouvrage-card" [style.--c]="ouvrageTypeVisual(o.type).color"
+                                  [style.--s]="ouvrageTypeVisual(o.type).soft">
+          <div class="oc-head">
+            <span class="oc-disc"><i class="pi" [class]="ouvrageTypeVisual(o.type).icon"></i></span>
+            <div class="oc-info">
+              <div class="oc-name">{{ o.name }}</div>
+              <div class="oc-type">{{ ouvrageTypeLabel(o.type) }}@if (o.code) { · {{ o.code }} }</div>
+            </div>
+            <div class="oc-actions">
+              @if (canWrite()) {
+                <p-button icon="pi pi-pencil" [text]="true" size="small"
+                          (onClick)="openEdit(o)"
+                          [attr.aria-label]="'Modifier ' + o.name" />
+                @if (canDelete(o)) {
+                  <p-button icon="pi pi-trash" [text]="true" size="small" severity="danger"
+                            (onClick)="confirmDelete(o)"
+                            [attr.aria-label]="'Supprimer ' + o.name" />
+                }
+              }
+            </div>
+          </div>
+          @if (hasCharacteristics(o)) {
+            <div class="oc-chips">
+              @for (entry of ouvrageCharacteristics(o.type); track entry.key) {
+                @if (o.characteristics[entry.key] !== undefined && o.characteristics[entry.key] !== null && o.characteristics[entry.key] !== '') {
+                  <span class="oc-chip">
+                    <span class="oc-chip-k">{{ entry.spec.label }}</span>
+                    <span class="oc-chip-v">{{ formatCharacteristic(entry.spec, o.characteristics[entry.key]) }}</span>
+                  </span>
+                }
+              }
+              @if (o.characteristics['troncons']?.length) {
+                <span class="oc-chip">
+                  <span class="oc-chip-k">Tronçons</span>
+                  <span class="oc-chip-v">{{ o.characteristics['troncons'].length }}</span>
+                </span>
+              }
+            </div>
+          } @else {
+            <small class="muted">Aucune caractéristique renseignée.</small>
+          }
+        </div>
+      }
+    </div>
+  }
+</div>
+
+<!-- Add / edit dialog -->
+<p-dialog [(visible)]="showDialog" [modal]="true" [style]="{ width: '600px' }"
+          [header]="editMode ? 'Modifier l\'ouvrage' : 'Nouvel ouvrage'"
+          [draggable]="false">
+  <div class="dlg-form">
+    <div class="dlg-oc-head">
+      <span class="oc-disc" [style.background]="ouvrageTypeVisual(formType).soft"
+            [style.color]="ouvrageTypeVisual(formType).color">
+        <i class="pi" [class]="ouvrageTypeVisual(formType).icon"></i>
+      </span>
+      <div class="dlg-oc-type">{{ ouvrageTypeLabel(formType) }}</div>
+    </div>
+    <div class="two">
+      <div class="field">
+        <label>Nom *</label>
+        <input pInputText class="inp" [(ngModel)]="formName" placeholder="Nom de l'ouvrage" />
+      </div>
+      <div class="field">
+        <label>Code</label>
+        <input pInputText class="inp" [(ngModel)]="formCode" placeholder="Ex. : RES-01" />
+      </div>
+    </div>
+    @for (entry of ouvrageCharacteristics(formType); track entry.key) {
+      <div class="field">
+        <label>{{ entry.spec.label }}</label>
+        @switch (entry.spec.kind) {
+          @case ('CHOICE') {
+            <p-select [options]="entry.spec.choices!"
+                      [(ngModel)]="formCharacteristics[entry.key]"
+                      [showClear]="true" placeholder="—"
+                      styleClass="w100" />
+          }
+          @case ('BOOLEAN') {
+            <div class="oc-switch">
+              <p-toggleswitch [(ngModel)]="formCharacteristics[entry.key]" />
+              <span>{{ formCharacteristics[entry.key] ? 'Oui' : 'Non' }}</span>
+            </div>
+          }
+          @case ('INTEGER') {
+            <p-inputNumber [(ngModel)]="formCharacteristics[entry.key]"
+                           [min]="0" mode="decimal" [showButtons]="true"
+                           [suffix]="entry.spec.unit ? ' ' + entry.spec.unit : ''"
+                           styleClass="w100" />
+          }
+          @case ('NUMBER_WITH_UNIT') {
+            <p-inputNumber [(ngModel)]="formCharacteristics[entry.key]"
+                           [min]="0" mode="decimal" [minFractionDigits]="0" [maxFractionDigits]="3"
+                           [suffix]="entry.spec.unit ? ' ' + entry.spec.unit : ''"
+                           styleClass="w100" />
+          }
+          @case ('TEXT') {
+            <input pInputText class="inp" [(ngModel)]="formCharacteristics[entry.key]"
+                   placeholder="{{ entry.spec.label }}" />
+          }
+          @case ('TRONCONS_ARRAY') {
+            <div class="oc-troncons">
+              @for (tr of formTroncons; track $index) {
+                <div class="oc-troncon">
+                  <p-inputNumber [(ngModel)]="tr.de_mm" [min]="0" mode="decimal"
+                                 suffix=" mm DE" styleClass="oc-tr-inp" />
+                  <p-select [options]="['10','16']" [(ngModel)]="tr.pn_bar" styleClass="oc-tr-pn" />
+                  <p-inputNumber [(ngModel)]="tr.longueur_m" [min]="0" mode="decimal"
+                                 [minFractionDigits]="0" [maxFractionDigits]="3"
+                                 suffix=" m" styleClass="oc-tr-inp" />
+                  <button type="button" class="oc-tr-rm" (click)="removeTroncon($index)"
+                          [attr.aria-label]="'Retirer ce tronçon'">
+                    <i class="pi pi-times"></i>
+                  </button>
+                </div>
+              } @empty {
+                <small class="muted">Aucun tronçon. Ajoutez-en un par diamètre.</small>
+              }
+              <button type="button" class="oc-tr-add" (click)="addTroncon()">
+                <i class="pi pi-plus"></i> Ajouter un tronçon
+              </button>
+            </div>
+          }
+        }
+      </div>
+    }
+    @if (!ouvrageCharacteristics(formType).length) {
+      <small class="muted">Aucune caractéristique requise pour ce type.</small>
+    }
+  </div>
+  <ng-template pTemplate="footer">
+    <p-button label="Annuler" [text]="true" (onClick)="showDialog = false" [disabled]="saving()" />
+    <p-button [label]="editMode ? 'Enregistrer' : 'Créer l\'ouvrage'"
+              icon="pi pi-check" (onClick)="save()"
+              [loading]="saving()" [disabled]="!formName.trim()" />
+  </ng-template>
+</p-dialog>
+
+<!-- Delete dialog -->
+<p-dialog [(visible)]="showDeleteDialog" [modal]="true" [style]="{ width: '440px' }"
+          header="Supprimer l'ouvrage">
+  <p>Supprimer <strong>{{ deleteTarget?.name }}</strong> ?</p>
+  @if (deleteTarget && !canDelete(deleteTarget)) {
+    <p class="muted">L'ouvrage « Commun » est obligatoire et ne peut pas être supprimé.</p>
+  }
+  <ng-template pTemplate="footer">
+    <p-button label="Annuler" [text]="true" (onClick)="showDeleteDialog = false" />
+    <p-button label="Supprimer" icon="pi pi-trash" severity="danger"
+              (onClick)="doDelete()"
+              [disabled]="!deleteTarget || !canDelete(deleteTarget)" />
+  </ng-template>
+</p-dialog>

@@ -14,7 +14,7 @@ GET http://localhost:8080/api/auth/me
 POST http://localhost:8080/api/auth/login
 Content-Type: application/json
 X-XSRF-TOKEN: <value of XSRF-TOKEN cookie>
-{ "email": "owner@hydra.tn", "password": "HydraOwner2026!" }
+{ "email": "owner@hydra.tn", "password": "<OWNER_PASSWORD>" }
 # 3. refresh XSRF-TOKEN value after login (session rotates the cookie)
 ```
 

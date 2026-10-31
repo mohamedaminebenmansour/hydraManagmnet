@@ -88,7 +88,7 @@
             <td class="c-name">{{ p.name }}</td>
             <td>
               <span class="type-chip" [style.--tc-color]="tv(p.projectType).color">
-                <i class="pi" [class]="tv(p.projectType).icon"></i> {{ tv(p.projectType).label }}
+                <i class="pi" [class]="tv(p.projectType).icon"></i> {{ cardSubtitle(p) }}
               </span>
             </td>
             <td>
@@ -121,7 +121,7 @@
             <span class="pname" [title]="p.name">{{ p.name }}</span>
             <div class="ptags">
               <span class="type-tag" [style]="{ background: tv(p.projectType).soft, color: tv(p.projectType).color }">
-                <i class="pi" [class]="tv(p.projectType).icon"></i> {{ tv(p.projectType).label }}
+                <i class="pi" [class]="tv(p.projectType).icon"></i> {{ cardSubtitle(p) }}
               </span>
               <span class="status-chip" [style]="{ background: sv(p.status).soft, color: sv(p.status).color }">
                 <span class="dot" [style.background]="sv(p.status).color"></span>
@@ -227,8 +227,119 @@
       </div>
     }
 
-    <!-- ÉTAPE 2 — CALENDRIER & ÉQUIPE -->
+    <!-- PHASE-OUVRAGE-UI — ÉTAPE 2 — OUVRAGES (optionnel, peut être sauté) -->
     @if (step() === 2) {
+      <div class="field">
+        <label class="q">Ouvrages du chantier <small>(optionnel — peut être sauté)</small></label>
+        <div class="ouvrage-add-btns">
+          @for (t of ADDABLE_OUVRAGE_TYPES; track t) {
+            <button type="button" class="ouvrage-add-btn"
+                    [style.--c]="ouvrageTypeVisual(t).color"
+                    [style.--s]="ouvrageTypeVisual(t).soft"
+                    (click)="addDraftOuvrage(t)"
+                    [attr.aria-label]="'Ajouter ' + ouvrageTypeLabel(t)">
+              <i class="pi pi-plus"></i>
+              <i class="pi" [class]="ouvrageTypeVisual(t).icon"></i>
+              <span>{{ ouvrageTypeLabel(t) }}</span>
+            </button>
+          }
+        </div>
+      </div>
+
+      @if (draftOuvrages().length) {
+        <div class="ouvrage-cards">
+          @for (o of draftOuvrages(); track o.tempId) {
+            <div class="ouvrage-card" [style.--c]="ouvrageTypeVisual(o.type).color"
+                                      [style.--s]="ouvrageTypeVisual(o.type).soft">
+              <div class="oc-head">
+                <span class="oc-disc"><i class="pi" [class]="ouvrageTypeVisual(o.type).icon"></i></span>
+                <input pInputText class="oc-name" placeholder="Nom de l'ouvrage"
+                       [(ngModel)]="o.name" [attr.aria-label]="'Nom de l\'ouvrage ' + ouvrageTypeLabel(o.type)" />
+                <button type="button" class="oc-remove" (click)="removeDraftOuvrage(o.tempId)"
+                        [attr.aria-label]="'Retirer cet ouvrage'">
+                  <i class="pi pi-times"></i>
+                </button>
+              </div>
+              <div class="oc-body">
+                <div class="oc-two">
+                  <div class="oc-field">
+                    <label>Code</label>
+                    <input pInputText class="inp" placeholder="Ex. : RES-01" [(ngModel)]="o.code" />
+                  </div>
+                </div>
+                @for (entry of ouvrageCharacteristics(o.type); track entry.key) {
+                  <div class="oc-field">
+                    <label>{{ entry.spec.label }}</label>
+                    @switch (entry.spec.kind) {
+                      @case ('CHOICE') {
+                        <p-select [options]="entry.spec.choices!"
+                                  [(ngModel)]="o.characteristics[entry.key]"
+                                  [showClear]="true" placeholder="—"
+                                  styleClass="w100" />
+                      }
+                      @case ('BOOLEAN') {
+                        <div class="oc-switch">
+                          <p-toggleswitch [(ngModel)]="o.characteristics[entry.key]" />
+                          <span>{{ o.characteristics[entry.key] ? 'Oui' : 'Non' }}</span>
+                        </div>
+                      }
+                      @case ('INTEGER') {
+                        <p-inputNumber [(ngModel)]="o.characteristics[entry.key]"
+                                       [min]="0" mode="decimal" [showButtons]="true"
+                                       [suffix]="entry.spec.unit ? ' ' + entry.spec.unit : ''"
+                                       styleClass="w100" />
+                      }
+                      @case ('NUMBER_WITH_UNIT') {
+                        <p-inputNumber [(ngModel)]="o.characteristics[entry.key]"
+                                       [min]="0" mode="decimal" [minFractionDigits]="0" [maxFractionDigits]="3"
+                                       [suffix]="entry.spec.unit ? ' ' + entry.spec.unit : ''"
+                                       styleClass="w100" />
+                      }
+                      @case ('TEXT') {
+                        <input pInputText class="inp" [(ngModel)]="o.characteristics[entry.key]"
+                               placeholder="{{ entry.spec.label }}" />
+                      }
+                      @case ('TRONCONS_ARRAY') {
+                        <div class="oc-troncons">
+                          @for (tr of o.troncons; track $index) {
+                            <div class="oc-troncon">
+                              <p-inputNumber [(ngModel)]="tr.de_mm" [min]="0" mode="decimal"
+                                             suffix=" mm DE" styleClass="oc-tr-inp" />
+                              <p-select [options]="['10','16']" [(ngModel)]="tr.pn_bar"
+                                        styleClass="oc-tr-pn" />
+                              <p-inputNumber [(ngModel)]="tr.longueur_m" [min]="0" mode="decimal"
+                                             [minFractionDigits]="0" [maxFractionDigits]="3"
+                                             suffix=" m" styleClass="oc-tr-inp" />
+                              <button type="button" class="oc-tr-rm" (click)="removeTroncon(o.tempId, $index)"
+                                      [attr.aria-label]="'Retirer ce tronçon'">
+                                <i class="pi pi-times"></i>
+                              </button>
+                            </div>
+                          } @empty {
+                            <small class="muted">Aucun tronçon. Ajoutez-en un par diamètre.</small>
+                          }
+                          <button type="button" class="oc-tr-add" (click)="addTroncon(o.tempId)">
+                            <i class="pi pi-plus"></i> Ajouter un tronçon
+                          </button>
+                        </div>
+                      }
+                    }
+                  </div>
+                }
+                @if (!ouvrageCharacteristics(o.type).length) {
+                  <small class="muted">Aucune caractéristique requise pour ce type.</small>
+                }
+              </div>
+            </div>
+          }
+        </div>
+      } @else {
+        <p class="wizard-note">Aucun ouvrage ajouté — vous pourrez les ajouter plus tard depuis l'onglet Ouvrages.</p>
+      }
+    }
+
+    <!-- ÉTAPE 3 — CALENDRIER & ÉQUIPE -->
+    @if (step() === 3) {
       <div class="two">
         <div class="field">
           <label><i class="pi pi-calendar"></i> Date de début</label>
@@ -263,8 +374,8 @@
       <p class="wizard-note"><i class="pi pi-info-circle"></i> Vous pourrez ajouter d'autres membres depuis la fiche du chantier.</p>
     }
 
-    <!-- ÉTAPE 3 — CONTRAT & DÉTAILS (tout optionnel) -->
-    @if (step() === 3) {
+    <!-- ÉTAPE 4 — CONTRAT & DÉTAILS (tout optionnel) -->
+    @if (step() === 4) {
       <div class="two">
         <div class="field">
           <label>Code (optionnel)</label>
@@ -295,7 +406,7 @@
         <span></span>
       }
       <div class="wf-right">
-        @if (step() < 3) {
+        @if (step() < 4) { /* PHASE-OUVRAGE-UI: 4 steps */
           <p-button label="Suivant" icon="pi pi-arrow-right" iconPos="right"
                     (onClick)="wNext()" [disabled]="!formName.trim()" />
         } @else {

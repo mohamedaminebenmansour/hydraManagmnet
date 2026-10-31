@@ -19,6 +19,10 @@ export interface Project {
   endDate?: string | null;
   description?: string | null;
   contractValue?: number | null;
+  /** Short French summary of the chantier's ouvrages, e.g.
+   * "2 réservoirs · 1 conduite 12,5 km · commun". Empty when no ouvrages yet
+   * (rare, since COMMUN is auto-created). Built by the backend. */
+  ouvrageSummary?: string | null;
   createdAt?: string;
 }
 
@@ -35,6 +39,15 @@ export interface ProjectCreate {
   description?: string | null;
   contractValue?: number | null;
   memberUserIds?: string[];
+  /** Optional list of ouvrages to create atomically with the project.
+   *  The backend saves project + COMMUN + these ouvrages in one
+   *  @Transactional; if any ouvrage is invalid, nothing is saved. */
+  ouvrages?: Array<{
+    type: string;
+    name: string;
+    code?: string | null;
+    characteristics?: Record<string, any>;
+  }>;
 }
 
 /** PUT /api/projects/{id} */
@@ -170,6 +183,7 @@ export function mapProject(raw: any): Project {
     endDate: raw.endDate ?? raw.end_date ?? null,
     description: raw.description ?? null,
     contractValue: raw.contractValue ?? raw.contract_value ?? null,
+    ouvrageSummary: raw.ouvrageSummary ?? raw.ouvrage_summary ?? '',
     createdAt: raw.createdAt ?? raw.created_at
   };
 }

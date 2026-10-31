@@ -297,7 +297,7 @@ export DB_URL=jdbc:postgresql://127.0.0.1:5432/hydra
 export DB_USER=postgres
 export DB_PASSWORD=hydra
 export OWNER_EMAIL=owner@hydra.tn
-export OWNER_PASSWORD=HydraOwner2026!
+export OWNER_PASSWORD=<OWNER_PASSWORD>
 export HYDRA_STORAGE_TYPE=local
 export HYDRA_STORAGE_ROOT=/tmp/my-project/storage
 

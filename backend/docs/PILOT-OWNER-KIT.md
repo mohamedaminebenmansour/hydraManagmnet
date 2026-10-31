@@ -42,7 +42,7 @@
 
 ### Avant la session
 - Backend + frontend démarrés (ou https://github.com/mohamedaminebenmansour/hydraManagmnet cloné en local)
-- Compte : `owner@hydra.tn` / `HydraOwner2026!`
+- Compte : `owner@hydra.tn` / `<OWNER_PASSWORD>`
 - Un projet disponible (ex: Adduction Aïn Draham)
 - Un article disponible (ex: Ciment 25kg)
 

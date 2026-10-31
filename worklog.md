@@ -750,3 +750,241 @@ Stage Summary:
   - Project select in movement form derives from PROJECT pots (not the full project list) — Phase 2 can use ProjectService.options() instead
   - No date-range/status filters on pot detail movement history yet (backend supports them)
   - No pagination on movement lists (backend default 50 max 200 — fine for Phase 1 volume)
+
+---
+Task ID: B2+B3
+Agent: main (Z.ai)
+Task: TASK B2 — CASH_*/PARTY_* permissions (Flyway seed + enforcement, JSON 403) · TASK B3 — Movement DTO names + timeline API (no N+1)
+
+Work Log:
+- Environment recovery: started pgserver (was unix-socket-only → restarted postmaster with `-h 127.0.0.1 -p 5432` via pg_ctl; password hydra; listen_addresses='127.0.0.1' persisted via ALTER SYSTEM), then backend :8080. Flyway applied V1→V22 on empty hydra DB; DemoDataRunner seeded 15 users/9 projects/10 parties/9 pots/57 movements/5 process instances.
+- Found previous session had already written most of B2/B3 before dying: V22__cash_permissions.sql (6 perms: CASH_READ/DRAFT/SUBMIT/POST/VOID + PARTY_MANAGE; OWNER=all, FINANCE=read/draft/submit/post, CHEF_PROJET/ACHAT=read/draft/submit, CONDUCTEUR=read/draft, BUREAU/QA=read), @PreAuthorize on every CashController/PartyController endpoint, service-level requirePermission defence-in-depth, GlobalExceptionHandler AccessDeniedException→403 JSON, PaymentFacade (B1), /movements/{id}/detail, /movements/details, /movements/{id}/timeline.
+- B3 FIX (the actual code change of this session): listMovements + listMovementsDetail did a per-row `select count(*) from project_member` (N+1). Replaced with accessibleProjectIds(me) — ONE query up front (owner: all org project ids; non-owner: their project_member rows) + in-memory Set filter. Added HashSet/Set imports.
+- Demo-data fix (DemoDataRunner.seedProjectMembers): added safa.mtibaa@hydra.tn (FINANCE) as MANAGER on all 9 demo projects — required by ProcessService.requireStepAccess role-fallback (project member + business role). Without it FINANCE could never act on PAYMENT_APPROVAL steps. Also inserted the 9 rows directly into the live DB because DemoDataRunner skips when 5 seeded process instances exist.
+- Verified build: ./mvnw -B -DskipTests clean package → BUILD SUCCESS (twice: before and after seed fix).
+
+LIVE VERIFICATION (curl against 127.0.0.1:8080, CSRF cookie flow):
+1. B2 owner login → permissions[] contains all 6 new PERM_* ✓
+2. B2 BUREAU (amel.riahi, read-only): GET /movements 200; POST /movements → 403 {"code":"FORBIDDEN","message":"Vous n'avez pas cette permission"} ✓
+3. B2 FINANCE (safa.mtibaa): POST /api/parties → 403 JSON (no PARTY_MANAGE) ✓; void → 403 (no CASH_VOID) ✓; POST /movements → 201 ✓
+4. B3 GET /api/cash/movements/details → rows carry fromPotName/toPotName/projectName/partyName/partyType/postedByName/status/processInstanceId ✓
+5. B3 timeline: live create→timeline shows CASH_MOVEMENT_CREATED; post→+CASH_MOVEMENT_POSTED; void→+CASH_MOVEMENT_VOIDED(reason) ✓ (seeded movements have no events because seeder writes rows without event_log — API behaves correctly)
+6. B1/B3 E2E payment: submit-payment (750 TND, Caisse centrale, project Sfax, party) → DRAFT + RUNNING process → FINANCE completes DRAFT step → OWNER completes APPROVE step → FINANCE completes POST step → process COMPLETED → auto-post hook → movement POSTED; timeline = CREATED→SUBMITTED→POSTED(by Safa Mtibaa); company balance 6 956 000 → 6 955 250 TND ✓
+7. Negative-balance guard on auto-post: attempt on Caisse Adduction Aïn Draham (-63 000 TND) → 409 INSUFFICIENT_BALANCE, step completion rolled back, process stays RUNNING ✓ (transactional consistency proven)
+
+Stage Summary:
+- B2 DONE: 6 permissions seeded (V22), enforced at 2 levels (@PreAuthorize + service), JSON 403 always, owner=all / FINANCE=read+draft+submit+post (IN posting; OUT goes through workflow).
+- B3 DONE: /movements/details + /movements/{id}/detail (JOINed display names), /movements/{id}/timeline (event_log JOIN app_user + movement snapshot), N+1 eliminated via accessibleProjectIds.
+- Demo seed now lets FINANCE act on payment approvals (project MANAGER on all projects).
+- Infra: PG now listens on TCP 127.0.0.1:5432 (persisted in postgresql.auto.conf); start-postgres.sh unchanged (pgserver socket start + manual pg_ctl restart needed after sandbox reboot — NOTE for next session: run start-postgres.sh, then pg_ctl stop + start with `-o "-h 127.0.0.1 -p 5432 -k /home/z/my-project/.pgdata"` if TCP is down).
+- Backend running :8080 with latest jar. Frontend untouched this session (build was green in previous session).
+- NEXT: B4 candidate work — frontend "Soumettre pour approbation" button (submit-payment instead of direct post) for OUT from MovementForm, + Mes tâches deep-link to movement timeline; then A1/A2 document vault 500/400 fixes still pending from earlier plan.
+
+---
+Task ID: A2+B4+B5+B6
+Agent: main (Z.ai)
+Task: A2 documents error body/FormData · B4 CASH_* perms UI + guards + FR labels · B5 short payment UX (submit-payment) · B6 movement timeline + run servers
+
+Work Log:
+- A2: documents.component.ts — added apiErrMsg() (message ?? detail ?? code, string-body safe) and wired it into upload / revision / delete error toasts; list failure now toasts the API message while keeping the empty list (no crash). Verified FormData already exact (file/title/docType, no manual Content-Type) and DOC_TYPE_OPTS matches the 12-value backend enum — no change needed there.
+- B4: verified already-complete from prior session: PERM.CASH_* + labels + group in permissions.ts; all /tresorerie/** routes behind permGuard(CASH_READ); processes/builder(/:id) ownerGuard; no process-test nav item (only in stale scripts/update_routes.py, not compiled); MOVEMENT_STATUS_VISUAL = Brouillon/Comptabilisé/Annulé + PENDING_VISUAL "En attente" (DRAFT+process).
+- B5 backend (additive): MyTaskSummary + subjectLabel/subjectAmount via LEFT JOIN cash_movement in listMyTasks (one query, no N+1). mvnw package OK.
+- B5 frontend: cash.service.submitPayment (POST /api/cash/movements/submit-payment) + toastError detail fallback; movement-form OUT-create layout = short payment UX (montant+date, sous-traitant+libellé, "Plus d'options" details block with caisse/projet/note; primary "Envoyer pour validation" CASH_SUBMIT, projectId enforced client-side; "Enregistrer et valider" hidden for OUT); qp prefill extended with amount+label (deep-link duplication); movement-detail: OUT DRAFT without process shows workflow note + "Dupliquer et soumettre" (prefilled redirect) instead of Valider (poster) — IN/TRANSFER keep direct post.
+- B5 my-tasks: MyTask.subjectLabel/subjectAmount mapped in mapMyTask; payment line "2 500,000 TND — label" on CASH_MOVEMENT cards; card clickable → movement detail (openSubject).
+- B6: cash.service.getTimeline + MovementTimeline/Event models + TIMELINE_ACTION_VISUAL (FR labels/icons) + parseTimelineDetails; movement-detail "Historique" vertical timeline (icon dot + action + user + datetime + reason from details JSON).
+- BUGS FIXED while verifying live:
+  1. my-tasks.component.ts had <p-badge *ngIf> without NgIf import → NG0303 every CD cycle, broke component → replaced with @if control flow.
+  2. Card (click)=openSubject bubbled under action buttons (nav race) → action buttons now native (click) + onValidate/onReject with stopPropagation.
+  3. mapMyTask dropped the new subject fields → added.
+- LIVE E2E (agent-browser, owner): project Payer → short form prefilled (OUT/27/10/2026/caisse chantier) → 1250 TND + party + label → "Envoyer pour validation" → detail "En attente" + Voir le workflow + Historique (Créée/Envoyée) → Mes tâches shows both payments with amounts → clicked Valider through DRAFT→APPROVE→POST steps → movement POSTED (CREATED→SUBMITTED→POSTED). Top-up IN 70 000 posted via API first (project pot was negative; negative-balance guard proven earlier).
+- Builds: mvnw package OK; npm run build OK (509.11 kB).
+- Servers running: PG TCP 5432, backend :8080, Angular :3000 (dev, proxy /api→8080). Screenshots: download/b5-short-payment-form.png, b5-mes-taches-payment.png, b6-timeline-posted.png, b5b6-movement-detail-pending.png.
+
+Stage Summary:
+- B5 delivers the 2-click payment: chantier → Payer → montant/tiers/libellé → Envoyer pour validation → workflow; Mes tâches = Valider/Rejeter with payment context; auto-post on final step.
+- B6 gives every operation an auditable French timeline.
+- Remaining known-gaps: attachment on movement not implemented (backend junction table exists, no API yet — "file if API allows" = not allowed yet); old 2500 demo process still RUNNING (its pot is negative → POST step 409s by design, demonstrates the guard); A1 document 500/400 backend fixes still pending from the earlier plan.
+
+---
+Task ID: C1+C2
+Agent: main (Z.ai)
+Task: TASK C1 — Tickets are NOT a second workflow engine (backend audit + basic CRUD + close + process_instance_id) · TASK C2 — Tickets menu = tâches/signalements only, Mes tâches remains process inbox
+
+Work Log:
+- AUDIT: read Ticket entity/controller/service/repository + V6/V7/V13 migrations. Found: (a) ticket table had NO process_instance_id column; (b) TicketService.start/wait_/resume/close were DEAD CODE (never routed by controller) writing legacy statuses OUVERT/EN_COURS/EN_ATTENTE/RESOLU that violate the V13 CHECK constraint (DRAFT/IN_REVIEW/APPROVED/IFC/AS_BUILT) — would throw DataIntegrityViolation if ever called; (c) controller get/update returned empty-body 404 (notFound().build()) — not JSON; (d) requireTicket threw BusinessRuleException (409) for not-found.
+- C1 V23__ticket_process_link.sql: alter table ticket add column if not exists process_instance_id uuid references process_instance(id) + index. Nullable, read-only — payments still route exclusively through POST /api/cash/movements/submit-payment (PAYMENT_APPROVAL / subject CASH_MOVEMENT). Deliberately NO POST /api/tickets/{id}/request-validation endpoint: the only template today is PAYMENT_APPROVAL (cash-specific) — documented in TicketController javadoc.
+- C1 Ticket.java: + processInstanceId field/getter/setter (ddl-auto=validate stays in sync — Flyway runs before Hibernate).
+- C1 TicketService: SELECT_SQL + TicketResponse + toResponse expose processInstanceId; removed the 4 dead legacy methods; new close() = close from ANY non-terminal status → AS_BUILT + resolved_at/resolved_by + audit TICKET_CLOSED (from/to details); already-closed → 409 ALREADY_CLOSED. requireTicket now throws ResourceNotFoundException(TICKET_NOT_FOUND) → 404 JSON instead of 409.
+- C1 TicketController: + POST /api/tickets/{id}/close (@PreAuthorize PERM_TICKET_WRITE); get/update null → ResourceNotFoundException (JSON 404); javadoc block: tickets = simple tasks/issues, payments = cash submitPayment, no request-validation endpoint + rationale.
+- C1 TicketServiceTest was entirely stale (tested pre-V13 OUVERT/EN_COURS workflow + assignee-permission semantics that no longer exist → it only compiled because dead methods still existed). Rewrote to current API: create→DRAFT, close semantics (any status, 409 when closed, 404 foreign), setStatus illegal/unknown transitions, list org-scoping, partial update. Fixed one Mockito verify (AS_BUILT is inlined in SQL, not a bind param). 14/14 tests green.
+- C1 build: ./mvnw -B -DskipTests clean package → BUILD SUCCESS. Also ran -Dtest=TicketServiceTest → 14 run, 0 failures.
+- C1 backend restarted (V23 applied by Flyway on boot, "now at version v23").
+- C1 LIVE E2E (scripts/ticket-e2e.sh, curl + CSRF, owner): list 200; CREATE "Fuite regard VRD" → DRAFT/HIGH/assignedToName="Amel Riahi"/processInstanceId=null; PUT assign → "Safa Mtibaa"; POST close → status=AS_BUILT + resolvedAt + resolvedById=owner; close again → 409 {"code":"ALREADY_CLOSED"}; GET unknown UUID → 404 {"code":"TICKET_NOT_FOUND"}; cash_movement count 63→63 and process_instance count unchanged (NO cash side effects); audit trail TICKET_CREATED→TICKET_UPDATED→TICKET_CLOSED; information_schema confirms ticket.process_instance_id column exists.
+- C2 shell.component.ts: NAV had NO Tickets item at all → added { label: 'Tâches / Signalements', icon: 'pi-ticket', path: '/tickets', perm: PERM.TICKET_READ, color: '#d97706' } after Chantiers, with comment: tickets ≠ payment approvals (those go Trésorerie → submit-payment → Mes tâches).
+- C2 tickets.component.html/scss: h2 "Tickets" → "Tâches / Signalements" + subtitle "Problèmes et travaux assignés sur les chantiers. Les validations de paiement se traitent dans « Mes tâches »." (.head-title/.head-sub CSS added).
+- C2 home.component.ts: tile label 'Tickets'/'Travaux assignés' → 'Tâches / Signalements'/'Problèmes et travaux assignés'.
+- C2 verified NO payment/approval references in features/tickets (rg); Mes tâches (process inbox) untouched.
+- C2 npm run build → EXIT 0, "Application bundle generation complete", Initial total 509.11 kB (unchanged; NG8102/NG8103 template warnings pre-existing from B4/B5 work, exit 0).
+- C2 LIVE UI (agent-browser on :3000 dev server): sidebar shows "Tâches / Signalements" between Chantiers and Utilisateurs; home tile updated; /tickets page shows new title + subtitle + list with the E2E ticket "Fuite regard VRD" (As-built, Haute, Safa Mtibaa, Adduction Aïn Draham, no advance buttons on terminal status); detail page renders; no page errors. Screenshots: download/c2-tickets-screen.png, download/c2-ticket-detail-closed.png.
+- Servers left running: PG (TCP 127.0.0.1:5432), backend :8080 (new jar + V23), frontend :3000 (ng serve, live-reloaded).
+
+Stage Summary:
+- C1 DONE: ticket module = simple task/issue CRUD; process_instance_id column (nullable, read-only) added via V23; working POST /api/tickets/{id}/close; all errors JSON (409 ALREADY_CLOSED / 404 TICKET_NOT_FOUND / 400 invalid); dead legacy workflow methods removed; tests updated 14/14; package green; E2E proves zero cash/process side effects.
+- C2 DONE: menu + screen + home tile all say "Tâches / Signalements" with explicit "validations de paiement → Mes tâches" positioning; Mes tâches remains the process inbox; build green.
+- Payments still have exactly ONE orchestration entry: POST /api/cash/movements/submit-payment → PAYMENT_APPROVAL process → auto-post. Tickets never start processes.
+
+---
+Task ID: D1
+Agent: main (Z.ai)
+Task: FIX user-reported bugs — (1) GET dossier 500 "No enum constant ProjectType.ADDUCTION" on chantier→dossier→enter; (2) document upload 400; (3) vite WebSocket console noise in preview
+
+Work Log:
+- ENV RECOVERY: sandbox had been reset — HYDRA project found intact at /tmp/my-project and copied back to /home/z/my-project (backend/frontend/scripts/logs/.jdk/.pgdata/.venv-pg/worklog.md). PG start failed on missing empty dirs (pg_notify etc. lost in copy) → recreated pg_notify/pg_tblspc/pg_replslot/pg_twophase/pg_commit_ts/pg_snapshots/pg_stat/pg_stat_tmp/pg_wal/archive_status + pg_logical subdirs → pg_ctl start with `-o "-h 127.0.0.1 -p 5432 -k .pgdata"` → TCP 5432 OK, demo data intact (9 projects, 63 movements).
+- ROOT CAUSE 1 (the 500): DemoDataRunner seeds project_type values ADDUCTION/IRRIGATION/VANNE/FORAGE/POMPAGE/ASSAINISSEMENT/REHABILITATION/BASSIN but the JPA enum had only RESERVOIR/RESEAU/BRANCHEMENTS/MIXTE/AUTRE. Any JPA read materializing Project (DocumentSpecifications fetches folder→project; DocumentService.upload loads DocFolder→project) threw IllegalArgumentException→InvalidDataAccessApiUsageException→500. The user's failing URL tail (…010100000000) is folder 01_ADMIN of project 1 = GET /api/projects/{id}/documents?folderId=… .
+  FIX A: ProjectType enum extended with the 8 domain values (generic 5 kept for compat).
+  FIX B (resilience): new ProjectTypeConverter (@Converter, AttributeConverter<ProjectType,String>) wired via @Convert on Project.projectType (replaces @Enumerated) — unknown/blank DB values read as AUTRE with WARN log instead of 500. Writes still store enum name; project create/update remains JDBC in ProjectService (unaffected).
+- ROOT CAUSE 2 (the 400): DocumentService.ALLOWED_EXTENSIONS whitelist rejected real-world files (iPhone HEIC photos, .msg/.eml e-mails, PowerPoint, IFC BIM models). Everything before folder-load can only 400 on title/file/extension → extension check is the only plausible server-side 400; folder-load itself would have been the (now fixed) 500.
+  FIX C: whitelist widened (ppt/pptx/rtf/heic/heif/ifc/msg/eml) + FILE_TYPE_NOT_ALLOWED message updated to list accepted formats; upload + revision dialogs accept= attribute extended + French hint line added.
+- ROOT CAUSE 3 (WS noise): Angular 18 dev server ALWAYS injects the vite client (hardcoded directSocketHost "localhost:3000"); the platform preview proxy does not forward WebSocket → two failed attempts per page load (wss://preview-domain then wss://localhost:3000). --live-reload=false --hmr=false does NOT remove the client (verified).
+  FIX D: preview now serves the PRODUCTION build: new frontend/serve-dist.mjs (zero-dep static server for dist/hydra-web/browser + SPA fallback + /api→127.0.0.1:8080 proxy); package.json start=prestart(ng build)+node serve-dist.mjs; start:dev kept for hot-reload local dev; start-frontend.sh now runs npm start (script comment documents rationale).
+- BONUS FIX: /api/projects/options returned {id,name} only → home "Chantiers actifs" cards ALWAYS showed type label "Autre". ProjectOption DTO + both SQL branches now include project_type; project.service.ts options() typed accordingly; consumers verified (start-process already expected projectType; shell/home unaffected).
+- DEDUP: hydra-design.ts duplicated CHANTIER_TYPE_VISUAL/typeVisual/statusVisual (stale 5-value copy) → replaced with re-export from chantier-visual.ts (single source of truth); chantier-visual CHANTIER_TYPE_VISUAL extended with 8 domain entries (PrimeIcons-safe icons + colors/labels FR).
+- BUILDS: ./mvnw -B -DskipTests clean package → BUILD SUCCESS (twice); npm run build → complete, exit 0 (pre-existing NG8102/NG8103 warnings only).
+
+LIVE E2E (curl + agent-browser, owner@hydra.tn):
+1. GET /api/projects/bbbbbb00-…-0001/documents?folderId=eeeeee00-…-010100000000 → HTTP 200 (was 500) — items render.
+2. Owner uploads into that exact folder: PDF → 201 (ADD-ADR-2024-00001); HEIC photo → 201 (…0002); .exe → 400 {"code":"FILE_TYPE_NOT_ALLOWED",…} with clear French message.
+3. Full proxied hop :3000→:8080 with login+CSRF+multipart → 201 (dev server, pre-switch) AND via serve-dist /api proxy → verified again through the UI.
+4. agent-browser UI: home loads all 9 projects (cards now show "Adduction/Assainissement/Chambre de vanne/Forage/Irrigation/…"); chantier → 7 Dossiers → "Ouvrir le dossier Administratif" opens with document list; upload dialog: title + docType (12 options) + file → "Document téléversé" toast → "Rapport de visite UI" appears in list; second project (ASS-SFX-2023, folder 070100000000) opens fine.
+5. PRODUCTION serve console: ZERO vite/WebSocket messages, zero page errors (only 2 PrimeNG Dropdown deprecation logs — library notice, harmless).
+- Screenshots: download/fix-dossier-administratif-open.png (dev), fix-prod-dossier-open.png, fix-prod-upload-success.png.
+- Servers left running: PG TCP 5432, backend :8080 (new jar), frontend :3000 = serve-dist production server.
+
+Stage Summary:
+- Dossier 500 fixed at the root (enum + converter) — any future unknown project_type degrades to AUTRE with a WARN, never a 500.
+- Upload 400 fixed for real-world files; anything still rejected returns an explicit French JSON reason (surfaced by the A2 toast).
+- Preview now runs the production bundle: no WebSocket noise, no dev-mode warnings, faster loads; npm run start:dev remains for hot-reload development.
+- /api/projects/options now carries projectType — home cards show the real nature of works.
+
+---
+Task ID: TASK1 (session continuation)
+Agent: main (Z.ai)
+Task: TASK 1 — Cash payment submit + process completion posts money (re-issued): implement claimed vs assessed + variance_reason; verify "Done when" checklist (mvn package OK, git commit+push, reject path does not post, complete path posts once, CASH_PAYMENT.md)
+
+Work Log:
+- ORIENTED: read worklog tail — D1 (ADDUCTION 500 + upload 400) already fixed & E2E-verified by previous session; C1/C2 and B5/B6 also done. TASK 1 re-issued by user → audit showed workflow mechanics existed (PaymentFacade/CashService/ProcessService hooks, V20/V22) BUT claimed/assessed/variance were MISSING (SubmitPaymentRequest had only amount).
+- V24__payment_claimed_assessed.sql: cash_movement + claimed_amount/assessed_amount NUMERIC(18,3) NULL, variance_reason TEXT NULL; DB CHECKs chk_cm_assessed_positive + chk_cm_variance_reason (NULL-safe for legacy rows); idx_cm_assessed.
+- CashService: CreateMovementRequest/MovementResponse/MovementDetailResponse/MovementTimeline expose the 3 fields; createMovement normalizes (claimed-only → assessed=claimed; amount := assessed; variance rule via new validateClaimedAssessed → 400 VARIANCE_REASON_REQUIRED / INVALID_CLAIMED_AMOUNT / INVALID_ASSESSED_AMOUNT); INSERT/SELECTs (getMovementDetail, listMovements, listMovementsDetail, fetchMovementForUpdate/Read) carry the columns; postMovement + onProcessCompletedPostMovement audit JSON now include claimed/assessed (timeline tells the claimed-vs-assessed story).
+- PaymentFacade: SubmitPaymentRequest + claimedAmount/assessedAmount/varianceReason (amount kept for B5 short-form back-compat; movementDate=valueDate documented); CASH_MOVEMENT_SUBMITTED audit enriched.
+- Fixed 2 PRE-EXISTING test-suite failures (full `mvn test` had never been green-checked in this env): (a) HydraApplicationTests failed on ${DB_URL} with no default → new src/test/resources/application.properties points tests at dedicated hydra_test DB (Flyway applied V1–V24 there); (b) GlobalExceptionHandlerTest NPE → generic 500 handler now null-safe for request (programmatic calls) + stale message assertion updated to shipped format ("ExceptionSimpleName — message | root: …"). Full suite: 107/107 green.
+- E2E scripts/payment-e2e.sh (auth+CSRF, owner): 21/21 PASSED — TEST A variance-without-reason → 400 VARIANCE_REASON_REQUIRED; TEST B assessed≤0 → 400; TEST C legacy amount-only submit → REJECT first step → movement stays DRAFT, process REJECTED, process_instance_id cleared, ZERO CASH_MOVEMENT_POSTED; TEST D claimed 12500.500 vs assessed 11000 + reason → 3 sequential steps COMPLETED → auto-POSTED, exactly ONE CASH_MOVEMENT_POSTED, pot debited by exactly 11000.000 (ASSESSED), detail/timeline JSON expose claimed/assessed/varianceReason; DB safety net chk_cm_variance_reason fires on silent edit. (Test-script side fixes only: balance now read from API — TRANSFER-aware computeBalance; note app behavior was correct all along.)
+- docs/CASH_PAYMENT.md written (Postman steps, rules table, reject/complete semantics, forbidden paths).
+- Builds: ./mvnw -B -DskipTests clean package BUILD SUCCESS (final jar redeployed, backend :8080 healthy, Flyway at v24); ./mvnw -B test 107/107.
+- GIT: backend had NO .git (single snapshot repo at project root, no remote). Restored origin by cloning github.com/mohamedaminebenmansour/hydra.git → moved .git into backend/; .gitignore += data/, target/test-files/ (also removed 2 junk tracked files named "'" and "="); committed ALL backend work as 97a3aef "TASK 1: cash payment submit — claimed vs assessed + PAYMENT_APPROVAL auto-post".
+- PUSH BLOCKED (rule 4): `git push origin main` → "fatal: could not read Username for 'https://github.com': No such device or address" — no credentials/gh/token in sandbox. Stopped and reported per standing rule; commit is local and ready to push once a PAT/credential helper is provided.
+
+Stage Summary:
+- TASK 1 now COMPLETE except push: claimed vs assessed end-to-end (submit → sequential approval → caisse posts ASSESSED once; reject never posts); variance-reason rule service+DB; legacy short-form back-compat (B5 UI unaffected); CASH_PAYMENT.md; 21/21 E2E + 107/107 tests + package green.
+- Servers running: PG TCP 5432, backend :8080 (V24), frontend :3000 (serve-dist).
+- Open items for user: (1) GitHub push needs auth (exact error above) for backend commit 97a3aef; (2) frontend repo also has no .git — same restore+commit+push needed for hydra-web when requested; (3) B5 form could gain claimed/assessed/reason fields as a follow-up (backend contract ready).
+
+---
+Task ID: TASK 2 (cash permissions, list DTO, movement timeline)
+Agent: main (Z.ai)
+Task: TASK 2 — CASH permissions, list DTO, movement timeline (re-issued with PAT for hydraManagmnet.git remote)
+
+Work Log:
+- ORIENTED: read worklog tail. TASK 2 (V22 cash_permissions + DTO + timeline endpoint) was implemented in B2 session; claimed/assessed DTOs added in TASK 1 session; both "done" locally. TASK 2 message re-issued → I audited actual code against each TASK 2 bullet.
+- AUDIT — found ONE real gap against TASK 2: timeline endpoint only fetched event_log rows where entity_type='cash_movement' (the 4 CASH_MOVEMENT_* audit events). It MISSED all process events because ProcessService logs STEP_COMPLETED/STEP_REJECTED/PROCESS_STARTED/PROCESS_COMPLETED/PROCESS_REJECTED against entity_type='process_step_instance' and entity_type='process_instance', not 'cash_movement'. So the user could not see "who approved what when" in the movement timeline. TASK 2 spec literally says "Merge event_log + process step completions ordered by time."
+- FIX in CashService.getMovementTimeline: replaced the single-SELECT with a 3-branch UNION query (single SQL round-trip, zero N+1):
+    (1) cash_movement events         WHERE entity_type='cash_movement' AND entity_id=?
+    (2) process_instance events      JOIN process_instance pi ON pi.id=el.entity_id
+                                       WHERE pi.subject_type='CASH_MOVEMENT' AND pi.subject_id=?
+    (3) process_step_instance events JOIN process_step_instance psi ON psi.id=el.entity_id
+                                       JOIN process_instance pi ON pi.id=psi.instance_id   -- KEY: column is instance_id, NOT process_instance_id (caught during DB introspection)
+                                       WHERE pi.subject_type='CASH_MOVEMENT' AND pi.subject_id=?
+  ORDER BY created_at ASC. Each row tagged with a 'source' column ('cash_movement' | 'process_instance' | 'process_step').
+- DTO: MovementTimelineEvent record gained a `source` field so the UI can render cash vs process rows distinctly.
+- BUILD: ./mvnw -B -DskipTests clean package → BUILD SUCCESS.
+- TESTS: ./mvnw -B test → 107/107 green.
+- LIVE SMOKE (scripts/task2-timeline-smoke.sh, owner@hydra.tn): picked a POSTED payment movement (54459c38-…-b53bfcfe42b68) with a linked process_instance. Timeline now returns 10 events:
+    3× STEP_COMPLETED (the 3 sequential PAYMENT_APPROVAL steps),
+    2× STEP_STARTED,
+    1× PROCESS_STARTED,
+    1× PROCESS_COMPLETED,
+    1× CASH_MOVEMENT_SUBMITTED,
+    1× CASH_MOVEMENT_CREATED,
+    1× CASH_MOVEMENT_POSTED.
+   Before the fix: 3 events (CREATED/SUBMITTED/POSTED only). All 3 sources present (cash_movement ✓, process_instance ✓, process_step ✓).
+- PUSH STRATEGY: local repo at /home/z/my-project/backend has origin=hydra.git (wrong repo). User-provided remote is hydraManagmnet.git (monorepo: backend/ + frontend/ + worklog.md + tool-results/ + download/). First attempt to push local commit 961c05f failed (non-fast-forward: remote has its own TASK 1/2 history diverging from hydra.git's history).
+- RESOLUTION: cloned hydraManagmnet.git fresh to /tmp/hydra-fresh using the PAT. Compared local vs remote: remote was missing the timeline merge fix AND prerequisite work (V23 ticket_process_link, V24 claimed_assessed, claimed/assessed/varianceReason DTO fields, ProjectType enum extension + ProjectTypeConverter D1 fix, DocumentService upload whitelist widening, GlobalExceptionHandler null-safety, Ticket module V13 alignment, CASH_PAYMENT.md, test resources/application.properties).
+- COPIED to fresh clone (only differing files — surgical, not bulk overwrite): CashService.java, PaymentFacade.java, GlobalExceptionHandler.java, DemoDataRunner.java, Project.java, ProjectType.java, ProjectTypeConverter.java (new), DocumentService.java, ProcessService.java, ProjectService.java, Ticket.java, TicketController.java, TicketService.java, GlobalExceptionHandlerTest.java, TicketServiceTest.java, V23__ticket_process_link.sql (new), V24__payment_claimed_assessed.sql (new), docs/CASH_PAYMENT.md (new), src/test/resources/application.properties (new).
+- VERIFY on fresh clone: ./mvnw -B -DskipTests clean package → BUILD SUCCESS; ./mvnw -B test → 107/107 green.
+- COMMIT + PUSH: commit 46d32ae "TASK 2: cash timeline merges event_log + process step completions" pushed fast-forward to origin/main (9017ac5..46d32ae). NO force-push needed. PAT-based auth worked on first try.
+- CLEANUP: /tmp/hydra-fresh left in place (not deleted — useful if user wants to re-verify or continue work there). Local /home/z/my-project/backend repo's origin is now hydraManagmnet.git but local commit history still diverges from remote (local has hydra.git's old commits c9f2941 etc.) — left as-is since the work is now on hydraManagmnet.git main. Local backend still running on :8080 for any follow-up.
+
+Stage Summary:
+- TASK 2 DONE: GET /api/cash/movements/{id}/timeline now returns the FULL merged timeline (cash_movement + process_instance + process_step events) ordered by time, single SQL round-trip, no N+1. MovementTimelineEvent carries a `source` tag for UI rendering.
+- Permissions (V22), DTOs (partyName/potName/projectName/claimedAmount/assessedAmount/varianceReason/status/processInstanceId), and no-N+1 joins were already in place from previous sessions.
+- Remote hydraManagmnet.git main is now at 46d32ae with the full TASK 2 implementation + prerequisite TASK 1 / TASK C1 / D1 fixes that were missing from the remote branch. 107/107 tests + mvn package green.
+- Servers running: PG TCP 5432, backend :8080 (commit 961c05f, identical behavior to 46d32ae on remote). Frontend not started this session.
+- Open items: local /home/z/my-project/backend repo's git history still diverges from hydraManagmnet.git main — not a blocker, but if the user wants the local repo to track hydraManagmnet.git cleanly, would need to re-clone or hard-reset local main to match remote. Also: the hydra.git remote (former origin) is stale and could be removed.
+
+---
+Task ID: TASK 3 (payment attachment → Document in Finance folder)
+Agent: main (Z.ai)
+Task: TASK 3 — attach facture/BL/situation to a payment as a REAL Document in the project's Finance folder, linked on movement.document_id; never storage-only orphans. Done when: mvn package OK; git commit + push.
+
+Work Log:
+- READ (per task spec): DocumentService.upload (folder ACL: folderAccess UPLOAD + assertCanUpload project can_upload; extension whitelist; Document+Revision atomic persist with storage-cleanup on DB failure), folder template convention (V8/V9: 7 folders per project, Finance = code 06_FIN name Finance sort 6; all 9 demo projects have exactly 1), FolderAccessService 06_FIN matrix (OWNER upload; FINANCE read+download only — separation of duties; project ADMIN bypass; SOUS_TRAITANT hard-forbidden), DocumentController.upload multipart wiring (file/title/docType pattern), DocumentType enum (FACTURE/SITUATION/BON_LIVRAISON/AUTRE all exist), DB introspection: cash_movement had NO document_id (V20 junction cash_movement_document exists); document_revision has file_name; multipart 50MB already configured; PERM_DOCUMENT_UPLOAD roles include CONDUCTEUR/CHEF_PROJET/ACHAT.
+- V25__payment_attachment.sql: cash_movement + document_id uuid NULL, FK fk_cm_document → document(id) (constraint added separately for idempotent re-runs), partial index idx_cm_document WHERE document_id IS NOT NULL.
+- CashService:
+  * +DocumentService dependency (no cycle — DocumentService does not depend on cash).
+  * MovementResponse + documentId; MovementDetailResponse + documentId/documentName; MovementTimeline + documentId/documentName (snapshot via getMovementDetail).
+  * getMovementDetail SQL: left join document + lateral (latest document_revision by created_at limit 1) → document_name = file_name. Single query, no N+1. listMovements/listMovementsDetail/fetchMovementForRead/ForUpdate: + document_id plain column (zero extra joins).
+  * NEW attachDocument(auth, movementId, file, title, docType) @Transactional: fetchMovementForUpdate row lock (prevents concurrent post/void race); guard status='DRAFT' only — POSTED/VOID → 409 MOVEMENT_NOT_EDITABLE (spec's "PENDING" maps to DRAFT+RUNNING process: our ledger has no PENDING status; documented in code); guard projectId != null → 400 PROJECT_REQUIRED; requireProjectAccess + requireCanWrite(PERM_CASH_DRAFT or owner); title required → 400 REQUIRED_FIELDS.
+  * NEW ensureFinanceFolder(projectId): existing 06_FIN → any '06%' code → any folder named 'Finance' (case-insensitive), ordered; creates one with template convention (06_FIN/'Finance'/sort 6, INSERT..RETURNING id) + audit FINANCE_FOLDER_CREATED if absent — the payment proof ALWAYS has a home.
+  * parseAttachmentDocType: default FACTURE; accepts FACTURE/SITUATION/BON_LIVRAISON(+BL alias)/AUTRE(+OTHER alias); anything else → 400 INVALID_DOC_TYPE with accepted values in French.
+  * Delegates to DocumentService.upload(auth, financeFolderId, title, type, …) — the doc pipeline enforces the SAME folder upload ACL as the documents API (TASK 3 ACL requirement) and stores Document+Revision atomically with its own orphan-cleanup on persist failure.
+  * Then: update cash_movement set document_id + insert cash_movement_document (junction kept in sync, on conflict do nothing) + audit DOCUMENT_ATTACHED_TO_MOVEMENT {documentId, reference, docType, title, amount}.
+- CashController: POST /api/cash/movements/{id}/attachment (consumes multipart/form-data; @RequestParam file/title/docType?) @PreAuthorize PERM_CASH_DRAFT → 201 MovementDetailResponse. Errors all JSON {code,message}.
+- docs/CASH_PAYMENT.md: new section 3 (Postman steps, response shape, error codes, audit event); read-back section now mentions documentId/documentName; E2E section lists task3-attachment-e2e.sh.
+- BUILD: ./mvnw -B -DskipTests clean package → BUILD SUCCESS; ./mvnw -B test → 107/107 green (local).
+- LIVE E2E scripts/task3-attachment-e2e.sh (owner@hydra.tn): 6/6 PASS —
+    A) DRAFT OUT (project 1, project pot) + attach 209-byte PDF, title "Facture SOTRAM situation 12", docType FACTURE → 201, documentId=04935d74…, documentName=PRJ-ADD-ADR-2024_FACTURE_FACTURESOTRAMSITUATION12_Rev.0.pdf, status DRAFT;
+    B) GET /api/projects/{id}/documents?folderId=06_FIN folder → document present: reference ADD-ADR-2024-00007, folderId=06_FIN folder, docType FACTURE (script bug fixed: response shape is {items:[…]} not {content:[…]} — test-side only);
+    C) attach to a POSTED movement → 409 {"code":"MOVEMENT_NOT_EDITABLE"};
+    D) attach to a no-project IN movement (company pot) → 400 {"code":"PROJECT_REQUIRED"};
+    E) docType=PLAN → 400 {"code":"INVALID_DOC_TYPE"};
+    F) timeline → DOCUMENT_ATTACHED_TO_MOVEMENT event present + snapshot.documentId/documentName filled.
+  DB verification: cash_movement_document junction row exists; movement.document_id set; document row in folder 06_FIN with FACTURE type; storage file ON DISK at …/06_FIN/doc/<docId>/Rev.0__… (DB row + file + folder all consistent — no orphan); event_log has DOCUMENT_ATTACHED_TO_MOVEMENT rows.
+  (Script-side fixes only: OUT movements need fromPotId — ensure project pot first; python f-string escaping.)
+- SYNC + PUSH: copied CashService.java, CashController.java, V25__payment_attachment.sql, CASH_PAYMENT.md to /tmp/hydra-fresh (diff confirmed src/main + docs fully identical afterwards). Fresh clone: ./mvnw -B clean package BUILD SUCCESS + ./mvnw -B test 107/107 green. Commit 6619d39 "TASK 3: payment attachment → Document in project Finance folder" pushed fast-forward to hydraManagmnet.git main (46d32ae..6619d39). No force push.
+
+Stage Summary:
+- TASK 3 DONE: POST /api/cash/movements/{id}/attachment (multipart file+title+docType?) — DRAFT-only guard, Finance folder (06_FIN) ensured, DocumentService.upload pipeline with the exact folder upload ACL, movement.document_id + junction synced, DOCUMENT_ATTACHED_TO_MOVEMENT audit, documentId+documentName on detail/timeline/lists. V25 migration. CASH_PAYMENT.md updated.
+- Upload appears BOTH under project documents in Finance folder AND on the movement (detail + timeline) — verified live + in DB.
+- Remote hydraManagmnet.git main at 6619d39; 107/107 tests + package green on the pushed tree.
+- Servers running: PG TCP 5432, backend :8080 (V25 jar). Frontend not started this session.
+- Open items: B5 payment form could gain the attachment field as a follow-up (backend contract ready); attachment replace/remove endpoint not in scope.
+
+---
+Task ID: TASK 4 + TASK 5 + TASK 6 (frontend)
+Agent: main (Z.ai)
+Task: TASK 4 — front foundation for money (perms, guards, French chips); TASK 5 — chantier pay UX (few clicks); TASK 6 — movement timeline UI + open proof document. Repo: frontend only. Done when: npm run build OK; commit + push.
+
+Work Log:
+- BASELINE AUDIT: remote frontend at 9017ac5 was the team's earlier "TASK 4/6" attempt; local /home/z/my-project/frontend is the newer superset (B5 submitPayment form + B6 timeline from earlier sessions, unpushed). Verified per-file (hydra-design.ts refactor → chantier-visual re-export, documents.component apiErrMsg, my-tasks money cards: local ahead everywhere). 19 differing files synced local → /tmp/hydra-fresh before any new work.
+- TASK 4 (commit b5618e9): permissions.ts already mirrored V22 (CASH_*+PARTY_MANAGE + French labels + Trésorerie group); all 8 /tresorerie/** routes guarded by permGuard(CASH_READ); /processes/builder owner-only; /process-test route absent. NEW: REJECTED_VISUAL + movementRejected() (DRAFT + PROCESS_REJECTED/STEP_REJECTED/CASH_MOVEMENT_REJECTED in merged timeline) → "Rejeté" chip in hero, refusal note + "Soumettre à nouveau", "Mes tâches" link while pending; md-note.danger SCSS.
+- TASK 5 (commit af66b7d): CashMovement + claimedAmount/assessedAmount/varianceReason/documentId(+Name); SubmitPaymentBody + MovementBody extended; CashService.uploadAttachment(movementId, file, title, docType?) → POST /api/cash/movements/{id}/attachment (multipart, TASK 3 backend); getTimeline mapping + claimed/assessed/variance/documentId/documentName/source. Payment form OUT short UX: "Montant à payer" (assessed) + "Montant demandé" (optional, defaults same) + "Motif de l'écart" REQUIRED when claimed≠assessed (millime compare) + proof file input (PDF/image ≤50 Mo, chip with remove); submit → best-effort upload → navigate; draft saves carry claimed/assessed (OUT only). Project strip: "Payer" primary filled (severity=warn), gated canPay/canReceive(CASH_DRAFT). Movement detail: "Montant demandé / Montant à payer / Motif de l'écart" fields. TIMELINE_ACTION_VISUAL extended (PROCESS_*, STEP_*, DOCUMENT_ATTACHED_TO_MOVEMENT).
+- TASK 6 (commit ee1abe8): MovementBody/mapMovement + documentName; detail grid "Pièce justificative" row (proofDocumentId fallback to timeline snapshot) + "Voir la pièce" → /documents/:id (gated DOCUMENT_READ); timeline source badges ("Validation"/"Étape") via ev.source; eventNote() surfaces reason/title/reference/label/stepName from details JSON; tl-source + proof SCSS.
+- BUILDS: npm run build EXIT=0 on local AND on /tmp/hydra-fresh/frontend (npm ci there) for each task — the pushed tree compiles.
+- PUSHES (fast-forward, PAT): TASK 4 6619d39..b5618e9; TASK 5 b5618e9..af66b7d; TASK 6 af66b7d..ee1abe8 → hydraManagmnet.git main at ee1abe8.
+- LIVE E2E (headless Chrome on :3000, backend :8080): login owner → project "Adduction Aïn Draham" money strip shows primary "Payer" → prefilled form (type=OUT, today, caisse chantier + projet) → assessed 1000/claimed 800 → "Motif de l'écart" appears, buttons disabled until reason filled → typed reason + picked "BTP Tunisie Sud SARL" + uploaded test PDF (unhid input for automation) → "Envoyer pour validation" → submitPayment OK + POST attachment **201** → navigated to movement detail: chip "En attente", claimed/assessed fields, "Pièce justificative" row with real file name, "Voir la pièce" → /documents/{id} shows the doc; timeline: Opération créée / Envoyée pour validation / Validation démarrée (badge "Validation") / Pièce justificative jointe. DB: document ADD-ADR-2024-00008 in doc_folder 06_FIN "Finance", cash_movement.document_id = t. Screenshot: download/task5-6-movement-detail.png.
+- AUTOMATION NOTE: agent-browser `fill` does not register into PrimeNG p-inputnumber ngModel — use click + type + Tab; app itself is fine.
+
+Stage Summary:
+- TASK 4/5/6 DONE on frontend only (no backend changes): remote main = ee1abe8 with perms/guards/nav + complete French chip set (Brouillon|En attente|Comptabilisé|Rejeté|Annulé), few-click payment UX (Payer → form → Envoyer pour validation, claimed vs assessed + required variance reason + optional proof auto-filed in Finance folder), movement timeline UI with workflow source badges + Voir la pièce to the existing document route.
+- Verified live end-to-end with real backend; npm run build green on both local and pushed tree; 3 clean fast-forward pushes.
+- Mes tâches cards already render subjectAmount/subjectLabel/projectName (backend MyTaskSummary has no party name — rendered when provided, per spec).
+- Open items (non-blocking): attachment replace/remove endpoint (out of scope); "Rejeté" chip relies on the merged timeline (detail page only — list API has no processStatus field).

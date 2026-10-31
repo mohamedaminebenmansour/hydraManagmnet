@@ -32,6 +32,7 @@ import {
 } from '@app/core/models/project.model';
 import { UserOptionDto, UserDto } from '@app/core/models/user.model';
 import { EmptyStateComponent } from '@app/shared/empty-state.component';
+import { OuvragesTabComponent } from './ouvrages-tab.component'; // PHASE-OUVRAGE-EXTRACT
 import {
   typeVisual, statusVisual, folderIcon,
   processTypeVisual, roleVisual, stepStatusVisual,
@@ -59,6 +60,7 @@ import { ProjectRoleAssigneesComponent } from './project-role-assignees.componen
     RouterLink,
     DatePipe,
     EmptyStateComponent,
+    OuvragesTabComponent,
     FolderAccessDialogComponent,
     ProjectRoleAssigneesComponent
   ],
@@ -136,7 +138,12 @@ export class ProjectDetailComponent implements OnInit {
   stats = computed(() => ({
     folders: this.folders().length,
     members: this.members().length,
-    processes: this.processes().length
+    processes: this.processes().length,
+    ouvrages: 0 // PHASE-OUVRAGE-EXTRACT — the Ouvrages tab is a standalone
+                // component; the count is shown inside it. The hero tile
+                // shows "—" until the tab loads. To avoid a circular dep
+                // (project-detail → ouvrages-tab → project-detail), we
+                // don't track the count here.
   }));
 
   // Configurer l'accÃ¨s aux dossiers : visible pour ADMIN / OWNER (PROJECT_ASSIGN/PROJECT_MANAGE)
@@ -503,5 +510,16 @@ export class ProjectDetailComponent implements OnInit {
     const pot = this.projectPot();
     if (!pot) return;
     this.router.navigate(['/tresorerie/caisses', pot.id]);
+  }
+
+  /** PHASE-OUVRAGE-EXTRACT — re-fetch the project so ouvrageSummary on the
+   *  hero strip updates after an ouvrage is created/updated/deleted in the
+   *  Ouvrages tab (which is now a standalone component). */
+  onOuvragesChanged(): void {
+    if (!this.projectId) { return; }
+    this.projectService.get(this.projectId).subscribe({
+      next: p => this.project.set(p),
+      error: () => { /* keep current project */ }
+    });
   }
 }

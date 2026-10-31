@@ -5,6 +5,7 @@ import { ButtonModule } from 'primeng/button';
 import { InputTextModule } from 'primeng/inputtext';
 import { SelectModule } from 'primeng/select';
 import { MultiSelectModule } from 'primeng/multiselect';
+import { ToggleSwitchModule } from 'primeng/toggleswitch'; // PHASE-OUVRAGE-UI
 import { InputNumberModule } from 'primeng/inputnumber';
 import { TextareaModule } from 'primeng/textarea';
 import { DatePickerModule } from 'primeng/datepicker';
@@ -22,6 +23,10 @@ import {
   Project, ProjectCreate, ProjectUpdate, ProjectType,
   PROJECT_TYPE_OPTS, PROJECT_TYPE_LABELS
 } from '@app/core/models/project.model';
+import {
+  OuvrageType, OuvrageSpec, OUVRAGE_TYPE_LABELS, OUVRAGE_TYPE_VISUAL,
+  ouvrageTypeVisual, ouvrageTypeLabel, ouvrageCharacteristics, Troncon
+} from '@app/core/models/ouvrage.model'; // PHASE-OUVRAGE-UI
 import { SelectOption } from '@app/core/models/select-option';
 import { EmptyStateComponent } from '@app/shared/empty-state.component';
 import {
@@ -46,6 +51,7 @@ const STATUS_OPTS = [
     TextareaModule,
     DatePickerModule,
     DialogModule,
+    ToggleSwitchModule,
     TagModule,
     ChipModule,
     TooltipModule,
@@ -77,7 +83,7 @@ export class ProjectsComponent implements OnInit {
   // Étape 1 : Identité (type + nom + lieu) — le minimum vital.
   // Étape 2 : Calendrier & équipe (optionnel).
   // Étape 3 : Contrat & détails (optionnel).
-  readonly WIZARD_STEPS = ['Identité', 'Calendrier', 'Contrat'];
+  readonly WIZARD_STEPS = ['Identité', 'Ouvrages', 'Calendrier', 'Contrat']; // PHASE-OUVRAGE-UI: 4 steps
   step = signal(1);
   typeKeys = Object.keys(CHANTIER_TYPE_VISUAL);
   // ⚠️ Signaux obligatoires : un computed() qui lit des propriétés simples ne
@@ -116,6 +122,68 @@ export class ProjectsComponent implements OnInit {
   formStatus = 'ACTIF';
   private editTarget: Project | null = null;
 
+  // ── PHASE-OUVRAGE-UI — wizard "Ouvrages" step draft state ────────────
+  /** Draft ouvrages created in the wizard. Persisted as ouvrages after the
+   *  chantier is created (POST /api/projects/{id}/ouvrages for each).
+   *  Each draft gets a temporary negative id so the template can track it. */
+  draftOuvrages = signal<Array<{
+    tempId: number;
+    type: OuvrageType;
+    name: string;
+    code: string;
+    characteristics: Record<string, any>;
+    troncons: Troncon[];
+  }>>([]);
+  private _nextDraftId = -1;
+
+  /** The 6 ouvrage types the user can add in the wizard (COMMUN is auto). */
+  readonly ADDABLE_OUVRAGE_TYPES: OuvrageType[] =
+    ['RESERVOIR', 'CONDUITE', 'STATION_POMPAGE', 'FORAGE', 'OUVRAGE_ANNEXE', 'AUTRE'];
+
+  ouvrageTypeLabel = ouvrageTypeLabel;
+  ouvrageTypeVisual = ouvrageTypeVisual;
+  ouvrageCharacteristics = ouvrageCharacteristics;
+
+  /** Add a draft ouvrage of the given type to the wizard. */
+  addDraftOuvrage(type: OuvrageType): void {
+    const name = OUVRAGE_TYPE_LABELS[type];
+    this.draftOuvrages.update(list => [...list, {
+      tempId: this._nextDraftId--,
+      type,
+      name,
+      code: '',
+      characteristics: {},
+      troncons: type === 'CONDUITE' ? [] : [],
+    }]);
+  }
+
+  removeDraftOuvrage(tempId: number): void {
+    this.draftOuvrages.update(list => list.filter(o => o.tempId !== tempId));
+  }
+
+  /** Add an empty tronçon to a CONDUITE draft. */
+  addTroncon(tempId: number): void {
+    this.draftOuvrages.update(list => list.map(o =>
+      o.tempId === tempId ? { ...o, troncons: [...o.troncons, { de_mm: 110, pn_bar: 16, longueur_m: 0 }] } : o));
+  }
+
+  removeTroncon(tempId: number, idx: number): void {
+    this.draftOuvrages.update(list => list.map(o =>
+      o.tempId === tempId ? { ...o, troncons: o.troncons.filter((_, i) => i !== idx) } : o));
+  }
+
+  /** Reset the draft ouvrages list (called by openCreate). */
+  resetDraftOuvrages(): void {
+    this.draftOuvrages.set([]);
+    this._nextDraftId = -1;
+  }
+
+  /** Whether a draft ouvrage has at least the name filled (for the "skip"
+   *  hint). The step can always be skipped — this is purely cosmetic. */
+  draftIsValid(o: { name: string }): boolean {
+    return !!(o.name && o.name.trim());
+  }
+
   canWrite = computed(() => this.auth.can(PERM.PROJECT_WRITE));
   memberOpts = computed(() => this.userOptions());
 
@@ -130,7 +198,7 @@ export class ProjectsComponent implements OnInit {
 
   resetFilters(): void { this.statusFilter.set('ALL'); this.typeFilter.set(null); this.searchTerm.set(''); }
 
-  wNext(): void { if (this.step() < 3) { this.step.set(this.step() + 1); } }
+  wNext(): void { if (this.step() < 4) { this.step.set(this.step() + 1); } } // PHASE-OUVRAGE-UI: 4 steps
 
   wBack(): void { if (this.step() > 1) { this.step.set(this.step() - 1); } }
 
@@ -154,6 +222,14 @@ export class ProjectsComponent implements OnInit {
 
   typeLabel(t: string | null | undefined): string {
     return t ? (PROJECT_TYPE_LABELS[t] ?? t) : '';
+  }
+
+  /** PHASE-OUVRAGE-UI — what to show on a chantier card instead of the type
+   *  label: the backend-built ouvrageSummary when present, else the type label
+   *  (so existing projects without ouvrages still show something). */
+  cardSubtitle(p: Project): string {
+    const s = (p as any).ouvrageSummary;
+    return s && s.trim() ? s.trim() : this.typeLabel(p.projectType);
   }
 
   fmtDate(iso: string | null | undefined): string {
@@ -198,6 +274,7 @@ export class ProjectsComponent implements OnInit {
     this.formMembers = [];
     this.formDescription = '';
     this.formStatus = 'ACTIF';
+    this.resetDraftOuvrages(); // PHASE-OUVRAGE-UI
     this.showDialog = true;
   }
 
@@ -233,6 +310,18 @@ export class ProjectsComponent implements OnInit {
   }
 
   private createBody(): ProjectCreate {
+    // PHASE-OUVRAGE-EXTRACT — send the draft ouvrages in the SAME request
+    // as the project. The backend saves project + COMMUN + ouvrages in one
+    // @Transactional; if any ouvrage is invalid, nothing is saved and the
+    // error message says which ouvrage and which field.
+    const ouvrages = this.draftOuvrages().map(d => ({
+      type: d.type,
+      name: d.name,
+      code: d.code || null,
+      characteristics: d.type === 'CONDUITE' && d.troncons.length
+        ? { ...d.characteristics, troncons: d.troncons }
+        : d.characteristics,
+    }));
     return {
       name: this.formName.trim(),
       code: this.formCode.trim() || null,
@@ -244,7 +333,8 @@ export class ProjectsComponent implements OnInit {
       endDate: this.formEndDate,
       contractValue: this.formContractValue ?? null,
       description: this.formDescription.trim() || null,
-      memberUserIds: this.formMembers
+      memberUserIds: this.formMembers,
+      ouvrages
     };
   }
 

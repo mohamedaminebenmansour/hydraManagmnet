@@ -54,6 +54,11 @@
           <span class="hs-n">{{ stats().processes }}</span>
           <span class="hs-l">Processus</span>
         </button>
+        <button type="button" class="hstat" (click)="activeTab.set('3')">
+          <i class="pi pi-database"></i>
+          <span class="hs-n">{{ stats().ouvrages }}</span>
+          <span class="hs-l">Ouvrages</span>
+        </button>
       </div>
 
       <div class="hero-meta">
@@ -134,6 +139,7 @@
   <p-tabs [value]="activeTab()" (valueChange)="activeTab.set($event)">
     <p-tablist>
       <p-tab value="0"><i class="pi pi-folder"></i> Dossiers</p-tab>
+      <p-tab value="3"><i class="pi pi-database"></i> Ouvrages</p-tab>
       <p-tab value="1"><i class="pi pi-users"></i> Équipe</p-tab>
       <p-tab value="2"><i class="pi pi-sitemap"></i> Processus</p-tab>
     </p-tablist>
@@ -180,6 +186,11 @@
             </div>
           }
         </div>
+      </p-tabpanel>
+
+      <!-- ==================== OUVRAGES (PHASE-OUVRAGE-EXTRACT) ==================== -->
+      <p-tabpanel value="3">
+        <app-ouvrages-tab [projectId]="projectId ?? ''" (changed)="onOuvragesChanged()" />
       </p-tabpanel>
 
       <!-- ==================== ÉQUIPE ==================== -->

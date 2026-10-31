@@ -6,6 +6,7 @@ import org.springframework.core.Ordered;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Component;
+import org.springframework.context.annotation.Profile;
 import tn.hydra.audit.EventLogService;
 
 import java.time.Instant;
@@ -45,6 +46,7 @@ import java.util.UUID;
  * ============================================================================
  */
 @Component
+@Profile("demo")
 @Order(Ordered.LOWEST_PRECEDENCE)  // run after BootstrapRunner (HIGHEST_PRECEDENCE) so org + owner exist
 public class DemoDataRunner implements CommandLineRunner {
 

@@ -1,46 +1,31 @@
-# === Sandbox runtime artifacts (NOT part of the Hydra project) ===
-skills/
-.jdk/
-.pgdata/
-scripts/
-
-# === Java / Spring Boot ===
+# Build artifacts
 backend/target/
-*.class
-*.jar
-*.war
-hs_err_pid*
-
-# === Angular / Node ===
-frontend/node_modules/
 frontend/dist/
-frontend/.angular/
-frontend/.cache/
-npm-debug.log*
-yarn-error.log*
+frontend/node_modules/
+*.log
 
-# === IDE / OS ===
+# IDE
 .idea/
 .vscode/
 *.iml
+
+# OS
 .DS_Store
 Thumbs.db
 
-# === Secrets / local config ===
-*.env.local
-*.env.*.local
-application-local.yml
-application-secret.yml
+# Local data (PostgreSQL, JDK, venv)
+.pgdata/
+.venv-pg/
+.jdk/
+hydra-fresh/
+backend/data/
+storage/
+logs/
+tool-results/
 
-# === Logs / runtime ===
-*.log
-backend/logs/
-nohup.out
+# Env
 .env
-.pg/
-*.pid
-backend-run.log
-frontend-run.log
-download/hydra-project.tar.gz
-backend/'
-backend/=
+*.env.local
+
+# Skills (not part of the project)
+skills/

@@ -134,7 +134,7 @@ The upload path itself is untouched — we only resolve-or-create the stock subf
 
 ## 7. Manual scenario steps for the owner demo (in French)
 
-**Prerequisites**: backend running on `:8080`, frontend dev server on `:3000` (`npm start`), Flyway V1→V31 applied with demo seed. Login as `owner@hydra.tn / HydraOwner2026!`.
+**Prerequisites**: backend running on `:8080`, frontend dev server on `:3000` (`npm start`), Flyway V1→V31 applied with demo seed. Login as `owner@hydra.tn / <OWNER_PASSWORD>`.
 
 ```
  1.  Se connecter en tant que Gérant (owner@hydra.tn).

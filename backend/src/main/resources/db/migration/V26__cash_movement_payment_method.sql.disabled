@@ -1,0 +1,41 @@
+-- ============================================================================
+-- V26 — payment_method on cash_movement (Phase 1: DB layer + Java enum only)
+-- ============================================================================
+-- PRODUCT GOAL (Prompt 1 architecture rule): "Every movement must support
+-- paymentMethod (CASH | CHEQUE | VIREMENT | TRAITE | CARD | OTHER)" — Tunisian
+-- BTP caisse needs to know HOW money moved (Espèces / Chèque / Virement /
+-- Traite / Carte / Autre), not just how much. Most day-to-day chantier
+-- operations are Espèces; Chèque / Virement / Traite are common for supplier
+-- payments (OUT) and client settlements (IN).
+--
+-- Design notes:
+--   * NOT NULL DEFAULT 'CASH' — backfills existing rows (DRAFT + POSTED) with
+--     the most common case for a Tunisian chantier caisse. This keeps legacy
+--     rows valid without a separate UPDATE backfill.
+--   * CHECK constraint enforces the 6-value vocabulary at the DB level
+--     (defence in depth — CashService will also validate via the PaymentMethod
+--     Java enum in Step 2).
+--   * Idempotent: `add column if not exists` + drop-then-add constraint,
+--     matching the V24/V25 pattern.
+--   * Step 1 (this migration) only touches the DB schema + the PaymentMethod
+--     enum class. Step 2 will wire `payment_method` into the records
+--     (MovementResponse / MovementDetailResponse / CreateMovementRequest /
+--     UpdateMovementRequest) and the SELECT/INSERT/UPDATE SQL in CashService,
+--     plus service-level validation. Step 3+ will land the frontend.
+-- ============================================================================
+
+alter table cash_movement
+    add column if not exists payment_method text not null default 'CASH';
+
+-- CHECK enforced separately so re-runs stay idempotent (cannot inline a
+-- named constraint inside `add column if not exists` without a name clash
+-- on re-run — matches V24/V25 style).
+alter table cash_movement
+    drop constraint if exists chk_cm_payment_method;
+
+alter table cash_movement
+    add constraint chk_cm_payment_method
+    check (payment_method in ('CASH','CHEQUE','VIREMENT','TRAITE','CARD','OTHER'));
+
+comment on column cash_movement.payment_method is
+    'Mode de règlement : CASH | CHEQUE | VIREMENT | TRAITE | CARD | OTHER (défaut CASH)';

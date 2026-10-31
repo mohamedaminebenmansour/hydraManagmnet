@@ -245,7 +245,7 @@ cd /tmp/my-project/frontend && node serve-dist.mjs                              
 # Open http://localhost:3000 in the browser
 ```
 
-**Demo flow** (login as `owner@hydra.tn / HydraOwner2026!`):
+**Demo flow** (login as `owner@hydra.tn / <OWNER_PASSWORD>`):
 
 | Step | Time | Action | Expected result |
 |---|---|---|---|

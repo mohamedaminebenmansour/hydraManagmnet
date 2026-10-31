@@ -14,7 +14,7 @@ services:
       - key: OWNER_EMAIL
         value: owner@hydra.tn
       - key: OWNER_PASSWORD
-        value: HydraOwner2026!
+        sync: false
       - key: HYDRA_STORAGE_TYPE
         value: local
       - key: HYDRA_STORAGE_ROOT

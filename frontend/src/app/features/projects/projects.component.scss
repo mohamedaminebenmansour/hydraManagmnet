@@ -235,3 +235,87 @@
   .active { color: #16a34a; font-size: 11px; font-weight: 600; display: inline-flex; align-items: center; gap: 4px; }
   .inactive { color: #94a3b8; font-size: 11px; font-weight: 600; display: inline-flex; align-items: center; gap: 4px; }
 }
+
+
+// ── PHASE-OUVRAGE-UI — wizard "Ouvrages" step styles ──────────────────────
+.ouvrage-add-btns {
+  display: flex; flex-wrap: wrap; gap: 8px;
+  margin-bottom: 14px;
+}
+.ouvrage-add-btn {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 8px 14px; border-radius: 999px;
+  border: 1px solid var(--c, #cbd5e1);
+  background: var(--s, #f1f5f9);
+  color: var(--c, #475569);
+  font-size: 13px; font-weight: 600; cursor: pointer;
+  transition: transform .12s ease, box-shadow .12s ease;
+  &:hover { transform: translateY(-1px); box-shadow: 0 2px 6px rgba(0,0,0,.08); }
+  i.pi-plus { font-size: 11px; opacity: .8; }
+}
+
+.ouvrage-cards {
+  display: flex; flex-direction: column; gap: 12px;
+  margin-top: 6px;
+}
+.ouvrage-card {
+  border: 1px solid var(--c, #e2e8f0);
+  border-left: 4px solid var(--c, #94a3b8);
+  border-radius: 10px;
+  background: var(--s, #f8fafc);
+  padding: 12px 14px;
+}
+.oc-head {
+  display: flex; align-items: center; gap: 10px; margin-bottom: 10px;
+}
+.oc-disc {
+  width: 32px; height: 32px; border-radius: 8px;
+  background: var(--c, #94a3b8); color: #fff;
+  display: inline-grid; place-items: center;
+  i { font-size: 16px; }
+}
+.oc-name {
+  flex: 1; font-size: 15px; font-weight: 700; color: #1e293b;
+  background: #fff; border: 1px solid #e2e8f0; border-radius: 6px; padding: 6px 10px;
+}
+.oc-remove {
+  width: 28px; height: 28px; border-radius: 50%;
+  border: none; background: transparent; color: #94a3b8; cursor: pointer;
+  &:hover { background: #fee2e2; color: #dc2626; }
+}
+.oc-body { display: flex; flex-direction: column; gap: 10px; }
+.oc-two { display: grid; grid-template-columns: 1fr; gap: 10px; }
+.oc-field {
+  display: flex; flex-direction: column; gap: 4px;
+  label { font-size: 12px; font-weight: 700; color: #475569; text-transform: uppercase; letter-spacing: .03em; }
+}
+.oc-switch {
+  display: inline-flex; align-items: center; gap: 8px;
+  span { font-size: 13px; color: #475569; }
+}
+.oc-troncons {
+  display: flex; flex-direction: column; gap: 6px;
+  background: #fff; border: 1px dashed #cbd5e1; border-radius: 6px; padding: 8px;
+}
+.oc-troncon {
+  display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
+}
+.oc-tr-inp { width: 110px; }
+.oc-tr-pn { width: 90px; }
+.oc-tr-rm {
+  width: 24px; height: 24px; border-radius: 50%;
+  border: none; background: transparent; color: #94a3b8; cursor: pointer;
+  &:hover { background: #fee2e2; color: #dc2626; }
+}
+.oc-tr-add {
+  align-self: flex-start;
+  background: transparent; border: 1px dashed var(--c, #94a3b8);
+  color: var(--c, #475569); padding: 4px 10px; border-radius: 6px;
+  font-size: 12px; font-weight: 600; cursor: pointer;
+  &:hover { background: var(--s, #f8fafc); }
+}
+.wizard-note {
+  font-size: 13px; color: #64748b; margin: 8px 0 0;
+  i { color: #0ea5e9; margin-right: 6px; }
+}
+.muted { color: #94a3b8; font-size: 12px; }

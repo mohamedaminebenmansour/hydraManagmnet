@@ -202,7 +202,7 @@ curl -c /tmp/c.txt http://localhost:8080/api/auth/me
 XSRF=$(grep XSRF-TOKEN /tmp/c.txt | awk '{print $7}')
 curl -b /tmp/c.txt -X POST http://localhost:8080/api/auth/login \
   -H "Content-Type: application/json" -H "X-XSRF-TOKEN: $XSRF" \
-  -d '{"email":"owner@hydra.tn","password":"HydraOwner2026!"}'
+  -d '{"email":"owner@hydra.tn","password":"<OWNER_PASSWORD>"}'
 
 # 2. Submit a payment with claimed ≠ assessed (variance reason required)
 curl -b /tmp/c.txt -X POST http://localhost:8080/api/cash/movements/submit-payment \
@@ -310,7 +310,7 @@ quick actions. Clicking the card body also opens the dossier.
 ### Test scenario (frontend)
 
 1. As owner: submit a payment with claimed ≠ assessed + attach a fake PDF.
-2. As finance (safa.mtibaa@hydra.tn / HydraDemo2026!): open Mes tâches →
+2. As finance (safa.mtibaa@hydra.tn / <DEMO_PASSWORD>): open Mes tâches →
    "Voir le dossier" → see the écart + the document → Approuver.
 3. As owner: open the same dossier (next step) → see finance's approval in
    the mini-timeline → Approuver → cash POSTED.
