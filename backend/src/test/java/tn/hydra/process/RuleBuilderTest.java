@@ -22,6 +22,7 @@ import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 
 /**
  * ============================================================================
@@ -93,53 +94,60 @@ class RuleBuilderTest {
 
     @Test
     void rejectsUnknownConditionKey() {
-        assertThatThrownBy(() -> svc.createTemplate(ownerAuth, req(map("foo", "bar"), "CASH_PAYMENT")))
-                .isInstanceOf(BadRequestException.class)
-                .hasMessageContaining("Clé de condition inconnue");
+        BadRequestException ex = assertThrows(BadRequestException.class,
+                () -> svc.createTemplate(ownerAuth, req(map("foo", "bar"), "CASH_PAYMENT")));
+        assertThat(ex.getCode()).isEqualTo("UNKNOWN_CONDITION_KEY");
+        assertThat(ex.getMessage()).contains("Clé de condition inconnue");
     }
 
     @Test
     void rejectsNegativeAmount() {
-        assertThatThrownBy(() -> svc.createTemplate(ownerAuth, req(map("amount_min", new BigDecimal("-100")), "CASH_PAYMENT")))
-                .isInstanceOf(BadRequestException.class)
-                .hasMessageContaining("ne peut pas être négatif");
+        BadRequestException ex = assertThrows(BadRequestException.class,
+                () -> svc.createTemplate(ownerAuth, req(map("amount_min", new BigDecimal("-100")), "CASH_PAYMENT")));
+        assertThat(ex.getCode()).isEqualTo("INVALID_AMOUNT_MIN");
+        assertThat(ex.getMessage()).contains("ne peut pas être négatif");
     }
 
     @Test
     void rejectsAmountWithMoreThan3Decimals() {
-        assertThatThrownBy(() -> svc.createTemplate(ownerAuth, req(map("amount_min", "100.5001"), "CASH_PAYMENT")))
-                .isInstanceOf(BadRequestException.class)
-                .hasMessageContaining("au plus 3 décimales");
+        BadRequestException ex = assertThrows(BadRequestException.class,
+                () -> svc.createTemplate(ownerAuth, req(map("amount_min", "100.5001"), "CASH_PAYMENT")));
+        assertThat(ex.getCode()).isEqualTo("INVALID_AMOUNT_MIN");
+        assertThat(ex.getMessage()).contains("au plus 3 décimales");
     }
 
     @Test
     void rejectsAmountMinGreaterThanAmountMax() {
-        assertThatThrownBy(() -> svc.createTemplate(ownerAuth,
-                req(map("amount_min", new BigDecimal("1000"), "amount_max", new BigDecimal("500")), "CASH_PAYMENT")))
-                .isInstanceOf(BadRequestException.class)
-                .hasMessageContaining("ne peut pas dépasser le montant maximum");
+        BadRequestException ex = assertThrows(BadRequestException.class,
+                () -> svc.createTemplate(ownerAuth,
+                        req(map("amount_min", new BigDecimal("1000"), "amount_max", new BigDecimal("500")), "CASH_PAYMENT")));
+        assertThat(ex.getCode()).isEqualTo("INVALID_AMOUNT_RANGE");
+        assertThat(ex.getMessage()).contains("ne peut pas dépasser le montant maximum");
     }
 
     @Test
     void rejectsUnknownNature() {
-        assertThatThrownBy(() -> svc.createTemplate(ownerAuth, req(map("natures", List.of("FOO")), "CASH_PAYMENT")))
-                .isInstanceOf(BadRequestException.class)
-                .hasMessageContaining("Nature inconnue : FOO");
+        BadRequestException ex = assertThrows(BadRequestException.class,
+                () -> svc.createTemplate(ownerAuth, req(map("natures", List.of("FOO")), "CASH_PAYMENT")));
+        assertThat(ex.getCode()).isEqualTo("INVALID_NATURES");
+        assertThat(ex.getMessage()).contains("Nature inconnue : FOO");
     }
 
     @Test
     void rejectsUnknownPaymentMode() {
-        assertThatThrownBy(() -> svc.createTemplate(ownerAuth, req(map("payment_modes", List.of("FOO")), "CASH_PAYMENT")))
-                .isInstanceOf(BadRequestException.class)
-                .hasMessageContaining("Mode de règlement inconnu : FOO");
+        BadRequestException ex = assertThrows(BadRequestException.class,
+                () -> svc.createTemplate(ownerAuth, req(map("payment_modes", List.of("FOO")), "CASH_PAYMENT")));
+        assertThat(ex.getCode()).isEqualTo("INVALID_PAYMENT_MODES");
+        assertThat(ex.getMessage()).contains("Mode de règlement inconnu : FOO");
     }
 
     @Test
     void rejectsProjectIdNotInOrg() {
-        assertThatThrownBy(() -> svc.createTemplate(ownerAuth,
-                req(map("project_ids", List.of(UUID.randomUUID().toString())), "CASH_PAYMENT")))
-                .isInstanceOf(BadRequestException.class)
-                .hasMessageContaining("Chantier introuvable dans votre organisation");
+        BadRequestException ex = assertThrows(BadRequestException.class,
+                () -> svc.createTemplate(ownerAuth,
+                        req(map("project_ids", List.of(UUID.randomUUID().toString())), "CASH_PAYMENT")));
+        assertThat(ex.getCode()).isEqualTo("INVALID_PROJECT_IDS");
+        assertThat(ex.getMessage()).contains("Chantier introuvable dans votre organisation");
     }
 
     // ══════════════════════════════════════════════════════════════
@@ -311,5 +319,35 @@ class RuleBuilderTest {
         Integer after = jdbc.queryForObject(
                 "select due_days from process_template_step where id = ?", Integer.class, step);
         assertThat(after).isNull();
+    }
+
+    // ══════════════════════════════════════════════════════════════
+    //  Reorder — reversing 3 steps in ONE call gives orders 1,2,3 in the
+    //  new order (backend does the swap in one transaction via a temp offset).
+    // ══════════════════════════════════════════════════════════════
+    @Test
+    void reorderSteps_reversingThreeStepsInOneCall_givesOrdersInNewOrder() {
+        UUID t = createRule(new HashMap<>());
+        svc.addStep(ownerAuth, t, new ProcessService.CreateStepRequest(1, "A", "A", "FINANCE", false, "ANY", null));
+        svc.addStep(ownerAuth, t, new ProcessService.CreateStepRequest(2, "B", "B", "FINANCE", false, "ANY", null));
+        svc.addStep(ownerAuth, t, new ProcessService.CreateStepRequest(3, "C", "C", "FINANCE", false, "ANY", null));
+
+        List<ProcessService.TemplateStepView> steps = svc.getTemplate(ownerAuth, t).steps();
+        assertThat(steps).hasSize(3);
+        // Reverse: C -> order 1, B -> order 2, A -> order 3.
+        List<ProcessService.ReorderStepItem> reversed = List.of(
+                new ProcessService.ReorderStepItem(steps.get(2).id(), 1),
+                new ProcessService.ReorderStepItem(steps.get(1).id(), 2),
+                new ProcessService.ReorderStepItem(steps.get(0).id(), 3));
+        ProcessService.TemplateDetail result = svc.reorderSteps(ownerAuth, t, reversed);
+
+        // New order (by step_order) is C, B, A — with orders exactly 1, 2, 3.
+        List<ProcessService.TemplateStepView> ordered = result.steps().stream()
+                .sorted(java.util.Comparator.comparingInt(ProcessService.TemplateStepView::stepOrder))
+                .toList();
+        assertThat(ordered.stream().map(ProcessService.TemplateStepView::stepKey).toList())
+                .containsExactly("C", "B", "A");
+        assertThat(ordered.stream().map(ProcessService.TemplateStepView::stepOrder).toList())
+                .containsExactly(1, 2, 3);
     }
 }
