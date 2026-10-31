@@ -1,0 +1,217 @@
+<div class="bordereau-tab">
+  <div class="bt-head">
+    <div class="bt-version-picker">
+      <label>Version</label>
+      <p-select [options]="versions()" [(ngModel)]="selectedVersionId"
+                optionLabel="label" optionValue="id"
+                placeholder="Choisir une version" styleClass="w100"
+                (onChange)="selectVersion($event.value)" />
+    </div>
+    @if (activeVersion(); as av) {
+      <p-tag [value]="'Active : ' + av.label" severity="success" />
+    }
+    @if (canWrite()) {
+      <div class="bt-actions">
+        <p-button label="Nouvelle version (avenant)" icon="pi pi-plus" [outlined]="true"
+                  (onClick)="openNewVersion()" [disabled]="!versions().length" />
+        <p-button label="Importer Excel" icon="pi pi-upload" [outlined]="true"
+                  (onClick)="fileInput.click()" [loading]="importLoading()" />
+        @if (isDraft()) {
+          <p-button label="Activer cette version" icon="pi pi-check-circle" severity="success"
+                    (onClick)="activateCurrent()" />
+        }
+        <p-button label="Comparer" icon="pi pi-arrows-left-right" [text]="true"
+                  (onClick)="openCompare()" [disabled]="versions().length < 2" />
+      </div>
+    }
+  </div>
+
+  <input #fileInput type="file" accept=".xls,.xlsx" style="display:none"
+         (change)="onInputChange($event)" />
+
+  @if (loading()) {
+    <div class="bt-loading"><i class="pi pi-spin pi-spinner"></i> Chargement…</div>
+  } @else if (!lines().length) {
+    <app-empty-state icon="pi pi-file-excel"
+                     message="Aucune ligne de bordereau. Importez un fichier Excel ou créez une version." />
+  } @else {
+    @for (group of groupedLines(); track group.section) {
+      <div class="bt-group">
+        <div class="bt-group-head">
+          <i class="pi pi-folder"></i> {{ group.section }}
+          <span class="bt-group-count">{{ group.lines.length }} ligne(s)</span>
+        </div>
+        <table class="bt-table">
+          <thead>
+            <tr>
+              <th class="c-paired"></th>
+              <th class="c-no">N°</th>
+              <th class="c-desig">Désignation</th>
+              <th class="c-unit">Unité</th>
+              <th class="c-qty">Qté</th>
+              <th class="c-pu">PU</th>
+              <th class="c-montant">Montant</th>
+              <th class="c-warn"></th>
+            </tr>
+          </thead>
+          <tbody>
+            @for (l of group.lines; track l.id) {
+              <tr>
+                <td class="c-paired">
+                  @if (l.pairedLineId) {
+                    <i class="pi pi-link" style="color: #0ea5e9;"
+                       pTooltip="Lié à : {{ pairedLineNo(l) }}" tooltipPosition="left"
+                       [attr.aria-label]="'Ligne liée à ' + pairedLineNo(l)"></i>
+                  }
+                </td>
+                <td class="c-no">
+                  @if (isEditing(l.id, 'articleNo')) {
+                    <input #editInput class="bt-edit-input" [(ngModel)]="editValue"
+                           (keydown)="onEditKeydown($event, l, 'articleNo')" />
+                  } @else {
+                    <span class="bt-cell" (click)="startEdit(l, 'articleNo')">{{ l.articleNo ?? '—' }}</span>
+                  }
+                </td>
+                <td class="c-desig">
+                  @if (isEditing(l.id, 'designation')) {
+                    <input #editInput class="bt-edit-input" [(ngModel)]="editValue"
+                           (keydown)="onEditKeydown($event, l, 'designation')" />
+                  } @else {
+                    <span class="bt-cell" (click)="startEdit(l, 'designation')">{{ l.designation }}</span>
+                  }
+                </td>
+                <td class="c-unit">
+                  @if (isEditing(l.id, 'unitRaw')) {
+                    <input #editInput class="bt-edit-input" [(ngModel)]="editValue"
+                           (keydown)="onEditKeydown($event, l, 'unitRaw')" />
+                  } @else {
+                    <span class="bt-cell" (click)="startEdit(l, 'unitRaw')">{{ l.unitRaw ?? '—' }}</span>
+                  }
+                </td>
+                <td class="c-qty">
+                  @if (isEditing(l.id, 'quantity')) {
+                    <input #editInput class="bt-edit-input bt-edit-num" [(ngModel)]="editValue"
+                           (keydown)="onEditKeydown($event, l, 'quantity')" />
+                  } @else {
+                    <span class="bt-cell bt-cell-num" (click)="startEdit(l, 'quantity')">{{ fmt(l.quantity) }}</span>
+                  }
+                </td>
+                <td class="c-pu">
+                  @if (isEditing(l.id, 'unitPrice')) {
+                    <input #editInput class="bt-edit-input bt-edit-num" [(ngModel)]="editValue"
+                           (keydown)="onEditKeydown($event, l, 'unitPrice')" />
+                  } @else {
+                    <span class="bt-cell bt-cell-num" (click)="startEdit(l, 'unitPrice')">{{ fmtMoney(l.unitPrice) }}</span>
+                  }
+                </td>
+                <td class="c-montant">{{ fmtMoney(montant(l)) }}</td>
+                <td class="c-warn">
+                  @if (l.importWarnings?.length) {
+                    <i class="pi pi-exclamation-triangle" style="color: #ea580c;"
+                       pTooltip="{{ (l.importWarnings ?? []).join(' / ') }}" tooltipPosition="left"
+                       [attr.aria-label]="(l.importWarnings ?? []).length + ' avertissement(s)'"></i>
+                  }
+                </td>
+              </tr>
+            }
+          </tbody>
+        </table>
+      </div>
+    }
+  }
+</div>
+
+<!-- Import preview dialog -->
+<p-dialog [(visible)]="showImportPreview" [modal]="true" [style]="{ width: '700px' }"
+          header="Aperçu de l'import" [draggable]="false">
+  @if (importPreview; as p) {
+    <div class="bt-preview">
+      <p>Version <strong>{{ p.versionNo }}</strong> — {{ p.label }}</p>
+      <p>{{ p.lineCount }} ligne(s) · {{ p.warningCount }} avertissement(s) · {{ p.pairCount }} paire(s)</p>
+      @if (p.lines.length) {
+        <div class="bt-preview-lines">
+          @for (l of p.lines.slice(0, 20); track $index) {
+            <div class="bt-preview-line" [class.has-warnings]="l.warnings?.length > 0">
+              <span class="pl-no">{{ l.articleNo ?? '—' }}</span>
+              <span class="pl-desig">{{ l.designation }}</span>
+              <span class="pl-unit">{{ l.unitRaw ?? '—' }}</span>
+              <span class="pl-qty">{{ l.quantity ?? '—' }}</span>
+              @if (l.warnings?.length) {
+                <span class="pl-warn" pTooltip="{{ l.warnings.join(' / ') }}">
+                  <i class="pi pi-exclamation-triangle" style="color: #ea580c;"></i>
+                </span>
+              }
+            </div>
+          }
+          @if (p.lines.length > 20) {
+            <div class="bt-preview-more">… {{ p.lines.length - 20 }} ligne(s) de plus</div>
+          }
+        </div>
+      }
+    </div>
+  }
+  <ng-template pTemplate="footer">
+    <p-button label="OK" icon="pi pi-check" (onClick)="confirmImport()" />
+  </ng-template>
+</p-dialog>
+
+<!-- New version dialog -->
+<p-dialog [(visible)]="showNewVersionDialog" [modal]="true" [style]="{ width: '460px' }"
+          header="Nouvelle version (avenant)" [draggable]="false">
+  <div class="bt-new-version">
+    <p class="note"><i class="pi pi-info-circle"></i> Une copie de la version active est créée en brouillon.</p>
+    <div class="field">
+      <label>Libellé *</label>
+      <input pInputText class="inp" placeholder="Ex. : Avenant 1" [(ngModel)]="newVersionLabel" />
+    </div>
+    <div class="field">
+      <label>Raison (optionnel)</label>
+      <input pInputText class="inp" placeholder="Motif de l'avenant" [(ngModel)]="newVersionReason" />
+    </div>
+  </div>
+  <ng-template pTemplate="footer">
+    <p-button label="Annuler" [text]="true" (onClick)="showNewVersionDialog = false" />
+    <p-button label="Créer" icon="pi pi-check" (onClick)="createNewVersion()" [disabled]="!newVersionLabel.trim()" />
+  </ng-template>
+</p-dialog>
+
+<!-- Compare dialog -->
+<p-dialog [(visible)]="showCompareDialog" [modal]="true" [style]="{ width: '640px' }"
+          header="Comparer deux versions" [draggable]="false">
+  <div class="bt-compare">
+    <div class="bt-compare-pickers">
+      <div class="field">
+        <label>Ancienne version</label>
+        <p-select [options]="versions()" [(ngModel)]="compareOldId" optionLabel="label" optionValue="id"
+                  placeholder="Choisir…" styleClass="w100" />
+      </div>
+      <div class="field">
+        <label>Nouvelle version</label>
+        <p-select [options]="versions()" [(ngModel)]="compareNewId" optionLabel="label" optionValue="id"
+                  placeholder="Choisir…" styleClass="w100" />
+      </div>
+    </div>
+    <p-button label="Comparer" icon="pi pi-arrows-left-right" (onClick)="runCompare()"
+              [disabled]="!compareOldId || !compareNewId || compareOldId === compareNewId"
+              [loading]="compareLoading()" />
+    @if (diffs().length) {
+      <div class="bt-diffs">
+        @for (d of diffs(); track $index) {
+          <div class="bt-diff" [style.border-left-color]="diffColor(d.change)">
+            <span class="bt-diff-change" [style.color]="diffColor(d.change)">{{ diffLabel(d.change) }}</span>
+            <span class="bt-diff-art">{{ d.articleNo ?? '—' }}</span>
+            <span class="bt-diff-desig">{{ d.designation }}</span>
+            @if (d.change === 'QUANTITY_CHANGED') {
+              <span class="bt-diff-val">{{ fmt(d.oldQuantity) }} → {{ fmt(d.newQuantity) }}</span>
+            }
+            @if (d.change === 'PRICE_CHANGED') {
+              <span class="bt-diff-val">{{ fmtMoney(d.oldUnitPrice) }} → {{ fmtMoney(d.newUnitPrice) }}</span>
+            }
+          </div>
+        }
+      </div>
+    } @else if (!compareLoading()) {
+      <p class="muted">Aucune différence ou comparaison non lancée.</p>
+    }
+  </div>
+</p-dialog>

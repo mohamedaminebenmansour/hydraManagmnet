@@ -142,6 +142,7 @@
       <p-tab value="3"><i class="pi pi-database"></i> Ouvrages</p-tab>
       <p-tab value="1"><i class="pi pi-users"></i> Équipe</p-tab>
       <p-tab value="2"><i class="pi pi-sitemap"></i> Processus</p-tab>
+      <p-tab value="4"><i class="pi pi-file-excel"></i> Bordereau</p-tab>
     </p-tablist>
     <p-tabpanels>
       <!-- ==================== DOSSIERS ==================== -->
@@ -353,6 +354,10 @@
             </div>
           }
         </div>
+      </p-tabpanel>
+      <!-- ==================== BORDEREAU ==================== -->
+      <p-tabpanel value="4">
+        <app-bordereau-tab [projectId]="projectId ?? ''" (changed)="onOuvragesChanged()" />
       </p-tabpanel>
     </p-tabpanels>
   </p-tabs>
