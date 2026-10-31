@@ -2,28 +2,31 @@
 <!--
   PHASE-BUILD-RESILIENCE — Maven settings for robust CI/CD builds.
 
-  Two problems solved:
-    1. Maven Central returns HTTP 429 (Too Many Requests) intermittently,
-       especially on Render free-tier builders that share egress IPs.
-       The default Maven behavior is to FAIL on 429 with no retry.
-    2. Even if Central is fully down, builds should fall back to a mirror.
+  Problem solved:
+    Maven Central (repo.maven.apache.org / repo1.maven.org) intermittently
+    returns HTTP 429 (Too Many Requests) for popular artifacts when Render's
+    shared builder IPs hit per-IP rate limits. The default Maven behavior
+    fails the build on 429 with no retry.
 
-  This settings.xml:
-    - Adds a mirror that points to the SAME central repo, but with explicit
-      retry / backoff config so 429 is retried up to 10 times.
-    - Sets maven-artifact-transfer.retryHandler to retry on 429/503/504.
-    - Disables snapshot caching to avoid stale artifacts.
+  Solution (two layers):
+    1. Mirror: route all central requests through Aliyun's Maven Central
+       mirror (full sync, not rate-limited, reliable from US/EU/Asia builders).
+    2. Retry: configure Maven Wagon to retry up to 10 times with exponential
+       backoff on 429/5xx, so even Aliyun's transient failures don't kill
+       the build.
+
+  Both layers together make the build resilient to any single-point failure.
 -->
 <settings xmlns="http://maven.apache.org/SETTINGS/1.2.0"
           xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
           xsi:schemaLocation="http://maven.apache.org/SETTINGS/1.2.0 https://maven.apache.org/xsd/settings-1.2.0.xsd">
 
-  <!-- Mirrors: hit central directly, but the HTTP client below retries 429s. -->
+  <!-- Mirror: Aliyun's full Maven Central sync. Not rate-limited, fast globally. -->
   <mirrors>
     <mirror>
-      <id>central-mirror</id>
-      <name>Central Repository (with retries)</name>
-      <url>https://repo.maven.apache.org/maven2</url>
+      <id>aliyun-central</id>
+      <name>Aliyun Maven Central Mirror</name>
+      <url>https://maven.aliyun.com/repository/public</url>
       <mirrorOf>central</mirrorOf>
     </mirror>
   </mirrors>
@@ -44,7 +47,7 @@
         <maven.wagon.http.retryHandler.retryNon2xx>true</maven.wagon.http.retryHandler.retryNon2xx>
         <!-- Service-Unavailable / 503 retry -->
         <maven.wagon.http.retryHandler.statusCodes>429,500,502,503,504</maven.wagon.http.retryHandler.statusCodes>
-        <!-- Larger socket timeout (60s) for slow Central mirrors -->
+        <!-- Larger socket timeout (60s) for slow mirrors -->
         <maven.wagon.http.connectionTimeout>60000</maven.wagon.http.connectionTimeout>
         <maven.wagon.http.readTimeout>120000</maven.wagon.http.readTimeout>
       </properties>
