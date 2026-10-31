@@ -134,6 +134,44 @@ public class ProcessController {
         return ResponseEntity.noContent().build();
     }
 
+    /**
+     * Copy a system (or any visible) template into an org-scoped one with the
+     * same steps + conditions — owner only.
+     * POST /api/processes/templates/{id}/copy
+     */
+    @PostMapping("/api/processes/templates/{id}/copy")
+    @PreAuthorize("hasRole('OWNER')")
+    public ResponseEntity<ProcessService.TemplateDetail> copyTemplate(@PathVariable UUID id) {
+        Authentication auth = SecurityContextHolder.getContext().getAuthentication();
+        return ResponseEntity.status(HttpStatus.CREATED).body(svc.copyTemplate(auth, id));
+    }
+
+    /**
+     * The rule rendered as a French sentence — owner only.
+     * GET /api/processes/templates/{id}/sentence
+     */
+    @GetMapping("/api/processes/templates/{id}/sentence")
+    @PreAuthorize("hasRole('OWNER')")
+    public ResponseEntity<String> getTemplateSentence(@PathVariable UUID id) {
+        Authentication auth = SecurityContextHolder.getContext().getAuthentication();
+        return ResponseEntity.ok(svc.getTemplateSentence(auth, id));
+    }
+
+    /**
+     * Test which rule a payment description would trigger today and why.
+     * No data written. Owner only.
+     * POST /api/processes/templates/{id}/test
+     * Body: { projectId, amount, nature, paymentMode }
+     */
+    @PostMapping("/api/processes/templates/{id}/test")
+    @PreAuthorize("hasRole('OWNER')")
+    public ResponseEntity<ProcessService.TestRuleResponse> testRule(
+            @PathVariable UUID id,
+            @RequestBody ProcessService.TestRuleRequest req) {
+        Authentication auth = SecurityContextHolder.getContext().getAuthentication();
+        return ResponseEntity.ok(svc.testRule(auth, id, req));
+    }
+
     // ══════════════════════════════════════════════════════════════
     //  PROJECT ↔ TEMPLATE CONFIGURATION
     // ══════════════════════════════════════════════════════════════

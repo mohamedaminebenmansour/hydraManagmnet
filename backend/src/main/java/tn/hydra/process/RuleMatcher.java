@@ -73,6 +73,9 @@ public final class RuleMatcher {
                                 boolean orgScoped,
                                 Instant createdAt) {}
 
+    /** Result of evaluating one candidate against facts (used by the /test endpoint). */
+    public record MatchResult(boolean matched, String reason) {}
+
     private RuleMatcher() {}
 
     /**
@@ -113,36 +116,60 @@ public final class RuleMatcher {
     //  Condition evaluation
     // ══════════════════════════════════════════════════════════════
 
-    private static boolean matches(RuleCandidate c, PaymentFacts facts) {
+    /**
+     *  Evaluate one candidate against the facts; returns matched + a short
+     *  French reason (reason is null when the candidate matches). Exposed so the
+     *  /test endpoint can explain WHY a rule was (not) chosen.
+     */
+    public static MatchResult explainMatch(RuleCandidate c, PaymentFacts facts) {
+        if (c == null) {
+            return new MatchResult(false, "règle manquante");
+        }
+        if (!c.enabledForProject()) {
+            return new MatchResult(false, "règle désactivée sur ce chantier");
+        }
         Map<String, Object> conditions = c.conditions();
         if (conditions == null || conditions.isEmpty()) {
-            return true; // no conditions => matches everything
+            return new MatchResult(true, null); // no conditions => matches everything
         }
         for (Map.Entry<String, Object> e : conditions.entrySet()) {
-            if (!conditionMatches(e.getKey(), e.getValue(), c, facts)) {
-                return false;
+            String reason = conditionReason(e.getKey(), e.getValue(), c, facts);
+            if (reason != null) {
+                return new MatchResult(false, reason);
             }
         }
-        return true;
+        return new MatchResult(true, null);
     }
 
-    private static boolean conditionMatches(String key, Object value, RuleCandidate c, PaymentFacts facts) {
+    private static boolean matches(RuleCandidate c, PaymentFacts facts) {
+        return explainMatch(c, facts).matched();
+    }
+
+    /** Returns null if the condition holds, else a short French reason. */
+    private static String conditionReason(String key, Object value, RuleCandidate c, PaymentFacts facts) {
         return switch (key) {
             case "amount_min" -> {
                 // Override replaces amount_min when present.
                 BigDecimal min = c.amountThresholdOverride() != null
                         ? c.amountThresholdOverride()
                         : toBigDecimal(value);
-                yield min == null || (facts.amount() != null && facts.amount().compareTo(min) >= 0);
+                if (min == null) yield null;
+                if (facts.amount() == null) yield "montant non renseigné";
+                if (facts.amount().compareTo(min) < 0) yield "montant inférieur au minimum";
+                yield null;
             }
             case "amount_max" -> {
                 BigDecimal max = toBigDecimal(value);
-                yield max == null || (facts.amount() != null && facts.amount().compareTo(max) <= 0);
+                if (max == null) yield null;
+                if (facts.amount() == null) yield "montant non renseigné";
+                if (facts.amount().compareTo(max) > 0) yield "montant supérieur au maximum";
+                yield null;
             }
-            case "project_ids" -> inCollection(value, facts.projectId() == null ? null : facts.projectId().toString());
-            case "natures" -> inCollection(value, facts.nature());
-            case "payment_modes" -> inCollection(value, facts.paymentMode());
-            default -> false; // unknown key => defensive no-match
+            case "project_ids" -> inCollection(value, facts.projectId() == null ? null : facts.projectId().toString())
+                    ? null : "chantier non concerné";
+            case "natures" -> inCollection(value, facts.nature()) ? null : "nature non incluse";
+            case "payment_modes" -> inCollection(value, facts.paymentMode()) ? null : "mode de règlement non inclus";
+            default -> "clé de condition inconnue : " + key;
         };
     }
 
