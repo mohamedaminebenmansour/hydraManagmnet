@@ -129,7 +129,7 @@ public class TicketService {
 
         audit.log("TICKET_CREATED", "ticket", id,
                 "{\"title\":\"" + jsonEscape(title.trim()) + "\"}");
-        return get(auth, id);
+        return reload(id, me.getOrgId());
     }
 
     // ══════════════════ 4. PARTIAL UPDATE ══════════════════
@@ -167,7 +167,7 @@ public class TicketService {
         jdbc.update(sql.toString(), args.toArray());
 
         audit.log("TICKET_UPDATED", "ticket", id, null);
-        return get(auth, id);
+        return reload(id, me.getOrgId());
     }
 
     // ══════════════════ 5. STATUS TRANSITIONS (workflow) ══════════════════
@@ -209,7 +209,7 @@ public class TicketService {
         }
         audit.log("TICKET_STATUS_CHANGED", "ticket", id,
                 "{\"from\":\"" + current + "\",\"to\":\"" + target.name() + "\"}");
-        return get(auth, id);
+        return reload(id, me.getOrgId());
     }
 
     /** Possible next statuses for the UI (empty when terminal). */
@@ -241,7 +241,7 @@ public class TicketService {
                 """, me.getId(), id, me.getOrgId());
         audit.log("TICKET_CLOSED", "ticket", id,
                 "{\"from\":\"" + current + "\",\"to\":\"AS_BUILT\"}");
-        return get(auth, id);
+        return reload(id, me.getOrgId());
     }
 
     // ══════════════════ 6. LINKED DOCUMENTS ══════════════════
@@ -270,6 +270,15 @@ public class TicketService {
         if (rows.isEmpty())
             throw new ResourceNotFoundException("TICKET_NOT_FOUND", "Ticket introuvable");
         return rows.get(0);
+    }
+
+    /** Re-read after this user's own write (already checked by requireTicket/requireProject): no membership check. */
+    private TicketResponse reload(UUID id, UUID orgId) {
+        List<Map<String, Object>> rows = jdbc.queryForList(
+                SELECT_SQL + " where t.id = ? and t.org_id = ?", id, orgId);
+        if (rows.isEmpty())
+            throw new ResourceNotFoundException("TICKET_NOT_FOUND", "Ticket introuvable");
+        return toResponse(rows.get(0));
     }
 
     private void requireProject(AppUser me, UUID projectId, boolean allowClosed) {
