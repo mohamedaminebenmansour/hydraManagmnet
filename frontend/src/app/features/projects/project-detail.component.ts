@@ -30,6 +30,7 @@ import {
   Project, ProjectFolder, ProjectMember, ProjectRole,
   PROJECT_TYPE_LABELS, PROJECT_ROLE_OPTS, PROJECT_ROLE_LABELS
 } from '@app/core/models/project.model';
+import { folderTotalCount } from '@app/core/models/folder.model';
 import { UserOptionDto, UserDto } from '@app/core/models/user.model';
 import { EmptyStateComponent } from '@app/shared/empty-state.component';
 import { OuvragesTabComponent } from './ouvrages-tab.component'; // PHASE-OUVRAGE-EXTRACT
@@ -87,6 +88,12 @@ export class ProjectDetailComponent implements OnInit, OnDestroy {
   ouvragesVersion = signal(0);
   members = signal<ProjectMember[]>([]);
   folders = signal<ProjectFolder[]>([]);
+  /** Dossiers tab: main folders only (sub-folders are listed when a main folder is opened). */
+  mainFolders = computed(() => this.folders().filter(f => !f.parentId));
+  /** Documents in a main folder and its sub-folders. */
+  folderCount(f: ProjectFolder): number {
+    return folderTotalCount(this.folders(), f);
+  }
   folderAccessCounts = signal<Record<string, number>>({});
   users = signal<UserDto[]>([]);
 

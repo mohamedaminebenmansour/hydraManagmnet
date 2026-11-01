@@ -77,9 +77,10 @@ public class ProjectService {
 
     public record ProjectOption(UUID id, String name, String projectType) {}
 
+    /** documentCount = documents directly in this folder (not deleted); the UI adds sub-folders. */
     public record FolderResponse(UUID id, UUID projectId, UUID parentId,
                                  String code, String name, Integer sortOrder,
-                                 Instant createdAt) {}
+                                 Instant createdAt, int documentCount) {}
 
     public record MemberResponse(UUID userId, String fullName, String email,
                                  String projectRole, boolean canUpload, Instant createdAt) {}
@@ -283,10 +284,12 @@ public class ProjectService {
         if (readable != null && readable.isEmpty()) return List.of();
         java.util.Set<UUID> filter = readable;
         return jdbc.queryForList("""
-                select id, project_id, parent_id, code, name, sort_order, created_at
-                from doc_folder
-                where project_id = ?
-                order by sort_order, name
+                select f.id, f.project_id, f.parent_id, f.code, f.name, f.sort_order, f.created_at,
+                       (select count(*) from document d
+                         where d.folder_id = f.id and d.deleted_at is null) as document_count
+                from doc_folder f
+                where f.project_id = ?
+                order by f.sort_order, f.name
                 """, projectId).stream()
                 .filter(r -> filter == null || filter.contains((UUID) r.get("id")))
                 .map(ProjectService::toFolderResponse).toList();
@@ -641,7 +644,8 @@ public class ProjectService {
                 (String) row.get("code"),
                 (String) row.get("name"),
                 row.get("sort_order") == null ? null : ((Number) row.get("sort_order")).intValue(),
-                toInstant(row.get("created_at")));
+                toInstant(row.get("created_at")),
+                row.get("document_count") == null ? 0 : ((Number) row.get("document_count")).intValue());
     }
 
     private static MemberResponse toMemberResponse(Map<String, Object> row) {

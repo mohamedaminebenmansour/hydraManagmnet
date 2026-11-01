@@ -157,7 +157,7 @@
             </p>
           }
           <div class="folder-grid">
-            @for (f of folders(); track f.id) {
+            @for (f of mainFolders(); track f.id) {
               <div class="fcard" (click)="openFolder(f)" role="button" tabindex="0"
                    [attr.aria-label]="'Ouvrir le dossier ' + f.name" (keyup.enter)="openFolder(f)">
                 <div class="fcard-top">
@@ -173,9 +173,10 @@
                   }
                 </div>
                 <div class="f-name" [title]="f.name">{{ f.name }}</div>
+                <div class="f-count">{{ folderCount(f) }} document(s)</div>
                 <div class="f-foot">
                   <span class="f-code">{{ f.code }}</span>
-                  <span class="f-open">Ouvrir <i class="pi pi-angle-right"></i></span>
+                  <span class="f-open">Ouvrir <i class="pi pi-angle-right" aria-hidden="true"></i></span>
                 </div>
               </div>
             } @empty {

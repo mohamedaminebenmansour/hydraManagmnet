@@ -84,6 +84,8 @@ export interface ProjectFolder {
   name: string;
   sortOrder?: number | null;
   createdAt?: string | null;
+  /** Documents directly in this folder (sub-folders not included). */
+  documentCount?: number;
 }
 
 /** POST /api/projects/{id}/members — body: { userId, projectRole, canUpload }. */
