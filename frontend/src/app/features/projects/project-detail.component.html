@@ -202,7 +202,8 @@
 
       <!-- ==================== BORDEREAU (Excel import) ==================== -->
       <p-tabpanel value="5">
-        <app-bordereau-tab [projectId]="projectId ?? ''" (changed)="onOuvragesChanged()" />
+        <app-bordereau-tab [projectId]="projectId ?? ''" [ouvragesVersion]="ouvragesVersion()"
+                           (changed)="onOuvragesChanged()" />
       </p-tabpanel>
 
       <!-- ==================== ÉQUIPE ==================== -->

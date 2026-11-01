@@ -8,6 +8,10 @@
 .bt-actions { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
 
 .bt-loading { color: #64748b; padding: 30px; text-align: center; }
+.bt-load-error {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 12px;
+  padding: 10px 14px; color: #b91c1c; background: #fef2f2; border: 1px solid #fecaca; border-radius: 8px;
+}
 .muted { color: #94a3b8; font-size: 13px; }
 
 .bt-group { margin-bottom: 16px; }
@@ -47,6 +51,22 @@
 }
 .bt-selected { font-size: 12px; color: #64748b; margin-left: auto; }
 
+// Warnings: header (section-title lines), clickable icon, opened text row
+.bt-group-warn {
+  display: flex; align-items: center; gap: 6px; padding: 6px 12px; font-size: 12px;
+  color: #9a3412; background: #fff7ed; border: 1px solid #e2e8f0; border-bottom: none;
+}
+.bt-warn-btn {
+  border: none; background: none; padding: 2px; cursor: pointer; color: #ea580c; line-height: 1;
+  &:focus-visible { outline: 2px solid #ea580c; border-radius: 4px; }
+}
+.bt-table tbody tr.bt-warn-row td {
+  font-size: 12px; color: #9a3412; background: #fff7ed; padding: 6px 12px;
+  i { margin-right: 4px; }
+}
+.bt-unit-unknown { color: #ea580c; font-weight: 600; }
+.bt-activate-summary { margin: 0 0 12px; padding-left: 18px; line-height: 1.8; }
+
 // Inline editing
 .bt-cell {
   display: inline-block; cursor: text; padding: 2px 4px; border-radius: 3px;
@@ -65,14 +85,14 @@
 .bt-preview { font-size: 14px; }
 .bt-preview-lines { margin-top: 12px; max-height: 400px; overflow-y: auto; border: 1px solid #e2e8f0; border-radius: 6px; }
 .bt-preview-line {
-  display: flex; align-items: center; gap: 8px; padding: 6px 10px;
+  display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 6px 10px;
   border-bottom: 1px solid #f1f5f9; font-size: 12px;
   &.has-warnings { background: #fff7ed; }
   .pl-no { width: 50px; font-family: monospace; color: #475569; }
   .pl-desig { flex: 1; }
   .pl-unit { width: 60px; color: #64748b; }
   .pl-qty { width: 60px; text-align: right; }
-  .pl-warn { width: 20px; }
+  .pl-warn { flex-basis: 100%; font-size: 12px; color: #9a3412; }
 }
 .bt-preview-more { padding: 8px; text-align: center; color: #94a3b8; font-size: 12px; }
 

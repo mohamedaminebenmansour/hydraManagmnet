@@ -18,7 +18,7 @@
                   (onClick)="fileInput.click()" [loading]="importLoading()" />
         @if (isDraft()) {
           <p-button label="Activer cette version" icon="pi pi-check-circle" severity="success"
-                    (onClick)="activateCurrent()" />
+                    (onClick)="openActivate()" />
         }
         <p-button label="Comparer" icon="pi pi-arrows-left-right" [text]="true"
                   (onClick)="openCompare()" [disabled]="versions().length < 2" />
@@ -29,30 +29,48 @@
   <input #fileInput type="file" accept=".xls,.xlsx" style="display:none"
          (change)="onInputChange($event)" />
 
+  @if (ouvragesError()) {
+    <div class="bt-load-error" role="alert">
+      <i class="pi pi-exclamation-triangle" aria-hidden="true"></i>
+      <span>Impossible de charger les ouvrages</span>
+      <p-button label="Réessayer" icon="pi pi-refresh" [outlined]="true" size="small" (onClick)="loadOuvrages()" />
+    </div>
+  }
+
   @if (loading()) {
     <div class="bt-loading"><i class="pi pi-spin pi-spinner"></i> Chargement…</div>
   } @else if (!lines().length) {
     <app-empty-state icon="pi pi-file-excel"
                      message="Aucune ligne de bordereau. Importez un fichier Excel ou créez une version." />
   } @else {
-    @if (isDraft()) {
-      <div class="bt-ouvrage-bar">
+    <div class="bt-ouvrage-bar">
+      @if (isDraft()) {
         <span class="bt-missing" [class.bt-missing-zero]="linesWithoutOuvrage() === 0">
-          <i class="pi pi-sitemap"></i> {{ linesWithoutOuvrage() }} lignes sans ouvrage
+          <i class="pi pi-sitemap" aria-hidden="true"></i> {{ linesWithoutOuvrage() }} lignes sans ouvrage
         </span>
-        @if (canWrite()) {
-          <span class="bt-selected">{{ selectedIds().size }} ligne(s) sélectionnée(s)</span>
-          <p-button label="Affecter à…" icon="pi pi-sitemap" [outlined]="true" size="small"
-                    (onClick)="openAssign()" [disabled]="!selectedIds().size" />
-        }
-      </div>
-    }
+      }
+      <p-button [label]="'Avec avertissement (' + linesWithWarnings() + ')'" icon="pi pi-filter"
+                size="small" [outlined]="!warningsOnly()" severity="warn"
+                [attr.aria-pressed]="warningsOnly()" (onClick)="warningsOnly.set(!warningsOnly())" />
+      @if (isDraft() && canWrite()) {
+        <span class="bt-selected">{{ selectedIds().size }} ligne(s) sélectionnée(s)</span>
+        <p-button label="Affecter à…" icon="pi pi-sitemap" [outlined]="true" size="small"
+                  (onClick)="openAssign()" [disabled]="!selectedIds().size" />
+      }
+    </div>
     @for (group of groupedLines(); track group.section) {
       <div class="bt-group">
         <div class="bt-group-head">
-          <i class="pi pi-folder"></i> {{ group.section }}
+          <i class="pi pi-folder" aria-hidden="true"></i> {{ group.section }}
           <span class="bt-group-count">{{ group.lines.length }} ligne(s)</span>
         </div>
+        @if (group.headerWarnings.length) {
+          <div class="bt-group-warn" role="note">
+            <i class="pi pi-exclamation-triangle" aria-hidden="true"></i>
+            <span>Titre de section : {{ group.headerWarnings.join(' / ') }}</span>
+          </div>
+        }
+        @if (group.lines.length) {
         <table class="bt-table">
           <thead>
             <tr>
@@ -86,9 +104,9 @@
                 }
                 <td class="c-paired">
                   @if (l.pairedLineId) {
-                    <i class="pi pi-link" style="color: #0ea5e9;"
-                       pTooltip="Lié à : {{ pairedLineNo(l) }}" tooltipPosition="left"
-                       [attr.aria-label]="'Ligne liée à ' + pairedLineNo(l)"></i>
+                    <i class="pi pi-link" style="color: #0ea5e9;" role="img"
+                       [pTooltip]="pairedLineLabel(l)" tooltipPosition="left"
+                       [attr.aria-label]="pairedLineLabel(l)"></i>
                   }
                 </td>
                 <td class="c-no">
@@ -112,7 +130,9 @@
                     <input #editInput class="bt-edit-input" [(ngModel)]="editValue"
                            (keydown)="onEditKeydown($event, l, 'unitRaw')" />
                   } @else {
-                    <span class="bt-cell" (click)="startEdit(l, 'unitRaw')">{{ l.unitRaw ?? '—' }}</span>
+                    <span class="bt-cell" [class.bt-unit-unknown]="isUnknownUnit(l)"
+                          [pTooltip]="unitTooltip(l)" tooltipPosition="top"
+                          (click)="startEdit(l, 'unitRaw')">{{ unitLabel(l) }}</span>
                   }
                 </td>
                 <td class="c-qty">
@@ -144,16 +164,28 @@
                   <td class="c-ouvrage">{{ ouvrageName(l.ouvrageId) }}</td>
                 }
                 <td class="c-warn">
-                  @if (l.importWarnings?.length) {
-                    <i class="pi pi-exclamation-triangle" style="color: #ea580c;"
-                       pTooltip="{{ (l.importWarnings ?? []).join(' / ') }}" tooltipPosition="left"
-                       [attr.aria-label]="(l.importWarnings ?? []).length + ' avertissement(s)'"></i>
+                  @if (lineWarnings(l).length) {
+                    <button type="button" class="bt-warn-btn"
+                            [pTooltip]="lineWarnings(l).join(' / ')" tooltipPosition="left"
+                            (click)="toggleWarning(l.id)" [attr.aria-expanded]="isWarningOpen(l.id)"
+                            [attr.aria-label]="lineWarnings(l).length + ' avertissement(s) : ' + lineWarnings(l).join(' / ')">
+                      <i class="pi pi-exclamation-triangle" aria-hidden="true"></i>
+                    </button>
                   }
                 </td>
               </tr>
+              @if (isWarningOpen(l.id) && lineWarnings(l).length) {
+                <tr class="bt-warn-row">
+                  <td [attr.colspan]="isDraft() && canWrite() ? 10 : 9">
+                    <i class="pi pi-exclamation-triangle" aria-hidden="true"></i>
+                    {{ lineWarnings(l).join(' / ') }}
+                  </td>
+                </tr>
+              }
             }
           </tbody>
         </table>
+        }
       </div>
     }
   }
@@ -175,8 +207,9 @@
               <span class="pl-unit">{{ l.unitRaw ?? '—' }}</span>
               <span class="pl-qty">{{ l.quantity ?? '—' }}</span>
               @if (l.warnings?.length) {
-                <span class="pl-warn" pTooltip="{{ l.warnings.join(' / ') }}">
-                  <i class="pi pi-exclamation-triangle" style="color: #ea580c;"></i>
+                <span class="pl-warn" [pTooltip]="l.warnings.join(' / ')">
+                  <i class="pi pi-exclamation-triangle" style="color: #ea580c;" aria-hidden="true"></i>
+                  {{ l.warnings.join(' / ') }}
                 </span>
               }
             </div>
@@ -190,6 +223,21 @@
   }
   <ng-template pTemplate="footer">
     <p-button label="OK" icon="pi pi-check" (onClick)="confirmImport()" />
+  </ng-template>
+</p-dialog>
+
+<!-- Activation confirmation dialog -->
+<p-dialog [(visible)]="showActivateDialog" [modal]="true" [style]="{ width: '440px' }"
+          header="Activer cette version ?" [draggable]="false">
+  <ul class="bt-activate-summary">
+    <li><strong>{{ linesWithoutOuvrage() }}</strong> ligne(s) sans ouvrage</li>
+    <li><strong>{{ warningCount() }}</strong> avertissement(s)</li>
+    <li>Total HT : <strong>{{ fmtMoney(totalHt()) }} TND</strong></li>
+  </ul>
+  <p class="note">La version active actuelle sera archivée.</p>
+  <ng-template pTemplate="footer">
+    <p-button label="Annuler" [text]="true" (onClick)="showActivateDialog = false" />
+    <p-button label="Activer quand même" icon="pi pi-check-circle" severity="success" (onClick)="activateCurrent()" />
   </ng-template>
 </p-dialog>
 

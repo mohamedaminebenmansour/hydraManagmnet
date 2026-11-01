@@ -57,7 +57,7 @@ export const CHANTIER_TYPE_VISUAL: Record<string, TypeVisual> = {
     label: 'Irrigation'
   },
   VANNE: {
-    icon: 'pi-toggle-on', color: '#0ea5e9', soft: '#f0f9ff',
+    icon: 'pi-sliders-h', color: '#0ea5e9', soft: '#f0f9ff',
     gradient: 'linear-gradient(135deg, #38bdf8 0%, #0284c7 100%)',
     label: 'Chambre de vanne'
   },

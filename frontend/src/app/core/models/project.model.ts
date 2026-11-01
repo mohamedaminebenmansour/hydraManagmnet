@@ -151,6 +151,13 @@ export const PROJECT_TYPE_LABELS: Record<string, string> = {
   AUTRE: 'Autre'
 };
 
+/** The 24 Tunisian gouvernorats (alphabetical), for the chantier form. */
+export const TUNISIAN_GOVERNORATES: string[] = [
+  'Ariana', 'Béja', 'Ben Arous', 'Bizerte', 'Gabès', 'Gafsa', 'Jendouba', 'Kairouan',
+  'Kasserine', 'Kébili', 'Le Kef', 'Mahdia', 'La Manouba', 'Médenine', 'Monastir', 'Nabeul',
+  'Sfax', 'Sidi Bouzid', 'Siliana', 'Sousse', 'Tataouine', 'Tozeur', 'Tunis', 'Zaghouan',
+];
+
 export const PROJECT_ROLE_OPTS: { label: string; value: ProjectRole }[] = [
   { label: 'Admin', value: 'ADMIN' },
   { label: 'Chef de projet', value: 'MANAGER' },

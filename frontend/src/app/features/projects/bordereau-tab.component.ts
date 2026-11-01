@@ -1,4 +1,4 @@
-import { Component, Input, Output, EventEmitter, OnInit, computed, inject, signal } from '@angular/core';
+import { Component, Input, Output, EventEmitter, OnChanges, OnInit, SimpleChanges, computed, inject, signal } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { ButtonModule } from 'primeng/button';
@@ -27,13 +27,15 @@ import { EmptyStateComponent } from '@app/shared/empty-state.component';
   templateUrl: './bordereau-tab.component.html',
   styleUrl: './bordereau-tab.component.scss'
 })
-export class BordereauTabComponent implements OnInit {
+export class BordereauTabComponent implements OnInit, OnChanges {
   private bordereauService = inject(BordereauService);
   private projectService = inject(ProjectService);
   private auth = inject(AuthService);
   private msgs = inject(MessageService);
 
   @Input({ required: true }) projectId!: string;
+  /** Bumped by the parent when the Ouvrages tab reports a change → reload ouvrages. */
+  @Input() ouvragesVersion = 0;
   @Output() changed = new EventEmitter<void>();
 
   versions = signal<BordereauVersion[]>([]);
@@ -68,6 +70,7 @@ export class BordereauTabComponent implements OnInit {
 
   // Ouvrage assignment (DRAFT only).
   ouvrages = signal<Ouvrage[]>([]);
+  ouvragesError = signal(false);
   ouvrageOptions = computed(() => [
     { id: null as string | null, label: 'Aucun' },
     ...this.ouvrages().map(o => ({ id: o.id as string | null, label: o.name })),
@@ -76,20 +79,35 @@ export class BordereauTabComponent implements OnInit {
   showAssignDialog = false;
   assignOuvrageId: string | null = null;
   assigning = signal(false);
-  /** Article lines (with a number) that have no ouvrage yet. */
-  linesWithoutOuvrage = computed(() => this.lines().filter(l => !!l.articleNo?.trim() && !l.ouvrageId).length);
+  /** Real lines (not section titles) — the only ones that can be selected / assigned. */
+  articleLines = computed(() => this.lines().filter(l => !this.isSectionTitle(l)));
+  /** Article lines that have no ouvrage yet. */
+  linesWithoutOuvrage = computed(() => this.articleLines().filter(l => !l.ouvrageId).length);
 
-  // Lines grouped by sectionPath.
+  // Warnings: filter + lines whose warning text is open (click / tap on phones).
+  warningsOnly = signal(false);
+  openWarnings = signal<Set<string>>(new Set());
+  linesWithWarnings = computed(() => this.articleLines().filter(l => this.lineWarnings(l).length > 0).length);
+
+  // Lines grouped by sectionPath. Section-title lines are not rows: their warnings
+  // are shown in the header of the group they belong to.
   groupedLines = computed(() => {
-    const groups: { section: string; lines: BordereauLine[] }[] = [];
+    const groups: { section: string; lines: BordereauLine[]; headerWarnings: string[] }[] = [];
     let currentSection = '';
     for (const l of this.lines()) {
       const section = l.sectionPath.join(' / ') || '—';
-      if (section !== currentSection) { groups.push({ section, lines: [] }); currentSection = section; }
-      groups[groups.length - 1].lines.push(l);
+      if (section !== currentSection) { groups.push({ section, lines: [], headerWarnings: [] }); currentSection = section; }
+      const g = groups[groups.length - 1];
+      if (this.isSectionTitle(l)) g.headerWarnings.push(...this.lineWarnings(l));
+      else if (!this.warningsOnly() || this.lineWarnings(l).length) g.lines.push(l);
     }
-    return groups;
+    return groups.filter(g => g.lines.length || g.headerWarnings.length);
   });
+
+  // Activation confirmation.
+  showActivateDialog = false;
+  warningCount = computed(() => this.lines().reduce((n, l) => n + this.lineWarnings(l).length, 0));
+  totalHt = computed(() => this.articleLines().reduce((s, l) => s + (lineMontant(l) ?? 0), 0));
 
   // Paired line lookup: map lineId → line (for the link icon tooltip).
   pairedLineMap = computed(() => {
@@ -100,9 +118,21 @@ export class BordereauTabComponent implements OnInit {
 
   ngOnInit(): void {
     this.loadVersions();
+  }
+
+  ngOnChanges(changes: SimpleChanges): void {
+    // First binding included: loads the ouvrages once, then on every project change
+    // and every change reported by the Ouvrages tab.
+    if (changes['projectId'] || changes['ouvragesVersion']) this.loadOuvrages();
+  }
+
+  loadOuvrages(): void {
+    if (!this.projectId) return;
+    this.ouvragesError.set(false);
     this.projectService.listOuvrages(this.projectId).subscribe({
       next: list => this.ouvrages.set(list ?? []),
-      error: () => this.ouvrages.set([])
+      // An error is not "no ouvrage": show it with a retry button.
+      error: () => { this.ouvrages.set([]); this.ouvragesError.set(true); }
     });
   }
 
@@ -129,6 +159,35 @@ export class BordereauTabComponent implements OnInit {
       next: list => this.lines.set(list ?? []),
       error: () => this.lines.set([])
     });
+  }
+
+  /** Same rule as the import: designation only, no unit, no quantity, no price. */
+  isSectionTitle(l: BordereauLine): boolean {
+    return !l.articleNo?.trim() && !l.unitRaw?.trim() && l.quantity == null && l.unitPrice == null;
+  }
+
+  /** Warnings to show. The import's "Titre de section" note is dropped: titles are headers. */
+  lineWarnings(l: BordereauLine): string[] {
+    return (l.importWarnings ?? []).filter(w => !w.startsWith('Titre de section'));
+  }
+
+  isWarningOpen(lineId: string): boolean { return this.openWarnings().has(lineId); }
+
+  toggleWarning(lineId: string): void {
+    this.openWarnings.update(s => {
+      const copy = new Set(s);
+      if (copy.has(lineId)) copy.delete(lineId); else copy.add(lineId);
+      return copy;
+    });
+  }
+
+  /** Unit column: normalised unit; unknown → the raw Excel text (shown in orange). */
+  unitLabel(l: BordereauLine): string { return l.unit ?? l.unitRaw ?? '—'; }
+  isUnknownUnit(l: BordereauLine): boolean { return !l.unit && !!l.unitRaw?.trim(); }
+  /** Tooltip with the raw Excel text when it differs from what is shown. */
+  unitTooltip(l: BordereauLine): string {
+    if (this.isUnknownUnit(l)) return `Unité inconnue (texte Excel : « ${l.unitRaw} »)`;
+    return l.unitRaw && l.unit && l.unitRaw.trim() !== l.unit ? `Texte Excel : « ${l.unitRaw} »` : '';
   }
 
   isDraft(): boolean {
@@ -333,7 +392,11 @@ export class BordereauTabComponent implements OnInit {
     });
   }
 
+  /** "Activer cette version": confirm first (lines without ouvrage, warnings, total HT). */
+  openActivate(): void { this.showActivateDialog = true; }
+
   activateCurrent(): void {
+    this.showActivateDialog = false;
     const id = this.selectedVersionId();
     if (!id) return;
     this.bordereauService.activateVersion(this.projectId, id).subscribe({
@@ -390,9 +453,11 @@ export class BordereauTabComponent implements OnInit {
     return s === 'ACTIVE' ? 'success' : s === 'DRAFT' ? 'warn' : 'secondary';
   }
 
-  pairedLineNo(line: BordereauLine): string {
+  /** "Liée à : {designation} (n°{article})" of the paired line. */
+  pairedLineLabel(line: BordereauLine): string {
     if (!line.pairedLineId) return '';
     const paired = this.pairedLineMap().get(line.pairedLineId);
-    return paired?.articleNo ?? paired?.designation ?? '—';
+    if (!paired) return 'Liée à : ligne introuvable';
+    return `Liée à : ${paired.designation} (n°${paired.articleNo ?? '—'})`;
   }
 }

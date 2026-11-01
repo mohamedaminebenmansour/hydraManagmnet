@@ -222,7 +222,11 @@
         </div>
         <div class="field">
           <label><i class="pi pi-building"></i> Gouvernorat</label>
-          <input pInputText class="inp" placeholder="Gouvernorat" [(ngModel)]="formGovernorate" />
+          <p-select [options]="governorateOptions" [(ngModel)]="formGovernorate"
+                    [filter]="true" filterPlaceholder="Rechercher…" [showClear]="true"
+                    emptyFilterMessage="Aucun gouvernorat trouvé"
+                    placeholder="Choisir un gouvernorat" styleClass="inp" appendTo="body"
+                    ariaLabel="Gouvernorat" />
         </div>
       </div>
     }
@@ -406,7 +410,7 @@
         <span></span>
       }
       <div class="wf-right">
-        @if (step() < 4) { /* PHASE-OUVRAGE-UI: 4 steps */
+        @if (step() < 4) {
           <p-button label="Suivant" icon="pi pi-arrow-right" iconPos="right"
                     (onClick)="wNext()" [disabled]="!formName.trim()" />
         } @else {

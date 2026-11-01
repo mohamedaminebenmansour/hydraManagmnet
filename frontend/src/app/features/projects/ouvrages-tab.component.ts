@@ -54,6 +54,7 @@ export class OuvragesTabComponent implements OnInit {
 
   ouvrages = signal<Ouvrage[]>([]);
   loading = signal(false);
+  loadError = signal(false);
 
   readonly ADDABLE_OUVRAGE_TYPES: OuvrageType[] =
     ['RESERVOIR', 'CONDUITE', 'STATION_POMPAGE', 'FORAGE', 'OUVRAGE_ANNEXE', 'AUTRE'];
@@ -83,9 +84,11 @@ export class OuvragesTabComponent implements OnInit {
   load(): void {
     if (!this.projectId) { return; }
     this.loading.set(true);
+    this.loadError.set(false);
     this.projectService.listOuvrages(this.projectId).subscribe({
       next: list => { this.ouvrages.set(list ?? []); this.loading.set(false); },
-      error: () => { this.ouvrages.set([]); this.loading.set(false); }
+      // An error is not "no ouvrage": show it with a retry button.
+      error: () => { this.ouvrages.set([]); this.loadError.set(true); this.loading.set(false); }
     });
   }
 

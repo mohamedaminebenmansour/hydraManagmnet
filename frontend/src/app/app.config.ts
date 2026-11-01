@@ -3,7 +3,7 @@ import { NavigationError, provideRouter, withNavigationErrorHandler } from '@ang
 import { provideHttpClient, withFetch, withInterceptors, withXsrfConfiguration } from '@angular/common/http';
 import { provideAnimationsAsync } from '@angular/platform-browser/animations/async';
 import { providePrimeNG } from 'primeng/config';
-import { MessageService } from 'primeng/api';
+import { MessageService, Translation } from 'primeng/api';
 import Aura from '@primeuix/themes/aura';
 import { routes } from './app.routes';
 import { apiInterceptor } from './core/api.interceptor';
@@ -31,6 +31,22 @@ function reloadOnStaleChunk(event: NavigationError): void {
   window.location.assign(event.url);
 }
 
+// PrimeNG French translation (date pickers: day/month names, Monday first, buttons).
+const PRIMENG_FR: Translation = {
+  firstDayOfWeek: 1,
+  dayNames: ['dimanche', 'lundi', 'mardi', 'mercredi', 'jeudi', 'vendredi', 'samedi'],
+  dayNamesShort: ['dim.', 'lun.', 'mar.', 'mer.', 'jeu.', 'ven.', 'sam.'],
+  dayNamesMin: ['D', 'L', 'M', 'M', 'J', 'V', 'S'],
+  monthNames: ['janvier', 'février', 'mars', 'avril', 'mai', 'juin',
+               'juillet', 'août', 'septembre', 'octobre', 'novembre', 'décembre'],
+  monthNamesShort: ['janv.', 'févr.', 'mars', 'avr.', 'mai', 'juin',
+                    'juil.', 'août', 'sept.', 'oct.', 'nov.', 'déc.'],
+  today: "Aujourd'hui",
+  clear: 'Effacer',
+  dateFormat: 'dd/mm/yy',
+  weekHeader: 'Sem.',
+};
+
 export const appConfig: ApplicationConfig = {
   providers: [
     provideRouter(routes, withNavigationErrorHandler(reloadOnStaleChunk)),
@@ -40,7 +56,7 @@ export const appConfig: ApplicationConfig = {
       withInterceptors([apiInterceptor])
     ),
     provideAnimationsAsync(),
-    providePrimeNG({ theme: { preset: Aura } }),
+    providePrimeNG({ theme: { preset: Aura }, translation: PRIMENG_FR }),
     MessageService
   ]
 };

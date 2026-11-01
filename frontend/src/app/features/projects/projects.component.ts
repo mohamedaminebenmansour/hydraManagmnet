@@ -21,7 +21,7 @@ import { ProjectService } from '@app/core/services/project.service';
 import { UserService } from '@app/core/services/user.service';
 import {
   Project, ProjectCreate, ProjectUpdate, ProjectType,
-  PROJECT_TYPE_OPTS, PROJECT_TYPE_LABELS
+  PROJECT_TYPE_OPTS, PROJECT_TYPE_LABELS, TUNISIAN_GOVERNORATES
 } from '@app/core/models/project.model';
 import {
   OuvrageType, OuvrageSpec, OUVRAGE_TYPE_LABELS, OUVRAGE_TYPE_VISUAL,
@@ -112,7 +112,12 @@ export class ProjectsComponent implements OnInit {
   formCode = '';
   formClientName = '';
   formLocation = '';
-  formGovernorate = '';
+  formGovernorate: string | null = '';
+  /** The 24 gouvernorats; an existing value outside the list is kept and shown first. */
+  get governorateOptions(): string[] {
+    const v = this.formGovernorate?.trim();
+    return v && !TUNISIAN_GOVERNORATES.includes(v) ? [v, ...TUNISIAN_GOVERNORATES] : TUNISIAN_GOVERNORATES;
+  }
   formProjectType: ProjectType | null = null;
   formStartDate: Date | null = null;
   formEndDate: Date | null = null;
@@ -327,7 +332,7 @@ export class ProjectsComponent implements OnInit {
       code: this.formCode.trim() || null,
       clientName: this.formClientName.trim() || null,
       location: this.formLocation.trim() || null,
-      governorate: this.formGovernorate.trim() || null,
+      governorate: (this.formGovernorate ?? '').trim() || null,
       projectType: this.formProjectType,
       startDate: this.formStartDate,
       endDate: this.formEndDate,
@@ -359,7 +364,7 @@ export class ProjectsComponent implements OnInit {
       status: this.formStatus,
       clientName: this.formClientName.trim() || null,
       location: this.formLocation.trim() || null,
-      governorate: this.formGovernorate.trim() || null,
+      governorate: (this.formGovernorate ?? '').trim() || null,
       projectType: this.formProjectType,
       startDate: this.formStartDate,
       endDate: this.formEndDate,

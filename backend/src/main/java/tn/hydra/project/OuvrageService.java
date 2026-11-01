@@ -234,7 +234,7 @@ public class OuvrageService {
         // Characteristics: if provided, validate against the type spec; if null,
         // keep the existing ones unchanged.
         Map<String, Object> characteristics = body.characteristics() == null
-                ? parseJson((String) rows.get(0).get("characteristics"))
+                ? parseJson(rows.get(0).get("characteristics"))
                 : validateCharacteristics(type, body.characteristics());
 
         jdbc.update("""
@@ -352,7 +352,7 @@ public class OuvrageService {
             counts.merge(t, 1L, Long::sum);
             if ("CONDUITE".equals(t)) {
                 hasConduite = true;
-                Map<String, Object> chars = parseJson((String) r.get("characteristics"));
+                Map<String, Object> chars = parseJson(r.get("characteristics"));
                 // Sum troncons[*].longueur_m if present, else the top-level longueur_m.
                 Object troncons = chars.get("troncons");
                 if (troncons instanceof List<?> list) {
@@ -583,8 +583,10 @@ public class OuvrageService {
         }
     }
 
+    /** jsonb column value (PGobject from JdbcTemplate, or text) → Map. */
     @SuppressWarnings("unchecked")
-    private Map<String, Object> parseJson(String s) {
+    private Map<String, Object> parseJson(Object v) {
+        String s = v == null ? null : v.toString();
         if (s == null || s.isBlank()) return new LinkedHashMap<>();
         try {
             JsonNode node = json.readTree(s);
@@ -606,13 +608,16 @@ public class OuvrageService {
                 (String) row.get("type"),
                 (String) row.get("code"),
                 (String) row.get("name"),
-                parseCharacteristics((String) row.get("characteristics")),
+                parseCharacteristics(row.get("characteristics")),
                 row.get("sort_order") == null ? null : ((Number) row.get("sort_order")).intValue(),
                 toInstant(row.get("created_at")));
     }
 
+    /** jsonb column value (PGobject from JdbcTemplate, or text) → Map. A (String) cast
+     *  on a PGobject threw ClassCastException → 500 on GET /ouvrages. */
     @SuppressWarnings("unchecked")
-    private static Map<String, Object> parseCharacteristics(String s) {
+    private static Map<String, Object> parseCharacteristics(Object v) {
+        String s = v == null ? null : v.toString();
         if (s == null || s.isBlank()) return new LinkedHashMap<>();
         try {
             ObjectMapper m = new ObjectMapper();
