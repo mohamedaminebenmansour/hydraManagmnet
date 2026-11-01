@@ -1,0 +1,40 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(git status*)",
+      "Bash(git fetch *)",
+      "Bash(git diff *)",
+      "Bash(git log *)",
+      "Bash(git switch *)",
+      "Bash(git checkout -b *)",
+      "Bash(git add *)",
+      "Bash(git commit *)",
+      "Bash(cd backend && ./mvnw *)",
+      "Bash(cd frontend && npm run build*)"
+    ],
+    "deny": [
+      "Read(./frontend/node_modules/**)",
+      "Read(./frontend/dist/**)",
+      "Read(./frontend/.angular/**)",
+      "Read(./backend/target/**)",
+      "Read(./backend/data/**)",
+      "Read(./upload/**)",
+      "Read(./download/**)",
+      "Read(./scripts/**)",
+      "Read(./tool-results/**)",
+      "Read(./**/*.pdf)",
+      "Read(./frontend/package-lock.json)",
+      "Read(./.env)",
+      "Read(./**/.env*)",
+      "Bash(git push origin main*)",
+      "Bash(git push * main*)",
+      "Bash(git push --force*)",
+      "Bash(git push -f*)",
+      "Bash(git merge *)",
+      "Bash(git reset --hard*)",
+      "Bash(git stash drop*)",
+      "Bash(git clean *)",
+      "Bash(rm -rf *)"
+    ]
+  }
+}
