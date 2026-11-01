@@ -314,14 +314,12 @@ export class ProcessService {
     );
   }
 
-  /** PUT /api/projects/{projectId}/process-templates — enable/disable + threshold override. */
-  assignTemplate(projectId: string, body: AssignTemplateBody): Observable<boolean> {
+  /** PUT /api/projects/{projectId}/process-templates — enable/disable + threshold override.
+   *  Returns the error message on failure (for the UI to show + revert). */
+  assignTemplate(projectId: string, body: AssignTemplateBody): Observable<{ ok: boolean; error?: string }> {
     return this.http.put<AnyRaw>(`/api/projects/${projectId}/process-templates`, body).pipe(
-      map(() => true),
-      catchError(err => {
-        this.msgs.add({ severity: 'error', summary: 'Erreur', detail: this.errMsg(err, 'Impossible d\'activer la règle') });
-        return of(false);
-      })
+      map(() => ({ ok: true })),
+      catchError(err => of({ ok: false, error: this.errMsg(err, 'Impossible d\'activer la règle') }))
     );
   }
 

@@ -63,6 +63,9 @@ import { formatAmount } from '@app/core/models/cash.model';
                   </p>
                 }
                 <p class="card-assignee">{{ task.assigneeName || 'Non assign\u00e9' }}</p>
+                @if (task.onBehalfOf) {
+                  <p class="card-onbehalf">Remplace {{ task.onBehalfOf }}</p>
+                }
               </div>
               <div class="card-actions">
                 @if (canAct(task)) {

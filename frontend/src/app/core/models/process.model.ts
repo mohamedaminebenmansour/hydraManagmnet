@@ -41,6 +41,9 @@ export interface MyTask {
   currentAssigneeRole?: string;
   totalSteps?: number;
   createdAt?: string;
+  // When the substitute sees a step (main assignee absent/inactive),
+  // this is the main person's full name; null otherwise.
+  onBehalfOf?: string | null;
 }
 
 /** A single step in the timeline */
@@ -173,6 +176,7 @@ export function mapMyTask(raw: any): MyTask {
     currentAssigneeRole: String(raw?.currentAssigneeRole ?? raw?.current_assignee_role ?? ''),
     totalSteps: raw?.totalSteps ?? raw?.total_steps ?? undefined,
     createdAt: String(raw?.createdAt ?? raw?.created_at ?? ''),
+    onBehalfOf: raw?.onBehalfOf ?? raw?.on_behalf_of ?? null,
   };
 }
 
