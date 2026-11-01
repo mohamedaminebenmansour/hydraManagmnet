@@ -196,7 +196,7 @@ public class DevDataSeedRunner implements CommandLineRunner {
                 insert into doc_folder (project_id, parent_id, code, name, sort_order, created_at)
                 select ?, null, code, name, sort_order, now()
                 from doc_folder_template
-                where org_id is null
+                where org_id is null and parent_code is null
                 order by sort_order, code""", projectId);
     }
 

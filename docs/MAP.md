@@ -8,24 +8,26 @@ section (grep the method, then read around it).
 
 | Package | Main files | What it does |
 |---------|-----------|--------------|
-| `project` | `ProjectService` (~670), `ProjectController`, `OuvrageService`, `OuvrageController`, `OuvrageType`, `BordereauService` (~650), `BordereauController`, `BordereauImportService` (~1,075 — read by section) | Chantiers, their ouvrages, bordereau versions. `BordereauImportService.importExcel` imports an Excel bordereau (multi-sheet, warnings, specs, ouvrage suggestion — réservoir by `capacite_m3`, brise-charge by `sous_type`, other types only if exactly one — fourniture ↔ pose pairs saved both ways in `paired_line_id`, one fourniture per pose). The Excel file is kept as ONE document "Bordereau des prix" (ETUDE) in 02_TECH / "Bordereaux et DQE" (created on first import, ACL copied from 02_TECH), one revision per import, via `DocumentService.upload` / `RevisionService.uploadNewRevision`; storage failure cancels the import. `PUT /api/projects/{id}/bordereau/versions/{vid}/lines/ouvrage` = `BordereauService.assignOuvrage` (bulk ouvrage on DRAFT lines) |
+| `project` | `ProjectService` (~670), `ProjectController`, `OuvrageService`, `OuvrageController`, `OuvrageType`, `BordereauService` (~650), `BordereauController`, `BordereauImportService` (~1,075 — read by section) | Chantiers, their ouvrages, bordereau versions. `BordereauImportService.importExcel` imports an Excel bordereau (multi-sheet, warnings, specs, ouvrage suggestion — réservoir by `capacite_m3`, brise-charge by `sous_type`, other types only if exactly one — fourniture ↔ pose pairs saved both ways in `paired_line_id`, one fourniture per pose). The Excel file is kept as ONE document "Bordereau des prix" (ETUDE) in folder `02_TECH.BORDEREAUX` (via `FolderFilingService`), one revision per import, via `DocumentService.upload` / `RevisionService.uploadNewRevision`; storage failure cancels the import. `PUT /api/projects/{id}/bordereau/versions/{vid}/lines/ouvrage` = `BordereauService.assignOuvrage` (bulk ouvrage on DRAFT lines) |
 | `cash` | `CashService` (~2,000), `CashController`, `PaymentFacade`, `PartyService`, `PaymentMode`, `MovementNature` | Caisses, cash movements, parties (fournisseurs, sous-traitants), payment submission. `PaymentFacade.submitPayment` asks `ApprovalRuleService` which rule applies |
 | `process` | `ProcessService` (~3,200, pure JdbcTemplate — never read it whole), `ProcessController`, `ApprovalRuleService` (~210), `RuleMatcher` (~225, pure Java) | Approval engine: templates (= rules with conditions, priority), steps (ANY/ALL, due days), instances, approval desk, my-tasks, per-chantier rules (opt-out), role assignees with substitute, absences |
 | `purchase` | `PurchaseOrderService` (~900), `BonLivraisonService` (~780), `FactureService` (~700) + domain/, repository/ | BC → BL → facture, match overview |
 | `stock` | `StockService` (~1,130), `StockController` + domain/, repository/ | Items, locations, moves, balances, reversals |
-| `document` | service/`DocumentService`, `LocalFileStorage`, `S3FileStorage`, controller/, domain/, dto/ | Documents, revisions, folders, file storage |
-| `security` | `PermissionService`, `FolderAccessService`, `ToxicPairService`, `HydraUserDetailsService`, `SessionRevoker` | Permissions, folder ACL, segregation of duties |
+| `document` | service/`DocumentService`, `FolderFilingService`, `LocalFileStorage`, `S3FileStorage`, controller/, domain/, dto/ | Documents, revisions, folders, file storage. Folders = 2 levels by stable code (`02_TECH`, `02_TECH.BORDEREAUX`); `FolderFilingService.folderFor(projectId, code)` finds or creates a chantier folder from the template |
+| `security` | `PermissionService`, `FolderAccessService`, `ToxicPairService`, `HydraUserDetailsService`, `SessionRevoker` | Permissions, folder ACL (a folder without rows inherits its parent's), segregation of duties |
 | `audit` | `EventLogService`, `AuditService`, `AuditController` | Append-only event log |
 | `ticket` | `TicketService`, `TicketController` | Issue tracking |
 | `user`, `role`, `auth` | `UserService`, `RoleService`, `AuthController` | Users (incl. absence `absent_until`), roles, login |
 | `config` | `SecurityConfig`, `CorsConfig`, `BootstrapRunner`, `DemoDataRunner`, `DevDataSeedRunner` | Security, CORS, seeding |
 | `common`, `exception` | `GlobalExceptionHandler`, `BusinessRuleException` | Errors → HTTP |
 
-Migrations: `backend/src/main/resources/db/migration/`, last on main = **V45__bordereau_version_document.sql**.
-Never edit an existing migration; the next one is V46.
+Migrations: `backend/src/main/resources/db/migration/`, last on main = **V46__folder_tree.sql**.
+Never edit an existing migration; the next one is V47.
 Recent ones: V38 rule columns · V39 FINANCE_ONLY rule · V40 step approvals (ALL mode) ·
 V41 project_member default · V42 role substitute · V43 opt-out seed · V44 absences ·
-V45 bordereau_version.source_document_id / source_revision.
+V45 bordereau_version.source_document_id / source_revision · V46 two-level folder tree
+(doc_folder_template.parent_code, sub-folder codes '<main>.<KEY>', 08_SST, backfill function
+`hydra_backfill_folder_tree()`, unique (project_id, code) when no duplicates).
 
 Key behaviours to remember:
 - A rule is enabled on a chantier unless `project_process_template.enabled = false` (opt-out).
