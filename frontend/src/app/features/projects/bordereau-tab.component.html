@@ -35,6 +35,18 @@
     <app-empty-state icon="pi pi-file-excel"
                      message="Aucune ligne de bordereau. Importez un fichier Excel ou créez une version." />
   } @else {
+    @if (isDraft()) {
+      <div class="bt-ouvrage-bar">
+        <span class="bt-missing" [class.bt-missing-zero]="linesWithoutOuvrage() === 0">
+          <i class="pi pi-sitemap"></i> {{ linesWithoutOuvrage() }} lignes sans ouvrage
+        </span>
+        @if (canWrite()) {
+          <span class="bt-selected">{{ selectedIds().size }} ligne(s) sélectionnée(s)</span>
+          <p-button label="Affecter à…" icon="pi pi-sitemap" [outlined]="true" size="small"
+                    (onClick)="openAssign()" [disabled]="!selectedIds().size" />
+        }
+      </div>
+    }
     @for (group of groupedLines(); track group.section) {
       <div class="bt-group">
         <div class="bt-group-head">
@@ -44,6 +56,13 @@
         <table class="bt-table">
           <thead>
             <tr>
+              @if (isDraft() && canWrite()) {
+                <th class="c-select">
+                  <input type="checkbox" [checked]="allSelected(group)"
+                         (change)="toggleGroup(group, $any($event.target).checked)"
+                         [attr.aria-label]="'Sélectionner toutes les lignes de ' + group.section" />
+                </th>
+              }
               <th class="c-paired"></th>
               <th class="c-no">N°</th>
               <th class="c-desig">Désignation</th>
@@ -51,12 +70,20 @@
               <th class="c-qty">Qté</th>
               <th class="c-pu">PU</th>
               <th class="c-montant">Montant</th>
+              <th class="c-ouvrage">Ouvrage</th>
               <th class="c-warn"></th>
             </tr>
           </thead>
           <tbody>
             @for (l of group.lines; track l.id) {
               <tr>
+                @if (isDraft() && canWrite()) {
+                  <td class="c-select">
+                    <input type="checkbox" [checked]="isSelected(l.id)"
+                           (change)="toggleSelected(l.id, $any($event.target).checked)"
+                           [attr.aria-label]="'Sélectionner la ligne ' + (l.articleNo ?? l.designation)" />
+                  </td>
+                }
                 <td class="c-paired">
                   @if (l.pairedLineId) {
                     <i class="pi pi-link" style="color: #0ea5e9;"
@@ -105,6 +132,17 @@
                   }
                 </td>
                 <td class="c-montant">{{ fmtMoney(montant(l)) }}</td>
+                @if (isDraft()) {
+                  <td class="c-ouvrage">
+                    <p-select [options]="ouvrageOptions()" optionLabel="label" optionValue="id"
+                              [ngModel]="l.ouvrageId ?? null" (ngModelChange)="setLineOuvrage(l, $event)"
+                              [disabled]="!canWrite() || assigning()" placeholder="Aucun"
+                              appendTo="body" styleClass="w100"
+                              [ariaLabel]="'Ouvrage de la ligne ' + (l.articleNo ?? l.designation)" />
+                  </td>
+                } @else {
+                  <td class="c-ouvrage">{{ ouvrageName(l.ouvrageId) }}</td>
+                }
                 <td class="c-warn">
                   @if (l.importWarnings?.length) {
                     <i class="pi pi-exclamation-triangle" style="color: #ea580c;"
@@ -152,6 +190,20 @@
   }
   <ng-template pTemplate="footer">
     <p-button label="OK" icon="pi pi-check" (onClick)="confirmImport()" />
+  </ng-template>
+</p-dialog>
+
+<!-- Bulk ouvrage assignment dialog -->
+<p-dialog [(visible)]="showAssignDialog" [modal]="true" [style]="{ width: '420px' }"
+          header="Affecter un ouvrage" [draggable]="false">
+  <div class="field">
+    <label>Ouvrage pour {{ selectedIds().size }} ligne(s)</label>
+    <p-select [options]="ouvrageOptions()" optionLabel="label" optionValue="id"
+              [(ngModel)]="assignOuvrageId" placeholder="Aucun" appendTo="body" styleClass="w100" />
+  </div>
+  <ng-template pTemplate="footer">
+    <p-button label="Annuler" [text]="true" (onClick)="showAssignDialog = false" />
+    <p-button label="Affecter" icon="pi pi-check" (onClick)="confirmAssign()" [loading]="assigning()" />
   </ng-template>
 </p-dialog>
 

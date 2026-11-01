@@ -14,6 +14,7 @@ import {
   BordereauVersion, BordereauLine, ImportPreview, BordereauDiff, lineMontant
 } from '@app/core/models/bordereau.model';
 import { ProjectService } from '@app/core/services/project.service';
+import { Ouvrage } from '@app/core/models/ouvrage.model';
 import { EmptyStateComponent } from '@app/shared/empty-state.component';
 
 @Component({
@@ -65,6 +66,19 @@ export class BordereauTabComponent implements OnInit {
 
   activeVersion = computed(() => this.versions().find(v => v.status === 'ACTIVE'));
 
+  // Ouvrage assignment (DRAFT only).
+  ouvrages = signal<Ouvrage[]>([]);
+  ouvrageOptions = computed(() => [
+    { id: null as string | null, label: 'Aucun' },
+    ...this.ouvrages().map(o => ({ id: o.id as string | null, label: o.name })),
+  ]);
+  selectedIds = signal<Set<string>>(new Set());
+  showAssignDialog = false;
+  assignOuvrageId: string | null = null;
+  assigning = signal(false);
+  /** Article lines (with a number) that have no ouvrage yet. */
+  linesWithoutOuvrage = computed(() => this.lines().filter(l => !!l.articleNo?.trim() && !l.ouvrageId).length);
+
   // Lines grouped by sectionPath.
   groupedLines = computed(() => {
     const groups: { section: string; lines: BordereauLine[] }[] = [];
@@ -84,7 +98,13 @@ export class BordereauTabComponent implements OnInit {
     return m;
   });
 
-  ngOnInit(): void { this.loadVersions(); }
+  ngOnInit(): void {
+    this.loadVersions();
+    this.projectService.listOuvrages(this.projectId).subscribe({
+      next: list => this.ouvrages.set(list ?? []),
+      error: () => this.ouvrages.set([])
+    });
+  }
 
   loadVersions(): void {
     this.loading.set(true);
@@ -104,6 +124,7 @@ export class BordereauTabComponent implements OnInit {
   selectVersion(versionId: string): void {
     this.selectedVersionId.set(versionId);
     this.cancelEdit();
+    this.selectedIds.set(new Set());
     this.bordereauService.listLines(this.projectId, versionId).subscribe({
       next: list => this.lines.set(list ?? []),
       error: () => this.lines.set([])
@@ -146,6 +167,10 @@ export class BordereauTabComponent implements OnInit {
       next: (updated) => {
         // Update the line in the signal.
         this.lines.update(list => list.map(l => l.id === updated.id ? updated : l));
+        // A new article number can add/remove the duplicate warning on OTHER lines: reload them.
+        if (field === 'articleNo') {
+          this.bordereauService.listLines(this.projectId, versionId).subscribe(list => this.lines.set(list ?? []));
+        }
         // If the warning dot disappeared, show a toast.
         if ((line.importWarnings?.length ?? 0) > 0 && (updated.importWarnings?.length ?? 0) === 0) {
           this.msgs.add({ severity: 'success', summary: 'Avertissement résolu', detail: 'La ligne ne comporte plus d\'avertissement.' });
@@ -187,6 +212,74 @@ export class BordereauTabComponent implements OnInit {
     if (event.key === 'Enter') { event.preventDefault(); this.saveEdit(line, field, 'down'); }
     else if (event.key === 'Tab') { event.preventDefault(); this.saveEdit(line, field, 'tab'); }
     else if (event.key === 'Escape') { event.preventDefault(); this.cancelEdit(); }
+  }
+
+  // ── Ouvrage assignment ──────────────────────────────────────────
+
+  /** Read-only ouvrage name (ACTIVE / ARCHIVED versions); "—" when none. */
+  ouvrageName(ouvrageId: string | null | undefined): string {
+    if (!ouvrageId) return '—';
+    return this.ouvrages().find(o => o.id === ouvrageId)?.name ?? '—';
+  }
+
+  isSelected(lineId: string): boolean { return this.selectedIds().has(lineId); }
+
+  toggleSelected(lineId: string, checked: boolean): void {
+    this.selectedIds.update(s => {
+      const copy = new Set(s);
+      if (checked) copy.add(lineId); else copy.delete(lineId);
+      return copy;
+    });
+  }
+
+  allSelected(group: { lines: BordereauLine[] }): boolean {
+    return group.lines.length > 0 && group.lines.every(l => this.isSelected(l.id));
+  }
+
+  toggleGroup(group: { lines: BordereauLine[] }, checked: boolean): void {
+    this.selectedIds.update(s => {
+      const copy = new Set(s);
+      for (const l of group.lines) { if (checked) copy.add(l.id); else copy.delete(l.id); }
+      return copy;
+    });
+  }
+
+  /** Row dropdown: one line, same bulk endpoint (it also allows "Aucun"). */
+  setLineOuvrage(line: BordereauLine, ouvrageId: string | null): void {
+    this.assign([line.id], ouvrageId);
+  }
+
+  openAssign(): void {
+    this.assignOuvrageId = null;
+    this.showAssignDialog = true;
+  }
+
+  confirmAssign(): void {
+    this.assign([...this.selectedIds()], this.assignOuvrageId, () => {
+      this.showAssignDialog = false;
+      this.selectedIds.set(new Set());
+    });
+  }
+
+  private assign(lineIds: string[], ouvrageId: string | null, done?: () => void): void {
+    const versionId = this.selectedVersionId();
+    if (!versionId || !lineIds.length) return;
+    this.assigning.set(true);
+    this.bordereauService.assignOuvrage(this.projectId, versionId, lineIds, ouvrageId).subscribe({
+      next: updated => {
+        const byId = new Map(updated.map(u => [u.id, u]));
+        this.lines.update(list => list.map(l => byId.get(l.id) ?? l));
+        this.assigning.set(false);
+        if (lineIds.length > 1) {
+          this.msgs.add({ severity: 'success', summary: 'Ouvrage affecté', detail: `${updated.length} ligne(s) mise(s) à jour.` });
+        }
+        done?.();
+      },
+      error: err => {
+        this.assigning.set(false);
+        this.msgs.add({ severity: 'error', summary: 'Erreur', detail: err?.error?.message ?? 'Affectation impossible' });
+      }
+    });
   }
 
   // ── Import ──────────────────────────────────────────────────────

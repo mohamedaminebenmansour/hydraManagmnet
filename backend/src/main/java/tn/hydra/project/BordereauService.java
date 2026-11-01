@@ -12,6 +12,9 @@ import tn.hydra.user.AppUserRepository;
 import java.math.BigDecimal;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Collections;
+import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -249,7 +252,7 @@ public class BordereauService {
                     ouvrage_id = coalesce(?, ouvrage_id),
                     work_nature = coalesce(?, work_nature),
                     paired_line_id = coalesce(?, paired_line_id),
-                    specs = ?::jsonb,
+                    specs = coalesce(?::jsonb, specs),
                     import_warnings = coalesce(?, import_warnings)
                 where id = ? and org_id = ?
                 """,
@@ -260,7 +263,14 @@ public class BordereauService {
                 body.importWarnings(),
                 lineId, me.getOrgId());
 
-        // Re-run warnings for this line (unit normalisation + unknown unit).
+        // §2.4: a new unit_raw gets its normalised unit from the import's function
+        // (null when unknown, which coalesce above cannot write).
+        if (body.unitRaw() != null) {
+            jdbc.update("update bordereau_line set unit = ? where id = ? and org_id = ?",
+                    BordereauImportService.normaliseUnit(body.unitRaw()), lineId, me.getOrgId());
+        }
+
+        // Re-run the warnings this line can be checked for; keep every other one.
         // Re-read the updated line to get the current values.
         List<Map<String, Object>> updatedRows = jdbc.queryForList(
                 "select * from bordereau_line where id = ? and org_id = ?", lineId, me.getOrgId());
@@ -269,31 +279,149 @@ public class BordereauService {
             String updatedUnitRaw = (String) r.get("unit_raw");
             String updatedUnit = (String) r.get("unit");
             String updatedDesignation = (String) r.get("designation");
-            List<String> newWarnings = new ArrayList<>();
-
-            // §6 rule 5: unknown unit.
-            if (updatedUnitRaw != null && !updatedUnitRaw.isBlank() && updatedUnit == null) {
-                newWarnings.add("Unité inconnue : « " + updatedUnitRaw + " ».");
-            }
-            // §6 rule 3: unit but no quantity.
             Object updatedQty = r.get("quantity");
-            if (updatedUnitRaw != null && !updatedUnitRaw.isBlank() && updatedQty == null) {
-                newWarnings.add("Quantité manquante (considérée comme 0).");
+            boolean hasUnit = updatedUnitRaw != null && !updatedUnitRaw.isBlank();
+
+            List<String> newWarnings = new ArrayList<>();
+            boolean nonNumericKept = false;
+            for (String w : toStringArray(r.get("import_warnings"))) {
+                if (w.startsWith(BordereauImportService.UNKNOWN_UNIT_PREFIX)
+                        || w.equals(BordereauImportService.MISSING_QUANTITY_WARNING)) continue;
+                if (w.startsWith(BordereauImportService.NON_NUMERIC_QUANTITY_PREFIX)) {
+                    // The raw text is not stored: the warning stays until a quantity is entered.
+                    if (updatedQty != null) continue;
+                    nonNumericKept = true;
+                }
+                newWarnings.add(w); // pairing, section title, duplicate (rechecked below)…
             }
-            // §7.3: re-extract specs from the updated designation.
+            // §6 rule 5: unknown unit.
+            if (hasUnit && updatedUnit == null) {
+                newWarnings.add(BordereauImportService.unknownUnitWarning(updatedUnitRaw));
+            }
+            // §6 rule 3: unit but no quantity (not when the quantity was non-numeric).
+            if (hasUnit && updatedQty == null && !nonNumericKept) {
+                newWarnings.add(BordereauImportService.MISSING_QUANTITY_WARNING);
+            }
+            // §7.3: re-extract specs from the designation and merge them into the stored
+            // specs; keys the designation does not mention (e.g. capacite_m3 from the
+            // section title) are kept.
             Map<String, Object> newSpecs = BordereauImportService.extractSpecs(updatedDesignation);
             if (!newSpecs.isEmpty()) {
+                Map<String, Object> merged = new LinkedHashMap<>(toResponseSpecs(r.get("specs")));
+                merged.putAll(newSpecs);
                 jdbc.update("update bordereau_line set specs = ?::jsonb where id = ? and org_id = ?",
-                        mapToJson(newSpecs), lineId, me.getOrgId());
+                        mapToJson(merged), lineId, me.getOrgId());
             }
             // Save the re-run warnings.
             jdbc.update("update bordereau_line set import_warnings = ? where id = ? and org_id = ?",
                     newWarnings.toArray(new String[0]), lineId, me.getOrgId());
         }
 
+        // §6 rule 4: re-check duplicate article_no in every section of this version
+        // (the edited line may have joined or left a duplicate group).
+        recheckDuplicates(versionId, me.getOrgId());
+
         audit.log("BORDEREAU_LINE_UPDATED", "bordereau_line", lineId,
                 "{\"versionId\":\"" + versionId + "\"}");
         return getLineResponse(lineId, me.getOrgId());
+    }
+
+    /**
+     * Recompute the duplicate-number warning for every line of the version: a line
+     * whose (section, article_no) is shared gets it, others lose it. Only lines whose
+     * warnings change are updated. Other warnings are kept as they are.
+     */
+    private void recheckDuplicates(UUID versionId, UUID orgId) {
+        List<Map<String, Object>> rows = jdbc.queryForList("""
+                select id, section_path, article_no, import_warnings from bordereau_line
+                where version_id = ? and org_id = ?
+                """, versionId, orgId);
+        Map<String, Integer> countByKey = new HashMap<>();
+        Map<UUID, String> keyById = new HashMap<>();
+        for (Map<String, Object> r : rows) {
+            String articleNo = (String) r.get("article_no");
+            if (articleNo == null || articleNo.isBlank()) continue;
+            String key = BordereauImportService.sectionKey(Arrays.asList(toStringArray(r.get("section_path"))))
+                    + "|" + articleNo.trim();
+            keyById.put((UUID) r.get("id"), key);
+            countByKey.merge(key, 1, Integer::sum);
+        }
+        for (Map<String, Object> r : rows) {
+            UUID id = (UUID) r.get("id");
+            List<String> current = Arrays.asList(toStringArray(r.get("import_warnings")));
+            List<String> updated = new ArrayList<>();
+            for (String w : current) {
+                if (!w.startsWith(BordereauImportService.DUPLICATE_WARNING_PREFIX)) updated.add(w);
+            }
+            String key = keyById.get(id);
+            if (key != null && countByKey.get(key) > 1) {
+                updated.add(BordereauImportService.duplicateWarning(((String) r.get("article_no")).trim()));
+            }
+            if (!updated.equals(current)) {
+                jdbc.update("update bordereau_line set import_warnings = ? where id = ? and org_id = ?",
+                        updated.toArray(new String[0]), id, orgId);
+            }
+        }
+    }
+
+    private static String[] toStringArray(Object sqlArray) {
+        if (!(sqlArray instanceof java.sql.Array arr)) return new String[0];
+        try { return (String[]) arr.getArray(); } catch (Exception e) { return new String[0]; }
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // 5b. BULK OUVRAGE ASSIGNMENT (only while DRAFT)
+    // ═══════════════════════════════════════════════════════════════
+
+    public record AssignOuvrageRequest(List<UUID> lineIds, UUID ouvrageId) {}
+
+    /**
+     * Set one ouvrage (or none, ouvrageId null) on a list of lines of the same DRAFT
+     * version, in one transaction. Every line id must belong to this version and org,
+     * and the ouvrage to this chantier; otherwise nothing is changed. Returns the lines.
+     */
+    @Transactional
+    public List<LineResponse> assignOuvrage(Authentication auth, UUID projectId, UUID versionId,
+                                            AssignOuvrageRequest body) {
+        AppUser me = users.findByEmail(auth.getName()).orElseThrow();
+        projects.requireManageableForOuvrage(auth, me, projectId);
+        assertVersionInProject(versionId, projectId, me.getOrgId());
+        if (!"DRAFT".equals(getVersionStatus(versionId, me.getOrgId())))
+            throw new BusinessRuleException("VERSION_NOT_DRAFT",
+                    "Les lignes ne peuvent être modifiées que sur une version en brouillon.");
+        if (body == null || body.lineIds() == null || body.lineIds().isEmpty())
+            throw new BusinessRuleException("LINES_REQUIRED", "Sélectionnez au moins une ligne.");
+
+        if (body.ouvrageId() != null) {
+            Integer cnt = jdbc.queryForObject(
+                    "select count(*) from ouvrage where id = ? and org_id = ? and project_id = ?",
+                    Integer.class, body.ouvrageId(), me.getOrgId(), projectId);
+            if (cnt == null || cnt == 0)
+                throw new BusinessRuleException("OUVRAGE_NOT_FOUND", "Ouvrage introuvable sur ce chantier.");
+        }
+
+        List<UUID> ids = body.lineIds().stream().distinct().toList();
+        String placeholders = String.join(",", Collections.nCopies(ids.size(), "?"));
+        List<Object> args = new ArrayList<>(ids);
+        args.add(versionId);
+        args.add(me.getOrgId());
+        Integer found = jdbc.queryForObject(
+                "select count(*) from bordereau_line where id in (" + placeholders + ") and version_id = ? and org_id = ?",
+                Integer.class, args.toArray());
+        if (found == null || found != ids.size())
+            throw new BusinessRuleException("LINE_NOT_FOUND",
+                    "Certaines lignes n'appartiennent pas à cette version.");
+
+        List<Object> updateArgs = new ArrayList<>();
+        updateArgs.add(body.ouvrageId());
+        updateArgs.addAll(args);
+        jdbc.update("update bordereau_line set ouvrage_id = ? where id in (" + placeholders + ") and version_id = ? and org_id = ?",
+                updateArgs.toArray());
+
+        audit.log("BORDEREAU_LINES_OUVRAGE_ASSIGNED", "bordereau_version", versionId,
+                "{\"lines\":" + ids.size() + ",\"ouvrageId\":"
+                        + (body.ouvrageId() != null ? "\"" + body.ouvrageId() + "\"" : "null") + "}");
+        return ids.stream().map(id -> getLineResponse(id, me.getOrgId())).toList();
     }
 
     // ═══════════════════════════════════════════════════════════════
@@ -461,12 +589,7 @@ public class BordereauService {
         try { warnings = warningsArr != null ? (String[]) warningsArr.getArray() : new String[0]; }
         catch (Exception e) { warnings = new String[0]; }
 
-        String specsStr = row.get("specs") != null ? row.get("specs").toString() : "{}";
-        Map<String, Object> specs;
-        try {
-            tools.jackson.databind.ObjectMapper m = new tools.jackson.databind.ObjectMapper();
-            specs = m.readValue(specsStr, Map.class);
-        } catch (Exception e) { specs = Map.of(); }
+        Map<String, Object> specs = toResponseSpecs(row.get("specs"));
 
         return new LineResponse(
                 (UUID) row.get("id"), (UUID) row.get("version_id"),
@@ -498,6 +621,16 @@ public class BordereauService {
         if (v instanceof Instant i) return i;
         if (v instanceof java.sql.Timestamp ts) return ts.toInstant();
         return null;
+    }
+
+    /** jsonb specs column → Map ({} when absent or invalid). */
+    @SuppressWarnings("unchecked")
+    private static Map<String, Object> toResponseSpecs(Object specsColumn) {
+        String specsStr = specsColumn != null ? specsColumn.toString() : "{}";
+        try {
+            tools.jackson.databind.ObjectMapper m = new tools.jackson.databind.ObjectMapper();
+            return m.readValue(specsStr, Map.class);
+        } catch (Exception e) { return Map.of(); }
     }
 
     private String mapToJson(Map<String, Object> map) {
