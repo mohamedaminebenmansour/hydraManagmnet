@@ -95,6 +95,17 @@ public class BordereauController {
         return bordereau.updateLine(auth, projectId, versionId, lineId, body);
     }
 
+    /** PUT /api/projects/{projectId}/bordereau/versions/{versionId}/lines/ouvrage —
+     *  set one ouvrage (or none) on several lines of a DRAFT version, in one transaction. */
+    @PutMapping("/versions/{versionId}/lines/ouvrage")
+    @PreAuthorize("hasAuthority('PERM_PROJECT_WRITE')")
+    public List<BordereauService.LineResponse> assignOuvrage(@PathVariable UUID projectId,
+                                                             @PathVariable UUID versionId,
+                                                             @RequestBody BordereauService.AssignOuvrageRequest body,
+                                                             Authentication auth) {
+        return bordereau.assignOuvrage(auth, projectId, versionId, body);
+    }
+
     // ── COMPARE ────────────────────────────────────────────────────
 
     /** GET /api/projects/{projectId}/bordereau/compare?old={oldId}&new={newId} —

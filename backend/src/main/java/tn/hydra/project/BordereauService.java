@@ -12,6 +12,9 @@ import tn.hydra.user.AppUserRepository;
 import java.math.BigDecimal;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Collections;
+import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -291,9 +294,111 @@ public class BordereauService {
                     newWarnings.toArray(new String[0]), lineId, me.getOrgId());
         }
 
+        // §6 rule 4: re-check duplicate article_no in every section of this version
+        // (the edited line may have joined or left a duplicate group).
+        recheckDuplicates(versionId, me.getOrgId());
+
         audit.log("BORDEREAU_LINE_UPDATED", "bordereau_line", lineId,
                 "{\"versionId\":\"" + versionId + "\"}");
         return getLineResponse(lineId, me.getOrgId());
+    }
+
+    /**
+     * Recompute the duplicate-number warning for every line of the version: a line
+     * whose (section, article_no) is shared gets it, others lose it. Only lines whose
+     * warnings change are updated. Other warnings are kept as they are.
+     */
+    private void recheckDuplicates(UUID versionId, UUID orgId) {
+        List<Map<String, Object>> rows = jdbc.queryForList("""
+                select id, section_path, article_no, import_warnings from bordereau_line
+                where version_id = ? and org_id = ?
+                """, versionId, orgId);
+        Map<String, Integer> countByKey = new HashMap<>();
+        Map<UUID, String> keyById = new HashMap<>();
+        for (Map<String, Object> r : rows) {
+            String articleNo = (String) r.get("article_no");
+            if (articleNo == null || articleNo.isBlank()) continue;
+            String key = BordereauImportService.sectionKey(Arrays.asList(toStringArray(r.get("section_path"))))
+                    + "|" + articleNo.trim();
+            keyById.put((UUID) r.get("id"), key);
+            countByKey.merge(key, 1, Integer::sum);
+        }
+        for (Map<String, Object> r : rows) {
+            UUID id = (UUID) r.get("id");
+            List<String> current = Arrays.asList(toStringArray(r.get("import_warnings")));
+            List<String> updated = new ArrayList<>();
+            for (String w : current) {
+                if (!w.startsWith(BordereauImportService.DUPLICATE_WARNING_PREFIX)) updated.add(w);
+            }
+            String key = keyById.get(id);
+            if (key != null && countByKey.get(key) > 1) {
+                updated.add(BordereauImportService.duplicateWarning(((String) r.get("article_no")).trim()));
+            }
+            if (!updated.equals(current)) {
+                jdbc.update("update bordereau_line set import_warnings = ? where id = ? and org_id = ?",
+                        updated.toArray(new String[0]), id, orgId);
+            }
+        }
+    }
+
+    private static String[] toStringArray(Object sqlArray) {
+        if (!(sqlArray instanceof java.sql.Array arr)) return new String[0];
+        try { return (String[]) arr.getArray(); } catch (Exception e) { return new String[0]; }
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // 5b. BULK OUVRAGE ASSIGNMENT (only while DRAFT)
+    // ═══════════════════════════════════════════════════════════════
+
+    public record AssignOuvrageRequest(List<UUID> lineIds, UUID ouvrageId) {}
+
+    /**
+     * Set one ouvrage (or none, ouvrageId null) on a list of lines of the same DRAFT
+     * version, in one transaction. Every line id must belong to this version and org,
+     * and the ouvrage to this chantier; otherwise nothing is changed. Returns the lines.
+     */
+    @Transactional
+    public List<LineResponse> assignOuvrage(Authentication auth, UUID projectId, UUID versionId,
+                                            AssignOuvrageRequest body) {
+        AppUser me = users.findByEmail(auth.getName()).orElseThrow();
+        projects.requireManageableForOuvrage(auth, me, projectId);
+        assertVersionInProject(versionId, projectId, me.getOrgId());
+        if (!"DRAFT".equals(getVersionStatus(versionId, me.getOrgId())))
+            throw new BusinessRuleException("VERSION_NOT_DRAFT",
+                    "Les lignes ne peuvent être modifiées que sur une version en brouillon.");
+        if (body == null || body.lineIds() == null || body.lineIds().isEmpty())
+            throw new BusinessRuleException("LINES_REQUIRED", "Sélectionnez au moins une ligne.");
+
+        if (body.ouvrageId() != null) {
+            Integer cnt = jdbc.queryForObject(
+                    "select count(*) from ouvrage where id = ? and org_id = ? and project_id = ?",
+                    Integer.class, body.ouvrageId(), me.getOrgId(), projectId);
+            if (cnt == null || cnt == 0)
+                throw new BusinessRuleException("OUVRAGE_NOT_FOUND", "Ouvrage introuvable sur ce chantier.");
+        }
+
+        List<UUID> ids = body.lineIds().stream().distinct().toList();
+        String placeholders = String.join(",", Collections.nCopies(ids.size(), "?"));
+        List<Object> args = new ArrayList<>(ids);
+        args.add(versionId);
+        args.add(me.getOrgId());
+        Integer found = jdbc.queryForObject(
+                "select count(*) from bordereau_line where id in (" + placeholders + ") and version_id = ? and org_id = ?",
+                Integer.class, args.toArray());
+        if (found == null || found != ids.size())
+            throw new BusinessRuleException("LINE_NOT_FOUND",
+                    "Certaines lignes n'appartiennent pas à cette version.");
+
+        List<Object> updateArgs = new ArrayList<>();
+        updateArgs.add(body.ouvrageId());
+        updateArgs.addAll(args);
+        jdbc.update("update bordereau_line set ouvrage_id = ? where id in (" + placeholders + ") and version_id = ? and org_id = ?",
+                updateArgs.toArray());
+
+        audit.log("BORDEREAU_LINES_OUVRAGE_ASSIGNED", "bordereau_version", versionId,
+                "{\"lines\":" + ids.size() + ",\"ouvrageId\":"
+                        + (body.ouvrageId() != null ? "\"" + body.ouvrageId() + "\"" : "null") + "}");
+        return ids.stream().map(id -> getLineResponse(id, me.getOrgId())).toList();
     }
 
     // ═══════════════════════════════════════════════════════════════

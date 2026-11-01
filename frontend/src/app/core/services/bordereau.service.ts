@@ -35,6 +35,12 @@ export class BordereauService {
     return this.http.put<any>(`/api/projects/${projectId}/bordereau/versions/${versionId}/lines/${lineId}`, body).pipe(map(mapLine));
   }
 
+  /** Set one ouvrage (or none) on several lines of a DRAFT version, in one call. */
+  assignOuvrage(projectId: string, versionId: string, lineIds: string[], ouvrageId: string | null): Observable<BordereauLine[]> {
+    return this.http.put<any[]>(`/api/projects/${projectId}/bordereau/versions/${versionId}/lines/ouvrage`,
+      { lineIds, ouvrageId }).pipe(map(list => (list ?? []).map(mapLine)));
+  }
+
   importExcel(projectId: string, file: File): Observable<ImportPreview> {
     const form = new FormData();
     form.append('file', file, file.name);

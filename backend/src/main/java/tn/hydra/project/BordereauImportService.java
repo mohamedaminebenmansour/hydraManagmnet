@@ -10,6 +10,7 @@ import tn.hydra.audit.EventLogService;
 import tn.hydra.common.BusinessRuleException;
 import tn.hydra.user.AppUser;
 import tn.hydra.user.AppUserRepository;
+import tools.jackson.databind.ObjectMapper;
 
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
@@ -142,7 +143,7 @@ public class BordereauImportService {
                 if (row.articleNo() != null && !row.articleNo().isBlank()) {
                     String articleKey = sectionKey(row.sectionPath()) + "|" + row.articleNo().trim();
                     if (seenArticleKeys.contains(articleKey)) {
-                        warnings.add("Numéro d'article dupliqué dans cette section : « " + row.articleNo() + " ».");
+                        warnings.add(duplicateWarning(row.articleNo()));
                         // Also add the warning to the first occurrence (already in result).
                         for (int ri = result.size() - 1; ri >= 0; ri--) {
                             AnalysedLine prev = result.get(ri);
@@ -151,7 +152,7 @@ public class BordereauImportService {
                                     && sectionKey(prev.row().sectionPath()).equals(sectionKey(row.sectionPath()))) {
                                 // Rebuild the prev AnalysedLine with the warning added.
                                 List<String> prevWarnings = new ArrayList<>(prev.warnings());
-                                prevWarnings.add("Numéro d'article dupliqué dans cette section : « " + row.articleNo() + " ».");
+                                prevWarnings.add(duplicateWarning(row.articleNo()));
                                 result.set(ri, new AnalysedLine(prev.row(), prev.normalisedUnit(), prev.specs(),
                                         prev.suggestion(), prev.workNature(), prevWarnings, prev.montant(),
                                         prev.pairedLineId(), prev.sortOrder(), prev.lineId()));
@@ -186,15 +187,33 @@ public class BordereauImportService {
             }
         }
 
-        // §2.2: fourniture/pose pairing — second pass. Each side gets the other's lineId.
-        for (Pair p : pairLines(result)) {
-            AnalysedLine f = result.get(p.fournitureIndex());
-            AnalysedLine po = result.get(p.poseIndex());
-            result.set(p.fournitureIndex(), withPairedLineId(f, po.lineId()));
-            result.set(p.poseIndex(), withPairedLineId(po, f.lineId()));
-        }
+        // §2.2: fourniture/pose pairing — second pass.
+        applyPairing(result);
 
         return result;
+    }
+
+    /**
+     * Run {@link #pairLines} on the list and write the result into it: each side of a
+     * pair gets the other's lineId; unpaired fournitures get their warning.
+     * Package-private so the test can call it directly.
+     */
+    static void applyPairing(List<AnalysedLine> lines) {
+        Map<Integer, List<String>> pairWarnings = new HashMap<>();
+        List<Pair> pairs = pairLines(lines, pairWarnings);
+        pairWarnings.forEach((i, w) -> {
+            AnalysedLine al = lines.get(i);
+            List<String> warnings = new ArrayList<>(al.warnings());
+            warnings.addAll(w);
+            lines.set(i, new AnalysedLine(al.row(), al.normalisedUnit(), al.specs(), al.suggestion(),
+                    al.workNature(), warnings, al.montant(), al.pairedLineId(), al.sortOrder(), al.lineId()));
+        });
+        for (Pair p : pairs) {
+            AnalysedLine f = lines.get(p.fournitureIndex());
+            AnalysedLine po = lines.get(p.poseIndex());
+            lines.set(p.fournitureIndex(), withPairedLineId(f, po.lineId()));
+            lines.set(p.poseIndex(), withPairedLineId(po, f.lineId()));
+        }
     }
 
     /** A fourniture ↔ pose pair, as indexes into the analysed line list. */
@@ -207,14 +226,25 @@ public class BordereauImportService {
 
     /**
      * Link fourniture lines to pose lines by matching materiau + de_mm + pn_bar.
-     * A link is created only when exactly one pose line matches. If 0 or 2+
-     * match, no link is created and a warning is added to the fourniture line.
+     * A link is created only when exactly one pose line matches and that pose is
+     * not already linked (a pose has at most one fourniture; fournitures are
+     * taken in file order). No match → no link, no warning.
      *
-     * <p>Returns the pairs (each pair once); pairCount = the list size.
-     * Package-private so the test can call it directly.
+     * <p>Returns the pairs (each pair once); pairCount = the list size. Does not
+     * modify {@code lines}. Package-private so the test can call it directly.
      */
     static List<Pair> pairLines(List<AnalysedLine> lines) {
+        return pairLines(lines, new HashMap<>());
+    }
+
+    /**
+     * Same as {@link #pairLines(List)}; also fills {@code warningsByIndex} with the
+     * warnings for fourniture lines left unpaired: 2+ matching poses, or the only
+     * matching pose already taken by an earlier fourniture.
+     */
+    static List<Pair> pairLines(List<AnalysedLine> lines, Map<Integer, List<String>> warningsByIndex) {
         List<Pair> pairs = new ArrayList<>();
+        Set<Integer> takenPoses = new HashSet<>();
 
         for (int fi = 0; fi < lines.size(); fi++) {
             AnalysedLine fourniture = lines.get(fi);
@@ -244,7 +274,17 @@ public class BordereauImportService {
             }
 
             if (matchIndices.size() == 1) {
-                pairs.add(new Pair(fi, matchIndices.get(0)));
+                int pi = matchIndices.get(0);
+                if (takenPoses.add(pi)) {
+                    pairs.add(new Pair(fi, pi));
+                } else {
+                    String poseArticle = lines.get(pi).row().articleNo().trim();
+                    warningsByIndex.computeIfAbsent(fi, k -> new ArrayList<>())
+                            .add("Plusieurs fournitures correspondent à la même pose : « " + poseArticle + " ».");
+                }
+            } else if (matchIndices.size() >= 2) {
+                warningsByIndex.computeIfAbsent(fi, k -> new ArrayList<>())
+                        .add("Plusieurs poses possibles, aucun lien créé.");
             }
         }
 
@@ -693,9 +733,10 @@ public class BordereauImportService {
         String desigLower = row.designation != null ? row.designation.toLowerCase() : "";
         String combined = sectionLower + " " + desigLower;
 
+        // "brise" also catches "brises charge" (plural in Lot 2 titles).
+        if (combined.contains("brise")) return findBriseCharge(ouvrages);
         if (combined.contains("réservoir") || combined.contains("reservoir")
-                || combined.contains("brise charge") || combined.contains("brise-charge")
-                || combined.contains("bâche")) return findOuvrageByType(ouvrages, "RESERVOIR");
+                || combined.contains("bâche")) return findReservoirByCapacity(row, ouvrages);
         if (combined.contains("station") || combined.contains("pompage") || combined.contains("reprise")
                 || combined.contains("local gic") || combined.contains("hydromécanique")
                 || combined.contains("solaire") || combined.contains("photovoltaïque"))
@@ -711,17 +752,63 @@ public class BordereauImportService {
             return findOuvrageByType(ouvrages, "BRANCHEMENTS");
         if (combined.contains("regard") || combined.contains("ventouse") || combined.contains("vidange")
                 || combined.contains("sectionnement") || combined.contains("piquage")) {
-            OuvrageSuggestion annex = findOuvrageByType(ouvrages, "OUVRAGE_ANNEXE");
-            return annex.ouvrageId != null ? annex : findOuvrageByType(ouvrages, "CONDUITE");
+            boolean hasAnnex = ouvrages.stream().anyMatch(o -> "OUVRAGE_ANNEXE".equals(o.get("type")));
+            return hasAnnex ? findOuvrageByType(ouvrages, "OUVRAGE_ANNEXE") : findOuvrageByType(ouvrages, "CONDUITE");
         }
         return new OuvrageSuggestion(null, null);
     }
 
+    /** Only when exactly one ouvrage of that type exists in the chantier; otherwise null. Never guess. */
     private static OuvrageSuggestion findOuvrageByType(List<Map<String, Object>> ouvrages, String type) {
-        for (Map<String, Object> o : ouvrages) {
-            if (type.equals(o.get("type"))) return new OuvrageSuggestion((UUID) o.get("id"), type);
+        List<Map<String, Object>> ofType = ouvrages.stream().filter(o -> type.equals(o.get("type"))).toList();
+        return new OuvrageSuggestion(ofType.size() == 1 ? (UUID) ofType.get(0).get("id") : null, type);
+    }
+
+    /** Brise-charge: only an ouvrage with characteristics.sous_type = BRISE_CHARGE (exactly one). */
+    private static OuvrageSuggestion findBriseCharge(List<Map<String, Object>> ouvrages) {
+        List<Map<String, Object>> found = ouvrages.stream()
+                .filter(o -> "RESERVOIR".equals(o.get("type")) && "BRISE_CHARGE".equals(characteristics(o).get("sous_type")))
+                .toList();
+        return new OuvrageSuggestion(found.size() == 1 ? (UUID) found.get(0).get("id") : null, "RESERVOIR");
+    }
+
+    /**
+     * Réservoir: capacity (m³) read from the section title (deepest level first),
+     * else from the designation; the one RESERVOIR (not BRISE_CHARGE) whose
+     * characteristics.capacite_m3 equals it. No capacity, or 0 / 2+ matches → null.
+     */
+    private static OuvrageSuggestion findReservoirByCapacity(ParsedRow row, List<Map<String, Object>> ouvrages) {
+        Object capacity = null;
+        for (int i = row.sectionPath().size() - 1; i >= 0 && capacity == null; i--) {
+            capacity = extractSpecs(row.sectionPath().get(i)).get("capacite_m3");
         }
-        return new OuvrageSuggestion(null, type);
+        if (capacity == null) capacity = extractSpecs(row.designation()).get("capacite_m3");
+        if (capacity == null) return new OuvrageSuggestion(null, "RESERVOIR");
+
+        BigDecimal wanted = new BigDecimal(String.valueOf(capacity));
+        List<Map<String, Object>> found = new ArrayList<>();
+        for (Map<String, Object> o : ouvrages) {
+            if (!"RESERVOIR".equals(o.get("type"))) continue;
+            Map<String, Object> ch = characteristics(o);
+            if ("BRISE_CHARGE".equals(ch.get("sous_type")) || ch.get("capacite_m3") == null) continue;
+            try {
+                if (new BigDecimal(String.valueOf(ch.get("capacite_m3"))).compareTo(wanted) == 0) found.add(o);
+            } catch (NumberFormatException ignored) {}
+        }
+        return new OuvrageSuggestion(found.size() == 1 ? (UUID) found.get(0).get("id") : null, "RESERVOIR");
+    }
+
+    private static final ObjectMapper JSON = new ObjectMapper();
+
+    /** ouvrage.characteristics: a Map (tests) or the jsonb text from the DB; {} if absent/invalid. */
+    @SuppressWarnings("unchecked")
+    private static Map<String, Object> characteristics(Map<String, Object> ouvrage) {
+        Object ch = ouvrage.get("characteristics");
+        if (ch instanceof Map<?, ?> m) return (Map<String, Object>) m;
+        if (ch instanceof String s && !s.isBlank()) {
+            try { return JSON.readValue(s, Map.class); } catch (RuntimeException ignored) {}
+        }
+        return Map.of();
     }
 
     // ═══════════════════════════════════════════════════════════════
@@ -794,8 +881,16 @@ public class BordereauImportService {
     // HELPERS
     // ═══════════════════════════════════════════════════════════════
 
-    private static String sectionKey(List<String> sectionPath) {
+    /** Key of a section (same rule at import and on edit). */
+    static String sectionKey(List<String> sectionPath) {
         return String.join("/", sectionPath);
+    }
+
+    static final String DUPLICATE_WARNING_PREFIX = "Numéro d'article dupliqué dans cette section";
+
+    /** §6 rule 4 warning text (same at import and on edit). */
+    static String duplicateWarning(String articleNo) {
+        return DUPLICATE_WARNING_PREFIX + " : « " + articleNo + " ».";
     }
 
     private static String specsToJson(Map<String, Object> specs) {
@@ -815,31 +910,4 @@ public class BordereauImportService {
     record ParsedRow(List<String> sectionPath, String articleNo, String designation,
                   String unitRaw, String quantityRaw,
                   BigDecimal quantity, BigDecimal unitPrice, boolean quantityParseFailed) {}
-
-    /** A line that has been inserted into the DB — carries the lineId for pairing. */
-    static class InsertedLine {
-        final UUID lineId;
-        final ParsedRow row;
-        final String normalisedUnit;
-        final Map<String, Object> specs;
-        final OuvrageSuggestion suggestion;
-        final String workNature;
-        final List<String> warnings;
-        final BigDecimal montant;
-        UUID pairedLineId;
-        final int sortOrder;
-
-        InsertedLine(UUID lineId, ParsedRow row, String normalisedUnit, Map<String, Object> specs,
-                     OuvrageSuggestion suggestion, String workNature, List<String> warnings, BigDecimal montant) {
-            this.lineId = lineId;
-            this.row = row;
-            this.normalisedUnit = normalisedUnit;
-            this.specs = specs;
-            this.suggestion = suggestion;
-            this.workNature = workNature;
-            this.warnings = warnings;
-            this.montant = montant;
-            this.sortOrder = 0;
-        }
-    }
 }

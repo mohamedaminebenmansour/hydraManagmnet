@@ -35,7 +35,17 @@
   .c-unit { width: 70px; color: #64748b; }
   .c-qty, .c-pu, .c-montant { width: 90px; text-align: right; font-variant-numeric: tabular-nums; }
   .c-warn { width: 28px; text-align: center; }
+  .c-select { width: 28px; text-align: center; }
+  .c-ouvrage { width: 200px; }
 }
+
+// Ouvrage assignment bar (DRAFT)
+.bt-ouvrage-bar { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 12px; }
+.bt-missing {
+  display: inline-flex; align-items: center; gap: 6px; font-weight: 600; color: #b45309;
+  &.bt-missing-zero { color: #16a34a; }
+}
+.bt-selected { font-size: 12px; color: #64748b; margin-left: auto; }
 
 // Inline editing
 .bt-cell {
