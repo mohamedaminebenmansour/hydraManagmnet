@@ -15,12 +15,19 @@ import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.web.authentication.www.BasicAuthenticationFilter;
 import org.springframework.security.web.csrf.CookieCsrfTokenRepository;
 import org.springframework.security.web.csrf.CsrfTokenRequestAttributeHandler;
+import org.springframework.web.cors.CorsConfigurationSource;
 import tn.hydra.security.HydraUserDetailsService;
 
 @Configuration
 @EnableWebSecurity
 @EnableMethodSecurity
 public class SecurityConfig {
+
+    private final CorsConfigurationSource corsConfigurationSource;
+
+    public SecurityConfig(CorsConfigurationSource corsConfigurationSource) {
+        this.corsConfigurationSource = corsConfigurationSource;
+    }
 
     @Bean
     SecurityFilterChain filterChain(HttpSecurity http) throws Exception {
@@ -36,15 +43,8 @@ public class SecurityConfig {
                     .requestMatchers("/error").permitAll()
                     .requestMatchers("/health").permitAll()
                     .anyRequest().authenticated())
-            .cors(cors -> cors.configurationSource(request -> {
-                var c = new org.springframework.web.cors.CorsConfiguration();
-                c.addAllowedOriginPattern("*");
-                c.addAllowedHeader("*");
-                c.addAllowedMethod("*");
-                c.setAllowCredentials(true);
-                c.addExposedHeader("XSRF-TOKEN");
-                return c;
-            }))
+            // Allowed origins from HYDRA_ALLOWED_ORIGINS (CorsConfig.corsConfigurationSource).
+            .cors(cors -> cors.configurationSource(corsConfigurationSource))
             .formLogin(f -> f.disable())
             .httpBasic(b -> b.disable())
             .logout(l -> l.disable())
