@@ -1,5 +1,7 @@
 package tn.hydra.purchase;
 
+import tn.hydra.event.DomainEventService;
+import tn.hydra.event.EventType;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.GrantedAuthority;
@@ -56,10 +58,14 @@ public class PurchaseOrderService {
     private final PurchaseOrderLineRepository lines;
     private final StockItemRepository items;
 
+    private final DomainEventService domainEvents;
+
     public PurchaseOrderService(JdbcTemplate jdbc, AppUserRepository users, EventLogService audit,
                                 PurchaseOrderRepository pos,
                                 PurchaseOrderLineRepository lines,
-                                StockItemRepository items) {
+                                StockItemRepository items,
+            DomainEventService domainEvents) {
+        this.domainEvents = domainEvents;
         this.jdbc = jdbc;
         this.users = users;
         this.audit = audit;
@@ -177,6 +183,10 @@ public class PurchaseOrderService {
                 + ",\"supplierPartyId\":" + (po.getSupplierPartyId() == null ? "null" : "\"" + po.getSupplierPartyId() + "\"")
                 + ",\"lineCount\":" + lineResps.size()
                 + "}");
+
+        domainEvents.publish(me.getOrgId(), EventType.PURCHASE_ORDER_CREATED, "purchase_order", po.getId(),
+                req.projectId(), DomainEventService.payload("purchaseOrderId", po.getId(),
+                        "supplierPartyId", po.getSupplierPartyId(), "lineCount", lineResps.size()));
 
         return toBcResponse(po, projectName, supplierName, lineResps, lineResps.size());
     }

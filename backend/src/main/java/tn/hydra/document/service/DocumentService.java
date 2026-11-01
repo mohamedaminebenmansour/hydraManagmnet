@@ -1,4 +1,7 @@
 package tn.hydra.document.service;
+import org.springframework.beans.factory.annotation.Autowired;
+import tn.hydra.event.DomainEventService;
+import tn.hydra.event.EventType;
 import org.hibernate.Hibernate;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -71,6 +74,11 @@ public class DocumentService {
 
     @PersistenceContext
     private EntityManager em;
+
+    /** Field-injected (constructor unchanged for the unit tests that build this service by hand);
+     *  null only there, so no event is published in those tests. */
+    @Autowired(required = false)
+    private DomainEventService domainEvents;
 
     private static final Set<String> ALLOWED_EXTENSIONS = Set.of(
             "pdf", "doc", "docx", "xls", "xlsx", "ppt", "pptx", "rtf",
@@ -203,6 +211,12 @@ public class DocumentService {
 
         audit.log("DOCUMENT_UPLOADED", "document", doc.getId(),
                 "{\"reference\":\"" + esc(doc.getReference()) + "\",\"rev\":\"" + revLabel + "\"}");
+        if (domainEvents != null) {
+            domainEvents.publish(me.getOrgId(), EventType.DOCUMENT_UPLOADED, "document", doc.getId(),
+                    folder.getProject().getId(), DomainEventService.payload("documentId", doc.getId(),
+                            "revisionId", revId, "revLabel", revLabel, "folderId", folder.getId(),
+                            "docType", docType));
+        }
         return toResponse(doc);
     }
 

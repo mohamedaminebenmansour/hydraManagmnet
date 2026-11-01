@@ -1,5 +1,7 @@
 package tn.hydra.purchase;
 
+import tn.hydra.event.DomainEventService;
+import tn.hydra.event.EventType;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.GrantedAuthority;
@@ -67,11 +69,15 @@ public class BonLivraisonService {
     private final StockLocationRepository locations;
     private final StockService stockService;
 
+    private final DomainEventService domainEvents;
+
     public BonLivraisonService(JdbcTemplate jdbc, AppUserRepository users, EventLogService audit,
                                 BonLivraisonRepository bls, BonLivraisonLineRepository blLines,
                                 PurchaseOrderRepository pos, PurchaseOrderLineRepository poLines,
                                 StockItemRepository items, StockLocationRepository locations,
-                                StockService stockService) {
+                                StockService stockService,
+            DomainEventService domainEvents) {
+        this.domainEvents = domainEvents;
         this.jdbc = jdbc;
         this.users = users;
         this.audit = audit;
@@ -467,6 +473,12 @@ public class BonLivraisonService {
                 + ",\"movesCreated\":" + createdMoves.size()
                 + ",\"locationId\":\"" + bl.getLocationId() + "\""
                 + "}");
+
+        // Domain event: the BL is received (POSTED) and its stock IN moves exist.
+        domainEvents.publish(bl.getOrgId(), EventType.DELIVERY_RECEIVED, "bon_livraison", bl.getId(),
+                bl.getProjectId(), DomainEventService.payload("bonLivraisonId", bl.getId(),
+                        "purchaseOrderId", bl.getBcId(), "locationId", bl.getLocationId(),
+                        "lineCount", lines.size()));
 
         List<BlLineResponse> lineResps = lines.stream().map(this::toLineResponse).toList();
         return toBlResponse(bl, projectName(bl.getProjectId()), bcReference, supplierName(bl),

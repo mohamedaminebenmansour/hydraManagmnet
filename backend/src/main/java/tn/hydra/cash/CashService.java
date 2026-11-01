@@ -1,5 +1,7 @@
 package tn.hydra.cash;
 
+import tn.hydra.event.DomainEventService;
+import tn.hydra.event.EventType;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.GrantedAuthority;
@@ -111,8 +113,12 @@ public class CashService {
     private final DocumentService documentService;
     private final PurchaseOrderService purchaseOrders;
 
+    private final DomainEventService domainEvents;
+
     public CashService(JdbcTemplate jdbc, AppUserRepository users, EventLogService audit,
-                       DocumentService documentService, PurchaseOrderService purchaseOrders) {
+                       DocumentService documentService, PurchaseOrderService purchaseOrders,
+            DomainEventService domainEvents) {
+        this.domainEvents = domainEvents;
         this.jdbc = jdbc;
         this.users = users;
         this.audit = audit;
@@ -1466,6 +1472,10 @@ public class CashService {
                 (force ? ",\"force\":true" : "") +
                 "}");
 
+        domainEvents.publish(me.getOrgId(), EventType.CASH_MOVEMENT_POSTED, "cash_movement", id, projectId,
+                DomainEventService.payload("movementId", id, "movementType", type, "amount", amount,
+                        "fromPotId", fromPotId, "toPotId", toPotId, "force", force ? "true" : null));
+
         return new PostResponse(id, "POSTED", fromPotBalanceAfter);
     }
 
@@ -1649,6 +1659,11 @@ public class CashService {
                 (fromPotId != null ? ",\"fromPot\":\"" + fromPotId + "\"" : "") +
                 (toPotId != null ? ",\"toPot\":\"" + toPotId + "\"" : "") +
                 ",\"autoPostedViaProcess\":true}");
+
+        domainEvents.publish(orgId, EventType.CASH_MOVEMENT_POSTED, "cash_movement", movementId,
+                (UUID) row.get("project_id"),
+                DomainEventService.payload("movementId", movementId, "movementType", type, "amount", amount,
+                        "fromPotId", fromPotId, "toPotId", toPotId, "autoPostedViaProcess", "true"));
 
         return "POSTED";
     }
