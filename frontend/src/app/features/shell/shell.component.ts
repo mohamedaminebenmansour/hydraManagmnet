@@ -1,5 +1,6 @@
-import { Component, OnInit, computed, inject, signal } from '@angular/core';
+import { Component, OnInit, computed, effect, inject, signal } from '@angular/core';
 import { Router, RouterLink, RouterLinkActive, RouterOutlet } from '@angular/router';
+import { HttpClient } from '@angular/common/http';
 import { ButtonModule } from 'primeng/button';
 import { ToastModule } from 'primeng/toast';
 import { TooltipModule } from 'primeng/tooltip';
@@ -155,7 +156,16 @@ const NAV: NavItem[] = [
             }
           </div>
         </header>
-        <main><router-outlet /></main>
+        <main>
+          @if (storageNotPersistent()) {
+            <div class="storage-banner" role="alert">
+              <i class="pi pi-exclamation-triangle" aria-hidden="true"></i>
+              <span>Stockage temporaire : les fichiers seront perdus au prochain déploiement.
+                Configurez un stockage S3 (par exemple Supabase Storage).</span>
+            </div>
+          }
+          <router-outlet />
+        </main>
       </div>
     </div>
   `,
@@ -319,6 +329,12 @@ const NAV: NavItem[] = [
     }
     .who-tasks { font-weight: 600; }
     main { flex: 1; padding: 24px; overflow-y: auto; }
+    .storage-banner {
+      display: flex; align-items: flex-start; gap: 10px; margin: 0 0 16px;
+      padding: 12px 16px; border-radius: 10px; font-weight: 600;
+      background: #b91c1c; color: #fff;
+    }
+    .storage-banner i { margin-top: 2px; }
   `]
 })
 export class ShellComponent implements OnInit {
@@ -326,6 +342,10 @@ export class ShellComponent implements OnInit {
   private router = inject(Router);
   private projectService = inject(ProjectService);
   private processService = inject(ProcessService);
+  private http = inject(HttpClient);
+
+  /** Owner only: red banner when files are on non-persistent storage (GET /api/system/storage). */
+  storageNotPersistent = signal(false);
 
   projects = signal<{ id: string; name: string }[]>([]);
   taskCount = signal(0);
@@ -342,6 +362,20 @@ export class ShellComponent implements OnInit {
     if (me?.isOwner) return 'linear-gradient(135deg, #f59e0b 0%, #b45309 100%)';
     return avatarGradient(me?.id ?? me?.email);
   });
+
+  private storageChecked = false;
+
+  constructor() {
+    // Once the current user is known to be the owner, ask the backend (no banner for others).
+    effect(() => {
+      if (this.storageChecked || !this.auth.me()?.isOwner) return;
+      this.storageChecked = true;
+      this.http.get<{ type: string; persistent: boolean }>('/api/system/storage').subscribe({
+        next: s => this.storageNotPersistent.set(s?.persistent === false),
+        error: () => this.storageNotPersistent.set(false) // unknown: no banner
+      });
+    });
+  }
 
   ngOnInit(): void {
     if (!this.showProjects()) { return; }

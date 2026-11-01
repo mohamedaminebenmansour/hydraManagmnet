@@ -20,7 +20,7 @@ import tn.hydra.document.service.DocumentService;
 import tn.hydra.document.service.FileStorage;
 import tn.hydra.document.service.RevisionService;
 import tn.hydra.exception.BadRequestException;
-import tn.hydra.security.FolderAccessService;
+import tn.hydra.document.service.FolderFilingService;
 import tn.hydra.user.AppUser;
 import tn.hydra.user.AppUserRepository;
 import tools.jackson.databind.ObjectMapper;
@@ -59,16 +59,15 @@ public class BordereauImportService {
     private final EventLogService audit;
     private final DocumentService documents;
     private final RevisionService revisions;
-    private final FolderAccessService folderAccess;
+    private final FolderFilingService folderFiling;
     private final FileStorage storage;
 
     /** JPA + JdbcTemplate share the transaction but not the session cache: see storeSourceFile. */
     @PersistenceContext
     private EntityManager entityManager;
 
-    /** Sub-folder of 02_TECH holding the imported Excel files, and the one document in it. */
-    static final String BORDEREAU_FOLDER_NAME = "Bordereaux et DQE";
-    static final String BORDEREAU_FOLDER_CODE = "02_TECH_BDQE";
+    /** Folder code (V46 template) holding the imported Excel files, and the one document in it. */
+    static final String BORDEREAU_FOLDER_CODE = "02_TECH.BORDEREAUX";
     static final String BORDEREAU_DOCUMENT_TITLE = "Bordereau des prix";
     static final String FILE_NOT_SAVED_MESSAGE =
             "Le fichier n'a pas pu être enregistré dans les documents du chantier. Import annulé.";
@@ -76,10 +75,10 @@ public class BordereauImportService {
     public BordereauImportService(JdbcTemplate jdbc, AppUserRepository users,
                                   ProjectService projects, EventLogService audit,
                                   DocumentService documents, RevisionService revisions,
-                                  FolderAccessService folderAccess, FileStorage storage) {
+                                  FolderFilingService folderFiling, FileStorage storage) {
         this.jdbc = jdbc; this.users = users; this.projects = projects; this.audit = audit;
         this.documents = documents; this.revisions = revisions;
-        this.folderAccess = folderAccess; this.storage = storage;
+        this.folderFiling = folderFiling; this.storage = storage;
     }
 
     // ═══════════════════════════════════════════════════════════════
@@ -459,7 +458,8 @@ public class BordereauImportService {
      */
     private SourceFile storeSourceFile(Authentication auth, AppUser me, UUID projectId,
                                        MultipartFile file, int versionNo) {
-        UUID folderId = ensureBordereauFolder(projectId);
+        // 02_TECH / "Bordereaux et DQE", created from the template if missing (access inherited from 02_TECH).
+        UUID folderId = folderFiling.folderFor(projectId, BORDEREAU_FOLDER_CODE);
         SourceFile source;
         try {
             UUID documentId = jdbc.queryForList("""
@@ -508,60 +508,6 @@ public class BordereauImportService {
                 try { storage.delete(key); } catch (RuntimeException ignored) { /* best effort */ }
             }
         });
-    }
-
-    /**
-     * The chantier's 02_TECH folder / "Bordereaux et DQE" sub-folder, created if missing.
-     * Idempotent: the chantier row is locked while looking for / creating them, so two
-     * imports at the same time cannot create either folder twice. A new sub-folder gets
-     * a copy of the Technique folder's access rules.
-     */
-    private UUID ensureBordereauFolder(UUID projectId) {
-        // Default ACL of the chantier first (own transaction, idempotent), so there is
-        // something to copy. Done before the lock so it never waits on this transaction.
-        UUID techBefore = findTechFolder(projectId);
-        if (techBefore != null) {
-            Integer techRules = jdbc.queryForObject(
-                    "select count(*) from folder_access where folder_id = ?", Integer.class, techBefore);
-            if (techRules == null || techRules == 0) folderAccess.seedDefaults(projectId);
-        }
-
-        // NO KEY UPDATE: serialises imports of this chantier without blocking FK checks on the row.
-        jdbc.queryForList("select id from project where id = ? for no key update", UUID.class, projectId);
-        UUID techId = findTechFolder(projectId);
-        if (techId == null) {
-            // Chantiers normally get 02_TECH when created (folder templates); recreate it if missing.
-            techId = jdbc.queryForObject("""
-                    insert into doc_folder (project_id, parent_id, code, name, sort_order)
-                    values (?, null, '02_TECH', 'Technique', 2) returning id
-                    """, UUID.class, projectId);
-        }
-        UUID existing = jdbc.queryForList(
-                "select id from doc_folder where parent_id = ? and name = ? order by created_at limit 1",
-                UUID.class, techId, BORDEREAU_FOLDER_NAME).stream().findFirst().orElse(null);
-        if (existing != null) return existing;
-
-        UUID subId = jdbc.queryForObject("""
-                insert into doc_folder (project_id, parent_id, code, name, sort_order)
-                values (?, ?, ?, ?, 0) returning id
-                """, UUID.class, projectId, techId, BORDEREAU_FOLDER_CODE, BORDEREAU_FOLDER_NAME);
-        jdbc.update("""
-                insert into folder_access (folder_id, role_code, user_id, can_read, can_upload,
-                                           can_download, can_approve, can_delete, granted_by)
-                select ?, role_code, user_id, can_read, can_upload, can_download, can_approve, can_delete, granted_by
-                from folder_access where folder_id = ?
-                """, subId, techId);
-        return subId;
-    }
-
-    /** Top-level Technique folder (02_TECH; legacy codes starting with '02' accepted), or null. */
-    private UUID findTechFolder(UUID projectId) {
-        return jdbc.queryForList("""
-                select id from doc_folder
-                where project_id = ? and parent_id is null and code like '02%'
-                order by (code = '02_TECH') desc, sort_order
-                limit 1
-                """, UUID.class, projectId).stream().findFirst().orElse(null);
     }
 
     // ═══════════════════════════════════════════════════════════════

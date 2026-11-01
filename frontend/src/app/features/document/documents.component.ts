@@ -25,7 +25,7 @@ import {
 } from '@app/core/models/document.model';
 import { OpenOutcome, isPreviewable } from '@app/core/services/document.service';
 import { Ticket } from '@app/core/models/ticket.model';
-import { Folder } from '@app/core/models/folder.model';
+import { Folder, childFolders, folderTotalCount, folderTreeOptions } from '@app/core/models/folder.model';
 import { EmptyStateComponent } from '@app/shared/empty-state.component';
 import { DocumentFileActionsComponent } from '@app/shared/document-file-actions.component'; // PHASE-B-DOC-ACTIONS
 import { docTypeVisual, docStatusVisual } from '@app/shared/chantier-visual';
@@ -54,6 +54,19 @@ export class DocumentsComponent implements OnInit {
   private msgs = inject(MessageService);
 
   folder = signal<Folder | null>(null);
+  /** All folders of the chantier the user can see (for sub-folders, breadcrumb, picker). */
+  allFolders = signal<Folder[]>([]);
+  parentFolder = computed(() => {
+    const pid = this.folder()?.parentId;
+    return pid ? this.allFolders().find(f => f.id === pid) ?? null : null;
+  });
+  subFolders = computed(() => {
+    const f = this.folder();
+    return f ? childFolders(this.allFolders(), f.id) : [];
+  });
+  /** Upload target picker: main folder, then indented sub-folders. */
+  folderOptions = computed(() => folderTreeOptions(this.allFolders()));
+  uploadFolderId: string | null = null;
   documents = signal<Document[]>([]);
   loading = signal(true);
   notFound = signal(false);
@@ -93,14 +106,36 @@ export class DocumentsComponent implements OnInit {
   canDelete = computed(() => this.auth.can(PERM.DOCUMENT_DELETE));
 
   ngOnInit(): void {
-    this.projectId = this.route.snapshot.paramMap.get('projectId');
-    this.folderId = this.route.snapshot.paramMap.get('folderId');
-    if (!this.folderId || !this.projectId) {
-      this.notFound.set(true); this.loading.set(false); return;
-    }
+    // paramMap (not snapshot): opening a sub-folder reuses this component.
+    this.route.paramMap.subscribe(params => {
+      const projectChanged = params.get('projectId') !== this.projectId;
+      this.projectId = params.get('projectId');
+      this.folderId = params.get('folderId');
+      if (!this.folderId || !this.projectId) {
+        this.notFound.set(true); this.loading.set(false); return;
+      }
+      this.notFound.set(false);
+      this.loadFolders();
+      this.loadDocuments();
+      if (projectChanged) {
+        this.projectService.myPermissions(this.projectId).subscribe({
+          next: p => this.projectCanUpload.set(!!p?.canUpload),
+          error: () => this.projectCanUpload.set(false) // non-member → cannot upload
+        });
+        this.loadOptions();
+      }
+    });
+  }
 
-    this.folderService.get(this.projectId, this.folderId).subscribe({
-      next: f => this.folder.set(f),
+  private loadFolders(): void {
+    if (!this.projectId) { return; }
+    this.folderService.listByProject(this.projectId).subscribe({
+      next: list => {
+        this.allFolders.set(list ?? []);
+        const found = (list ?? []).find(f => f.id === this.folderId) ?? null;
+        this.folder.set(found);
+        if (!found) { this.notFound.set(true); }
+      },
       error: (err) => {
         this.notFound.set(true);
         if (err.status !== 403 && err.status !== 404) {
@@ -108,14 +143,14 @@ export class DocumentsComponent implements OnInit {
         }
       }
     });
+  }
 
-    this.projectService.myPermissions(this.projectId).subscribe({
-      next: p => this.projectCanUpload.set(!!p?.canUpload),
-      error: () => this.projectCanUpload.set(false) // non-member → cannot upload
-    });
+  openFolder(f: Folder): void {
+    if (this.projectId) { this.router.navigate(['/projects', this.projectId, 'folders', f.id]); }
+  }
 
-    this.loadDocuments();
-    this.loadOptions();
+  subFolderCount(f: Folder): number {
+    return folderTotalCount(this.allFolders(), f);
   }
 
   private loadDocuments(): void {
@@ -248,6 +283,7 @@ export class DocumentsComponent implements OnInit {
     this.uploadRevision = '';
     this.uploadTicketId = null;
     this.uploadTags = [];
+    this.uploadFolderId = this.folderId; // default: the open folder
     this.showUploadDialog = true;
   }
 
@@ -263,7 +299,8 @@ export class DocumentsComponent implements OnInit {
 
   onUploadFile(event: { files: File[] }): void {
     const file = event?.files?.[0];
-    if (!file || !this.projectId || !this.folderId) { return; }
+    const targetFolderId = this.uploadFolderId ?? this.folderId;
+    if (!file || !this.projectId || !targetFolderId) { return; }
 
     const validationErr = this.validateFile(file);
     if (validationErr) {
@@ -289,16 +326,20 @@ export class DocumentsComponent implements OnInit {
     if (this.uploadDescription.trim()) { form.append('description', this.uploadDescription.trim()); }
     this.uploadTags.forEach(t => form.append('tagNames', t));
 
-    this.documentService.upload(this.projectId, this.folderId, form).subscribe({
+    this.documentService.upload(this.projectId, targetFolderId, form).subscribe({
       next: ev => {
         if (ev.type === 'progress') { this.uploadProgress.set(ev.percent); }
         else if (ev.type === 'done') {
           this.uploadProgress.set(100);
-          this.msgs.add({ severity: 'success', summary: 'Document téléversé', detail: ev.result.reference });
+          const elsewhere = targetFolderId !== this.folderId
+            ? ' — dans « ' + (this.allFolders().find(f => f.id === targetFolderId)?.name ?? 'autre dossier') + ' »'
+            : '';
+          this.msgs.add({ severity: 'success', summary: 'Document téléversé', detail: ev.result.reference + elsewhere });
           this.uploading.set(false);
           this.fileUpload?.clear();
           this.showUploadDialog = false;
           this.loadDocuments();
+          this.loadFolders(); // counts
         }
       },
       error: err => {

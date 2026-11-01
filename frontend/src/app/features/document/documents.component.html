@@ -4,11 +4,15 @@
   <div class="head">
     <div class="head-left">
       <p-button icon="pi pi-arrow-left" label="Retour" [text]="true" (onClick)="back()" />
-      <div class="crumbs">
-        <span class="crumb-link" (click)="back()">Chantier</span>
-        <i class="pi pi-angle-right"></i>
-        <span class="crumb-current">{{ folder()?.name ?? 'Dossier' }}</span>
-      </div>
+      <nav class="crumbs" aria-label="Fil d'Ariane">
+        <a class="crumb-link" href="" (click)="back(); $event.preventDefault()">Dossiers</a>
+        @if (parentFolder(); as pf) {
+          <i class="pi pi-angle-right" aria-hidden="true"></i>
+          <a class="crumb-link" href="" (click)="openFolder(pf); $event.preventDefault()">{{ pf.name }}</a>
+        }
+        <i class="pi pi-angle-right" aria-hidden="true"></i>
+        <span class="crumb-current" aria-current="page">{{ folder()?.name ?? 'Dossier' }}</span>
+      </nav>
     </div>
     @if (canUpload()) {
       <p-button icon="pi pi-upload" label="Téléverser un document" (onClick)="openUpload()" [loading]="uploading()" />
@@ -18,6 +22,21 @@
   @if (loading()) {
     <div class="loading"><i class="pi pi-spin pi-spinner"></i> Chargement…</div>
   } @else {
+    @if (subFolders().length) {
+      <ul class="subfolders" aria-label="Sous-dossiers">
+        @for (sf of subFolders(); track sf.id) {
+          <li>
+            <button type="button" class="subfolder" (click)="openFolder(sf)"
+                    [attr.aria-label]="'Ouvrir le sous-dossier ' + sf.name">
+              <i class="pi pi-folder" aria-hidden="true"></i>
+              <span class="sf-name">{{ sf.name }}</span>
+              <span class="sf-count">{{ subFolderCount(sf) }} document(s)</span>
+              <i class="pi pi-angle-right" aria-hidden="true"></i>
+            </button>
+          </li>
+        }
+      </ul>
+    }
     <div class="panel">
       @if (documents().length) {
         <div class="dtable">
@@ -95,6 +114,18 @@
 <p-dialog [(visible)]="showUploadDialog" [modal]="true" [style]="{ width: '560px' }"
           header="Téléverser un document" [draggable]="false">
   <div class="dlg-form">
+    <div class="field">
+      <label for="upload-folder">Dossier *</label>
+      <p-dropdown inputId="upload-folder" [options]="folderOptions()" [(ngModel)]="uploadFolderId"
+                  optionLabel="label" optionValue="id" placeholder="Choisir un dossier"
+                  styleClass="w100" [disabled]="uploading()" appendTo="body">
+        <ng-template let-opt pTemplate="item">
+          <span [class.tree-sub]="opt.depth === 1">
+            @if (opt.depth === 1) { <span aria-hidden="true">↳ </span> }{{ opt.label }}
+          </span>
+        </ng-template>
+      </p-dropdown>
+    </div>
     <div class="two">
       <div class="field">
         <label>Titre *</label>

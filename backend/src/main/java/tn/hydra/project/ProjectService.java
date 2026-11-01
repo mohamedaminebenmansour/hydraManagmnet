@@ -77,9 +77,10 @@ public class ProjectService {
 
     public record ProjectOption(UUID id, String name, String projectType) {}
 
+    /** documentCount = documents directly in this folder (not deleted); the UI adds sub-folders. */
     public record FolderResponse(UUID id, UUID projectId, UUID parentId,
                                  String code, String name, Integer sortOrder,
-                                 Instant createdAt) {}
+                                 Instant createdAt, int documentCount) {}
 
     public record MemberResponse(UUID userId, String fullName, String email,
                                  String projectRole, boolean canUpload, Instant createdAt) {}
@@ -183,7 +184,7 @@ public class ProjectService {
                 me.getId());
 
         // b/c) folder templates: org-specific first, else global; hard fallback if none.
-        // Cloned flat (parent_id null) so create() never produces 0 folders.
+        // Two-level tree (main folders, then sub-folders); never produces 0 folders.
         int folderCount = cloneTemplates(id, me.getOrgId());
         // seed the default folder ACL matrix (role grants per folder code)
         folderAccess.seedDefaults(id);
@@ -283,10 +284,12 @@ public class ProjectService {
         if (readable != null && readable.isEmpty()) return List.of();
         java.util.Set<UUID> filter = readable;
         return jdbc.queryForList("""
-                select id, project_id, parent_id, code, name, sort_order, created_at
-                from doc_folder
-                where project_id = ?
-                order by sort_order, name
+                select f.id, f.project_id, f.parent_id, f.code, f.name, f.sort_order, f.created_at,
+                       (select count(*) from document d
+                         where d.folder_id = f.id and d.deleted_at is null) as document_count
+                from doc_folder f
+                where f.project_id = ?
+                order by f.sort_order, f.name
                 """, projectId).stream()
                 .filter(r -> filter == null || filter.contains((UUID) r.get("id")))
                 .map(ProjectService::toFolderResponse).toList();
@@ -443,18 +446,20 @@ public class ProjectService {
      * Returns the number of folders inserted.
      */
     private int cloneTemplates(UUID projectId, UUID orgId) {
+        // Two-level tree (V46): main folders first (parent_code null), then sub-folders
+        // under them. Org-specific template rows if the org has any, else the global ones.
         List<Map<String, Object>> templates = jdbc.queryForList("""
-                select code, name, sort_order
+                select code, name, sort_order, parent_code
                 from doc_folder_template
                 where org_id = ?
-                order by sort_order, code
+                order by (parent_code is not null), sort_order, code
                 """, orgId);
         if (templates.isEmpty()) {
             templates = jdbc.queryForList("""
-                    select code, name, sort_order
+                    select code, name, sort_order, parent_code
                     from doc_folder_template
                     where org_id is null
-                    order by sort_order, code
+                    order by (parent_code is not null), sort_order, code
                     """);
         }
 
@@ -466,18 +471,34 @@ public class ProjectService {
             return DEFAULT_TEMPLATES.size();
         }
 
+        Map<String, UUID> mainIdByCode = new java.util.HashMap<>();
+        int inserted = 0;
         for (Map<String, Object> t : templates) {
             int sort = t.get("sort_order") == null ? 0 : ((Number) t.get("sort_order")).intValue();
-            insertFolder(projectId, (String) t.get("code"), (String) t.get("name"), sort);
+            String code = (String) t.get("code");
+            String parentCode = (String) t.get("parent_code");
+            UUID parentId = parentCode == null ? null : mainIdByCode.get(parentCode);
+            if (parentCode != null && parentId == null) continue; // sub-folder of an unknown main folder
+            UUID id = insertFolder(projectId, parentId, code, (String) t.get("name"), sort);
+            if (parentCode == null) mainIdByCode.put(code, id);
+            inserted++;
         }
-        return templates.size();
+        return inserted;
     }
 
+    /** Hard-fallback main folder (no id needed). */
     private void insertFolder(UUID projectId, String code, String name, int sortOrder) {
         jdbc.update("""
                 insert into doc_folder (project_id, code, name, sort_order)
                 values (?, ?, ?, ?)
                 """, projectId, code, name, sortOrder);
+    }
+
+    private UUID insertFolder(UUID projectId, UUID parentId, String code, String name, int sortOrder) {
+        return jdbc.queryForObject("""
+                insert into doc_folder (project_id, parent_id, code, name, sort_order)
+                values (?, ?, ?, ?, ?) returning id
+                """, UUID.class, projectId, parentId, code, name, sortOrder);
     }
 
     private int folderCount(UUID projectId) {
@@ -623,7 +644,8 @@ public class ProjectService {
                 (String) row.get("code"),
                 (String) row.get("name"),
                 row.get("sort_order") == null ? null : ((Number) row.get("sort_order")).intValue(),
-                toInstant(row.get("created_at")));
+                toInstant(row.get("created_at")),
+                row.get("document_count") == null ? 0 : ((Number) row.get("document_count")).intValue());
     }
 
     private static MemberResponse toMemberResponse(Map<String, Object> row) {

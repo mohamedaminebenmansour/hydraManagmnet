@@ -31,6 +31,10 @@ import java.util.stream.Collectors;
  *   3. bypass: org OWNER     (app_user.is_owner)
  *   4. bypass: project ADMIN (project_member.project_role = 'ADMIN')
  *
+ * Inheritance (V46): a folder with no folder_access rows of its own uses the
+ * rows of its nearest ancestor. Template sub-folders get no rows (they inherit);
+ * folders that already have rows keep them.
+ *
  * The default matrix is seeded when folders are created (ProjectService
  * calls seedDefaults after cloneTemplates) and backfilled by V15 for
  * folders that already existed.
@@ -140,8 +144,27 @@ public class FolderAccessService {
                         case APPROVE -> rs.getBoolean(4);
                         case DELETE -> rs.getBoolean(5);
                     };
-                }, folderId, userId, userId);
+                }, aclFolderId(folderId), userId, userId);
         return Boolean.TRUE.equals(ok);
+    }
+
+    /**
+     * Inheritance (V46): the folder whose rows decide access — the folder itself when it
+     * has folder_access rows, else its nearest ancestor that has some (else the folder,
+     * which then grants nothing). Sub-folders created from the template have no rows.
+     */
+    private UUID aclFolderId(UUID folderId) {
+        return jdbc.queryForList("""
+                with recursive up(cur_id, parent_id, depth) as (
+                    select id, parent_id, 0 from doc_folder where id = ?
+                  union all
+                    select p.id, p.parent_id, u.depth + 1
+                    from up u join doc_folder p on p.id = u.parent_id
+                    where u.depth < 10
+                      and not exists (select 1 from folder_access fa where fa.folder_id = u.cur_id)
+                )
+                select cur_id from up order by depth desc limit 1
+                """, UUID.class, folderId).stream().findFirst().orElse(folderId);
     }
 
     /**
@@ -157,7 +180,8 @@ public class FolderAccessService {
     }
 
     /**
-     * Folder ids of the project the user can at least READ.
+     * Folder ids of the project the user can at least READ (a folder without rows of
+     * its own counts with its nearest ancestor's rows, see aclFolderId).
      * Returns null = "no filter" (org owner or project ADMIN sees everything);
      * empty set = sees nothing (list endpoints must return empty).
      */
@@ -165,15 +189,27 @@ public class FolderAccessService {
         if (Boolean.TRUE.equals(me.getIsOwner())) return null;
         if (projectId != null && isProjectAdmin(projectId, me.getId())) return null;
         return jdbc.queryForList("""
-                select distinct fa.folder_id
-                from folder_access fa
-                join doc_folder f on f.id = fa.folder_id
-                where (?::uuid is null or f.project_id = ?)
-                  and (fa.user_id = ? or fa.role_code in (
+                with recursive up(folder_id, cur_id, parent_id, depth) as (
+                    select f.id, f.id, f.parent_id, 0
+                    from doc_folder f join project p on p.id = f.project_id
+                    where p.org_id = ? and (?::uuid is null or f.project_id = ?)
+                  union all
+                    select u.folder_id, d.id, d.parent_id, u.depth + 1
+                    from up u join doc_folder d on d.id = u.parent_id
+                    where u.depth < 10
+                      and not exists (select 1 from folder_access fa where fa.folder_id = u.cur_id)
+                ), eff as (
+                    select distinct on (folder_id) folder_id, cur_id as acl_id
+                    from up order by folder_id, depth desc
+                )
+                select distinct e.folder_id
+                from eff e
+                join folder_access fa on fa.folder_id = e.acl_id
+                where fa.user_id = ? or fa.role_code in (
                         select r.code from user_role ur
                         join role r on r.id = ur.role_id
-                        where ur.user_id = ?))
-                """, UUID.class, projectId, projectId, me.getId(), me.getId())
+                        where ur.user_id = ?)
+                """, UUID.class, me.getOrgId(), projectId, projectId, me.getId(), me.getId())
                 .stream().collect(java.util.stream.Collectors.toSet());
     }
 
@@ -189,6 +225,7 @@ public class FolderAccessService {
         List<Map<String, Object>> folders = jdbc.queryForList("""
                 select f.id, f.code from doc_folder f
                 where f.project_id = ?
+                  and f.parent_id is null   -- sub-folders inherit their parent's rules (V46)
                   and not exists (select 1 from folder_access fa where fa.folder_id = f.id)
                 """, projectId);
         int inserted = 0;

@@ -330,7 +330,7 @@ public class DemoDataRunner implements CommandLineRunner {
             int idx = (int) p[0];
             String projectId = (String) p[1];
             List<Map<String, Object>> folders = jdbc.queryForList(
-                    "select code, name, sort_order from doc_folder_template where org_id is null order by sort_order");
+                    "select code, name, sort_order from doc_folder_template where org_id is null and parent_code is null order by sort_order");
             for (Map<String, Object> f : folders) {
                 String code = (String) f.get("code");
                 String name = (String) f.get("name");
