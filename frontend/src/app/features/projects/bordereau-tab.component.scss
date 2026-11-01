@@ -8,6 +8,10 @@
 .bt-actions { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
 
 .bt-loading { color: #64748b; padding: 30px; text-align: center; }
+.bt-load-error {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 12px;
+  padding: 10px 14px; color: #b91c1c; background: #fef2f2; border: 1px solid #fecaca; border-radius: 8px;
+}
 .muted { color: #94a3b8; font-size: 13px; }
 
 .bt-group { margin-bottom: 16px; }

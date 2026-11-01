@@ -1,4 +1,4 @@
-import { Component, Input, Output, EventEmitter, OnInit, computed, inject, signal } from '@angular/core';
+import { Component, Input, Output, EventEmitter, OnChanges, OnInit, SimpleChanges, computed, inject, signal } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { ButtonModule } from 'primeng/button';
@@ -27,13 +27,15 @@ import { EmptyStateComponent } from '@app/shared/empty-state.component';
   templateUrl: './bordereau-tab.component.html',
   styleUrl: './bordereau-tab.component.scss'
 })
-export class BordereauTabComponent implements OnInit {
+export class BordereauTabComponent implements OnInit, OnChanges {
   private bordereauService = inject(BordereauService);
   private projectService = inject(ProjectService);
   private auth = inject(AuthService);
   private msgs = inject(MessageService);
 
   @Input({ required: true }) projectId!: string;
+  /** Bumped by the parent when the Ouvrages tab reports a change → reload ouvrages. */
+  @Input() ouvragesVersion = 0;
   @Output() changed = new EventEmitter<void>();
 
   versions = signal<BordereauVersion[]>([]);
@@ -68,6 +70,7 @@ export class BordereauTabComponent implements OnInit {
 
   // Ouvrage assignment (DRAFT only).
   ouvrages = signal<Ouvrage[]>([]);
+  ouvragesError = signal(false);
   ouvrageOptions = computed(() => [
     { id: null as string | null, label: 'Aucun' },
     ...this.ouvrages().map(o => ({ id: o.id as string | null, label: o.name })),
@@ -100,9 +103,21 @@ export class BordereauTabComponent implements OnInit {
 
   ngOnInit(): void {
     this.loadVersions();
+  }
+
+  ngOnChanges(changes: SimpleChanges): void {
+    // First binding included: loads the ouvrages once, then on every project change
+    // and every change reported by the Ouvrages tab.
+    if (changes['projectId'] || changes['ouvragesVersion']) this.loadOuvrages();
+  }
+
+  loadOuvrages(): void {
+    if (!this.projectId) return;
+    this.ouvragesError.set(false);
     this.projectService.listOuvrages(this.projectId).subscribe({
       next: list => this.ouvrages.set(list ?? []),
-      error: () => this.ouvrages.set([])
+      // An error is not "no ouvrage": show it with a retry button.
+      error: () => { this.ouvrages.set([]); this.ouvragesError.set(true); }
     });
   }
 

@@ -21,6 +21,10 @@
 }
 
 .loading { color: #64748b; padding: 30px; text-align: center; }
+.load-error {
+  display: flex; align-items: center; justify-content: center; gap: 10px; flex-wrap: wrap;
+  padding: 24px; color: #b91c1c; background: #fef2f2; border: 1px solid #fecaca; border-radius: 8px;
+}
 
 .ouvrage-grid {
   display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));

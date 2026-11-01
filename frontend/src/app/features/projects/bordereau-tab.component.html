@@ -29,6 +29,14 @@
   <input #fileInput type="file" accept=".xls,.xlsx" style="display:none"
          (change)="onInputChange($event)" />
 
+  @if (ouvragesError()) {
+    <div class="bt-load-error" role="alert">
+      <i class="pi pi-exclamation-triangle" aria-hidden="true"></i>
+      <span>Impossible de charger les ouvrages</span>
+      <p-button label="Réessayer" icon="pi pi-refresh" [outlined]="true" size="small" (onClick)="loadOuvrages()" />
+    </div>
+  }
+
   @if (loading()) {
     <div class="bt-loading"><i class="pi pi-spin pi-spinner"></i> Chargement…</div>
   } @else if (!lines().length) {

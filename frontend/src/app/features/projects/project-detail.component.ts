@@ -83,6 +83,8 @@ export class ProjectDetailComponent implements OnInit, OnDestroy {
   private msgs = inject(MessageService);
 
   project = signal<Project | null>(null);
+  /** Bumped on every ouvrage change so the Bordereau tab reloads its ouvrage list. */
+  ouvragesVersion = signal(0);
   members = signal<ProjectMember[]>([]);
   folders = signal<ProjectFolder[]>([]);
   folderAccessCounts = signal<Record<string, number>>({});
@@ -529,6 +531,7 @@ export class ProjectDetailComponent implements OnInit, OnDestroy {
    *  Ouvrages tab (which is now a standalone component). */
   onOuvragesChanged(): void {
     if (!this.projectId) { return; }
+    this.ouvragesVersion.update(v => v + 1);
     this.projectService.get(this.projectId).subscribe({
       next: p => this.project.set(p),
       error: () => { /* keep current project */ }

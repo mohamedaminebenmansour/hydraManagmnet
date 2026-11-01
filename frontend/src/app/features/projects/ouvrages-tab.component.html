@@ -23,6 +23,12 @@
 
   @if (loading()) {
     <div class="loading"><i class="pi pi-spin pi-spinner"></i> Chargement…</div>
+  } @else if (loadError()) {
+    <div class="load-error" role="alert">
+      <i class="pi pi-exclamation-triangle" aria-hidden="true"></i>
+      <span>Impossible de charger les ouvrages</span>
+      <p-button label="Réessayer" icon="pi pi-refresh" [outlined]="true" size="small" (onClick)="load()" />
+    </div>
   } @else if (!ouvrages().length) {
     <app-empty-state icon="pi pi-database" message="Aucun ouvrage pour le moment."></app-empty-state>
   } @else {
