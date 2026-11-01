@@ -41,7 +41,9 @@
         Documents liés
         <span class="badge">{{ docs().length }}</span>
       </div>
-      @if (docs().length) {
+      @if (docsError()) {
+        <app-load-error message="Impossible de charger les documents liés." (retry)="loadDocs()" />
+      } @else if (docs().length) {
         <div class="dlist">
           @for (d of docs(); track d.id) {
             <div class="drow">
@@ -61,7 +63,7 @@
             </div>
           }
         </div>
-      } @else {
+      } @else if (!docsLoading()) {
         <app-empty-state icon="pi pi-file" message="Aucun document lié à ce ticket."></app-empty-state>
       }
     </div>

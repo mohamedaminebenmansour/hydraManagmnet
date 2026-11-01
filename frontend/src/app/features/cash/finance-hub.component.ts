@@ -81,8 +81,8 @@ import {
                   <span class="pc-type">{{ pv(p.type).label }}</span>
                 </div>
                 <div class="pc-name">{{ p.name }}</div>
-                <div class="pc-balance" [class.neg]="(balances()[p.id] ?? 0) < 0">
-                  {{ fmt(balances()[p.id] ?? 0) }}
+                <div class="pc-balance" [class.neg]="(balances()[p.id] || 0) < 0">
+                  {{ fmt(balances()[p.id] || 0) }}
                 </div>
                 <div class="pc-currency">{{ p.currency || 'TND' }}</div>
               </a>

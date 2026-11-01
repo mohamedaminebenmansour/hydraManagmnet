@@ -1,8 +1,10 @@
 package tn.hydra.common;
 
+import com.fasterxml.jackson.annotation.JsonInclude;
 import jakarta.persistence.PersistenceException;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.ConstraintViolationException;
+import java.security.SecureRandom;
 import java.util.NoSuchElementException;
 import org.hibernate.LazyInitializationException;
 import org.slf4j.Logger;
@@ -29,7 +31,14 @@ public class GlobalExceptionHandler {
 
     private static final Logger log = LoggerFactory.getLogger(GlobalExceptionHandler.class);
 
-    public record ApiError(String code, String message) {}
+    /** reference: only for unexpected errors (INTERNAL_ERROR), also written in the log. */
+    @JsonInclude(JsonInclude.Include.NON_NULL)
+    public record ApiError(String code, String message, String reference) {
+        public ApiError(String code, String message) { this(code, message, null); }
+    }
+
+    private static final String REF_CHARS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+    private static final SecureRandom RANDOM = new SecureRandom();
 
     @ExceptionHandler(BusinessRuleException.class)
     public ResponseEntity<ApiError> businessRule(BusinessRuleException e) {
@@ -52,30 +61,17 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(org.hibernate.LazyInitializationException.class)
     public ResponseEntity<ApiError> lazyInitialization(LazyInitializationException e,
                                                        HttpServletRequest request) {
-        log.error("LazyInitializationException on {} {}: {}",
-                request.getMethod(), request.getRequestURI(), e.getClass().getName(), e);
-        String message = "Impossible de lire une association chargée en différé : la session JPA est fermée "
-                + "(spring.jpa.open-in-view=false) — " + e.getClass().getSimpleName();
-        return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
-                .contentType(MediaType.APPLICATION_JSON)
-                .body(new ApiError("LAZY_INIT", message));
+        return internalError(e, request, "LazyInitializationException (session JPA fermée)");
     }
 
     @ExceptionHandler(FileStorageException.class)
     public ResponseEntity<ApiError> fileStorage(FileStorageException e, HttpServletRequest request) {
-        log.error("FileStorage failure on {} {} (code={}): {}",
-                request.getMethod(), request.getRequestURI(), e.getCode(), e.getMessage(), e);
-        String causeMsg = "";
-        Throwable cause = e.getCause();
-        if (cause != null) {
-            String m = cause.getMessage();
-            causeMsg = " | cause: " + (m != null ? truncate(m) : cause.getClass().getSimpleName());
+        if ("FILE_NOT_FOUND".equals(e.getCode())) {
+            log.warn("File not found on {} {}: {}", method(request), uri(request), e.getMessage());
+            return ResponseEntity.status(HttpStatus.NOT_FOUND)
+                    .body(new ApiError(e.getCode(), e.getMessage()));
         }
-        HttpStatus status = "FILE_NOT_FOUND".equals(e.getCode())
-                ? HttpStatus.NOT_FOUND : HttpStatus.INTERNAL_SERVER_ERROR;
-        return ResponseEntity.status(status)
-                .contentType(MediaType.APPLICATION_JSON)
-                .body(new ApiError(e.getCode(), e.getMessage() + causeMsg));
+        return internalError(e, request, "FileStorage failure (code=" + e.getCode() + ")");
     }
 
     @ExceptionHandler(MaxUploadSizeExceededException.class)
@@ -114,15 +110,7 @@ public class GlobalExceptionHandler {
      */
     @ExceptionHandler(PersistenceException.class)
     public ResponseEntity<ApiError> persistence(PersistenceException e, HttpServletRequest request) {
-        Throwable root = rootCause(e);
-        log.error("[DB] PersistenceException on {} {} — root: {} : {}",
-                request.getMethod(), request.getRequestURI(),
-                root.getClass().getSimpleName(), root.getMessage(), e);
-        String detail = root.getMessage() != null ? truncate(root.getMessage()) : e.getMessage();
-        return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
-                .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
-                .body(new ApiError("DB_ERROR",
-                        "Erreur base de données : " + detail));
+        return internalError(e, request, "[DB] PersistenceException");
     }
 
     @ExceptionHandler({HttpMessageNotReadableException.class, MethodArgumentNotValidException.class})
@@ -159,7 +147,9 @@ public class GlobalExceptionHandler {
     public ResponseEntity<ApiError> noSuchElement(NoSuchElementException e) {
         return ResponseEntity.status(HttpStatus.NOT_FOUND)
                 .body(new ApiError("NOT_FOUND",
-                        e.getMessage() != null ? e.getMessage() : "Ressource introuvable"));
+                        // "No value present" = JDK default of Optional.orElseThrow(): not user text
+                        e.getMessage() != null && !"No value present".equals(e.getMessage())
+                                ? e.getMessage() : "Ressource introuvable"));
     }
 
     @ExceptionHandler(IllegalArgumentException.class)
@@ -177,36 +167,40 @@ public class GlobalExceptionHandler {
 
     @ExceptionHandler(Exception.class)
     public ResponseEntity<ApiError> generic(Exception e, HttpServletRequest request) {
+        return internalError(e, request, "Unhandled exception");
+    }
+
+    /**
+     * Unexpected error: 500 INTERNAL_ERROR with a short reference, never a class name,
+     * stack trace, SQL or package name in the body. The full exception is logged at
+     * ERROR level with the same reference, so support can find it from the user's toast.
+     */
+    private ResponseEntity<ApiError> internalError(Throwable e, HttpServletRequest request, String what) {
+        String ref = newReference();
         Throwable root = rootCause(e);
-        // request can be null when the handler is invoked programmatically
-        // (unit tests, rethrown async errors) — never NPE out of the 500 path.
-        String method = request == null ? "?" : request.getMethod();
-        String uri = request == null ? "?" : request.getRequestURI();
-        log.error("Unhandled exception on {} {} — type={} rootType={} rootMsg={}",
-                method, uri,
-                e.getClass().getSimpleName(),
-                root.getClass().getSimpleName(),
-                root.getMessage(), e);
-        // Include class + root cause so the Network tab is actionable while diagnosing
-        // production 500s without needing direct log access.
-        String message = e.getClass().getSimpleName()
-                + (e.getMessage() != null ? " — " + truncate(e.getMessage()) : "")
-                + (root != e ? " | root: " + root.getClass().getSimpleName()
-                    + (root.getMessage() != null ? " — " + truncate(root.getMessage()) : "") : "");
+        log.error("[{}] {} on {} {} — type={} rootType={} rootMsg={}",
+                ref, what, method(request), uri(request),
+                e.getClass().getName(), root.getClass().getName(), root.getMessage(), e);
         return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
                 .contentType(MediaType.APPLICATION_JSON)
-                .body(new ApiError("INTERNAL", message));
+                .body(new ApiError("INTERNAL_ERROR",
+                        "Une erreur technique est survenue. Référence : " + ref, ref));
     }
+
+    /** 6 characters A-Z / 0-9. */
+    static String newReference() {
+        StringBuilder sb = new StringBuilder(6);
+        for (int i = 0; i < 6; i++) sb.append(REF_CHARS.charAt(RANDOM.nextInt(REF_CHARS.length())));
+        return sb.toString();
+    }
+
+    // request can be null when a handler is invoked programmatically (unit tests).
+    private static String method(HttpServletRequest request) { return request == null ? "?" : request.getMethod(); }
+    private static String uri(HttpServletRequest request) { return request == null ? "?" : request.getRequestURI(); }
 
     /** Walk the cause chain to find the deepest root cause. */
     private static Throwable rootCause(Throwable t) {
         Throwable cause = t.getCause();
         return (cause == null || cause == t) ? t : rootCause(cause);
-    }
-
-    /** Truncate long cause messages so the JSON body stays readable. */
-    private static String truncate(String s) {
-        if (s == null) return null;
-        return s.length() > 500 ? s.substring(0, 500) + "…[truncated]" : s;
     }
 }

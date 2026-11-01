@@ -8,6 +8,7 @@ import { AuthService } from '@app/core/auth.service';
 import { PERM } from '@app/core/permissions';
 import { ProjectService } from '@app/core/services/project.service';
 import { ProcessService } from '@app/core/services/process.service';
+import { LoadErrorComponent } from '@app/shared/load-error.component';
 import { roleVisual, avatarGradient, initials } from '@app/shared/hydra-design';
 
 interface NavItem {
@@ -51,7 +52,7 @@ const NAV: NavItem[] = [
 @Component({
   selector: 'app-shell',
   standalone: true,
-  imports: [RouterOutlet, RouterLink, RouterLinkActive, ButtonModule, ToastModule, TooltipModule],
+  imports: [RouterOutlet, RouterLink, RouterLinkActive, ButtonModule, ToastModule, TooltipModule, LoadErrorComponent],
   template: `
     <p-toast position="top-right" />
     <div class="shell">
@@ -127,6 +128,9 @@ const NAV: NavItem[] = [
             <div class="side-title">
               <i class="pi pi-briefcase"></i> Mes chantiers
             </div>
+            @if (projectsError()) {
+              <app-load-error message="Impossible de charger vos chantiers." (retry)="loadSideProjects()" />
+            }
             @for (p of projects(); track p.id) {
               <a [routerLink]="['/projects', p.id]" routerLinkActive="active" class="side-proj">
                 <i class="pi pi-folder"></i>
@@ -148,8 +152,10 @@ const NAV: NavItem[] = [
       <div class="col">
         <header class="topbar">
           <div class="who">
-            <i class="pi pi-bell" [class.has-tasks]="taskCount() > 0"></i>
-            @if (taskCount() > 0) {
+            <i class="pi pi-bell" [class.has-tasks]="taskCount() > 0" aria-hidden="true"></i>
+            @if (tasksError()) {
+              <app-load-error message="Impossible de charger vos tâches." (retry)="loadTaskCount()" />
+            } @else if (taskCount() > 0) {
               <span class="who-tasks">{{ taskCount() }} tâche(s) en attente</span>
             } @else {
               <span class="who-tasks">Aucune tâche en attente</span>
@@ -349,6 +355,8 @@ export class ShellComponent implements OnInit {
 
   projects = signal<{ id: string; name: string }[]>([]);
   taskCount = signal(0);
+  tasksError = signal(false);
+  projectsError = signal(false);
   showProjects = computed(() => this.auth.can(PERM.PROJECT_READ));
   name = computed(() => this.auth.me()?.fullName ?? '');
   me = this.auth.me;
@@ -379,10 +387,7 @@ export class ShellComponent implements OnInit {
 
   ngOnInit(): void {
     if (!this.showProjects()) { return; }
-    this.projectService.options().subscribe({
-      next: list => this.projects.set((list ?? []).slice(0, 6)),
-      error: () => this.projects.set([])
-    });
+    this.loadSideProjects();
 
     // Load pending task count for the bell + sidebar badge
     // Auto-expand Achats if a child route is active
@@ -392,9 +397,23 @@ export class ShellComponent implements OnInit {
       this.achatsExpanded.set(true);
     }
 
+    this.loadTaskCount();
+  }
+
+  loadSideProjects(): void {
+    this.projectsError.set(false);
+    this.projectService.options().subscribe({
+      next: list => this.projects.set((list ?? []).slice(0, 6)),
+      error: () => { this.projects.set([]); this.projectsError.set(true); }
+    });
+  }
+
+  /** Pending task count for the bell + sidebar badge. */
+  loadTaskCount(): void {
+    this.tasksError.set(false);
     this.processService.myTasks().subscribe({
       next: list => this.taskCount.set((list ?? []).length),
-      error: () => this.taskCount.set(0),
+      error: () => { this.taskCount.set(0); this.tasksError.set(true); },
     });
   }
 

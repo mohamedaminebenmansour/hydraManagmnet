@@ -135,14 +135,16 @@ import {
                   </div>
                 </div>
 
-                <div class="step-times" *ngIf="step.startedAt || step.completedAt">
-                  @if (step.startedAt) {
-                    <span><i class="pi pi-clock"></i> Début: {{ step.startedAt | date:'short' }}</span>
-                  }
-                  @if (step.completedAt) {
-                    <span><i class="pi pi-check"></i> Fin: {{ step.completedAt | date:'short' }}</span>
-                  }
-                </div>
+                @if (step.startedAt || step.completedAt) {
+                  <div class="step-times">
+                    @if (step.startedAt) {
+                      <span><i class="pi pi-clock"></i> Début: {{ step.startedAt | date:'short' }}</span>
+                    }
+                    @if (step.completedAt) {
+                      <span><i class="pi pi-check"></i> Fin: {{ step.completedAt | date:'short' }}</span>
+                    }
+                  </div>
+                }
 
                 @if (step.comment) {
                   <div class="step-comment">

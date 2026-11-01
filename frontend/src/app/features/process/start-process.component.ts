@@ -11,6 +11,7 @@ import { UserService } from '@app/core/services/user.service';
 import { UserDto } from '@app/core/models/user.model';
 import { TemplateDetail } from '@app/core/models/process.model';
 import { processTypeVisual, roleVisual } from '@app/shared/process-visual';
+import { LoadErrorComponent } from '@app/shared/load-error.component';
 
 interface ProjectOption {
   id: string;
@@ -28,7 +29,7 @@ interface SubjectTypeOption {
 @Component({
   selector: 'app-start-process',
   standalone: true,
-  imports: [ButtonModule, InputTextModule, SelectModule, ReactiveFormsModule, RouterLink],
+  imports: [ButtonModule, InputTextModule, SelectModule, ReactiveFormsModule, RouterLink, LoadErrorComponent],
   styleUrl: './start-process.component.scss',
   template: `
     <section class="start-proc">
@@ -51,6 +52,9 @@ interface SubjectTypeOption {
         <div class="sp-section">
           <h2><span class="sp-num">1</span> Chantier</h2>
           <p>Sur quel projet ce processus doit-il s'exécuter ?</p>
+          @if (projectsError()) {
+            <app-load-error message="Impossible de charger les chantiers." (retry)="loadProjects()" />
+          }
           <div class="field">
             <p-select [options]="projectOptions()" optionValue="id"
                       optionLabel="name" formControlName="projectId"
@@ -79,6 +83,9 @@ interface SubjectTypeOption {
         <div class="sp-section">
           <h2><span class="sp-num">2</span> Modèle de processus</h2>
           <p>Quel workflow déclencher ? Seuls les modèles actifs sont listés.</p>
+          @if (templatesError()) {
+            <app-load-error message="Impossible de charger les modèles de processus." (retry)="loadTemplates()" />
+          }
           <div class="field">
             <p-select [options]="templateOptions()" optionValue="key"
                       optionLabel="name" formControlName="templateKey"
@@ -204,7 +211,9 @@ export class StartProcessComponent implements OnInit {
 
   submitting = signal(false);
   templates = signal<TemplateDetail[]>([]);
+  templatesError = signal(false);
   projectOptions = signal<ProjectOption[]>([]);
+  projectsError = signal(false);
   selectedTemplate = signal<TemplateDetail | null>(null);
   projectRoleMap = signal<Map<string, string[]>>(new Map());
 
@@ -265,7 +274,8 @@ export class StartProcessComponent implements OnInit {
     return entries.sort((a, b) => a.role.localeCompare(b.role));
   });
 
-  private loadProjects(): void {
+  loadProjects(): void {
+    this.projectsError.set(false);
     this.projectService.options().subscribe({
       next: (list: any[]) => {
         this.projectOptions.set((list ?? []).map(p => ({
@@ -278,11 +288,12 @@ export class StartProcessComponent implements OnInit {
           this.onProjectChange();
         }
       },
-      error: () => this.projectOptions.set([]),
+      error: () => { this.projectOptions.set([]); this.projectsError.set(true); },
     });
   }
 
-  private loadTemplates(): void {
+  loadTemplates(): void {
+    this.templatesError.set(false);
     this.processService.listTemplatesAdmin().subscribe({
       next: (list) => {
         this.templates.set(list ?? []);
@@ -290,7 +301,7 @@ export class StartProcessComponent implements OnInit {
           this.onTemplateChange();
         }
       },
-      error: () => this.templates.set([]),
+      error: () => { this.templates.set([]); this.templatesError.set(true); },
     });
   }
 

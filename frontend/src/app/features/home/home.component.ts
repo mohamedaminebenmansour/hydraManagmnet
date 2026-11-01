@@ -5,6 +5,7 @@ import { DatePipe } from '@angular/common';
 import { AuthService } from '../../core/auth.service';
 import { PERM } from '../../core/permissions';
 import { EmptyStateComponent } from '../../shared/empty-state.component';
+import { LoadErrorComponent } from '../../shared/load-error.component';
 import { ProjectService } from '../../core/services/project.service';
 import { ProcessService } from '../../core/services/process.service';
 import { MyTask } from '../../core/models/process.model';
@@ -35,7 +36,7 @@ const TILES: Tile[] = [
 @Component({
   selector: 'app-home',
   standalone: true,
-  imports: [RouterLink, ButtonModule, DatePipe, EmptyStateComponent],
+  imports: [RouterLink, ButtonModule, DatePipe, EmptyStateComponent, LoadErrorComponent],
   template: `
     <section class="home">
       <!-- Hero with greeting + role badge -->
@@ -96,7 +97,11 @@ const TILES: Tile[] = [
       }
 
       <!-- ✅ PRIORITY 2: Mes tâches en attente -->
-      @if (tasks().length > 0) {
+      @if (tasksError()) {
+        <section class="home-section">
+          <app-load-error message="Impossible de charger vos tâches." (retry)="loadTasks()" />
+        </section>
+      } @else if (tasks().length > 0) {
         <section class="home-section">
           <header class="hs-head">
             <h2><i class="pi pi-check-square" style="color: #f59e0b"></i> Mes actions en attente</h2>
@@ -130,7 +135,7 @@ const TILES: Tile[] = [
             }
           </div>
         </section>
-      } @else {
+      } @else if (!tasksLoading()) {
         <section class="home-section">
           <div class="empty-good">
             <i class="pi pi-check-circle"></i>
@@ -147,6 +152,9 @@ const TILES: Tile[] = [
             <h2><i class="pi pi-briefcase" style="color: #0d9488"></i> Chantiers actifs</h2>
             <a [routerLink]="['/projects']" class="hs-link">Voir tout <i class="pi pi-angle-right"></i></a>
           </header>
+          @if (projectsError()) {
+            <app-load-error message="Impossible de charger les chantiers." (retry)="loadRecentProjects()" />
+          } @else if (!projectsLoading()) {
           <div class="chantier-grid">
             @for (p of recentProjects(); track p.id) {
               <a [routerLink]="['/projects', p.id]" class="chantier-card"
@@ -180,6 +188,7 @@ const TILES: Tile[] = [
               </div>
             }
           </div>
+          }
         </section>
       }
 
@@ -477,7 +486,11 @@ export class HomeComponent implements OnInit {
 
   showProjects = computed(() => this.auth.can(PERM.PROJECT_READ));
   tasks = signal<MyTask[]>([]);
+  tasksLoading = signal(true);
+  tasksError = signal(false);
   recentProjects = signal<any[]>([]);
+  projectsLoading = signal(true);
+  projectsError = signal(false);
 
   tiles = computed(() => TILES.filter(t => !t.perm || this.auth.can(t.perm)));
 
@@ -495,17 +508,26 @@ export class HomeComponent implements OnInit {
   });
 
   ngOnInit(): void {
-    // Load my tasks (PENDING + REJECTED — owner sees both)
-    this.processService.myTasks().subscribe({
-      next: list => this.tasks.set(list ?? []),
-      error: () => this.tasks.set([]),
-    });
+    this.loadTasks();
+    if (this.showProjects()) this.loadRecentProjects();
+  }
 
-    if (this.showProjects()) {
-      this.projectService.options().subscribe({
-        next: list => this.recentProjects.set((list ?? []).slice(0, 6)),
-        error: () => this.recentProjects.set([]),
-      });
-    }
+  /** My tasks (PENDING + REJECTED — owner sees both). An error is shown, never "no task". */
+  loadTasks(): void {
+    this.tasksLoading.set(true);
+    this.tasksError.set(false);
+    this.processService.myTasks().subscribe({
+      next: list => { this.tasks.set(list ?? []); this.tasksLoading.set(false); },
+      error: () => { this.tasks.set([]); this.tasksError.set(true); this.tasksLoading.set(false); },
+    });
+  }
+
+  loadRecentProjects(): void {
+    this.projectsLoading.set(true);
+    this.projectsError.set(false);
+    this.projectService.options().subscribe({
+      next: list => { this.recentProjects.set((list ?? []).slice(0, 6)); this.projectsLoading.set(false); },
+      error: () => { this.recentProjects.set([]); this.projectsError.set(true); this.projectsLoading.set(false); },
+    });
   }
 }

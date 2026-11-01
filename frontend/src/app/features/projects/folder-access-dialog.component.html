@@ -15,6 +15,9 @@
       @if (saveError()) {
         <div class="fa-error">{{ saveError() }}</div>
       }
+      @if (accessError()) {
+        <app-load-error message="Impossible de charger les accès de ce dossier." (retry)="loadAccess()" />
+      }
 
       @if (!loading()) {
         @if (isFinanceFolder() && financeWarning()) {
@@ -100,6 +103,9 @@
             </div>
           }
 
+          @if (usersError()) {
+            <app-load-error message="Impossible de charger la liste des utilisateurs." (retry)="fetchUsers()" />
+          }
           <div class="fa-user-list">
             @for (u of userResults(); track u.id) {
               @let mainRole = userMainRole(u);
@@ -143,6 +149,6 @@
 
   <ng-template pTemplate="footer">
     <p-button label="Annuler" [text]="true" (onClick)="visible = false" [disabled]="loading()" />
-    <p-button label="Enregistrer les accès" icon="pi pi-save" (onClick)="save()" [disabled]="loading()" severity="primary" />
+    <p-button label="Enregistrer les accès" icon="pi pi-save" (onClick)="save()" [disabled]="loading() || accessError()" severity="primary" />
   </ng-template>
 </p-dialog>

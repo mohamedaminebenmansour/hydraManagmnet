@@ -25,7 +25,14 @@
   </div>
 </div>
 
+@if (optionsError()) {
+  <app-load-error message="Impossible de charger la liste des chantiers ou des utilisateurs." (retry)="loadOptions()" />
+}
+
 <div class="list">
+  @if (loadError()) {
+    <app-load-error message="Impossible de charger les tickets." (retry)="apply()" />
+  }
   @for (t of tickets(); track t.id) {
     <div class="card">
       <div class="status">
@@ -67,7 +74,7 @@
       </div>
     </div>
   } @empty {
-    @if (loaded()) {
+    @if (loaded() && !loadError()) {
       <app-empty-state icon="pi pi-inbox" message="Aucun ticket. Tout va bien."></app-empty-state>
     }
   }

@@ -29,6 +29,7 @@ import {
 } from '@app/core/models/ouvrage.model'; // PHASE-OUVRAGE-UI
 import { SelectOption } from '@app/core/models/select-option';
 import { EmptyStateComponent } from '@app/shared/empty-state.component';
+import { LoadErrorComponent } from '@app/shared/load-error.component';
 import {
   typeVisual, statusVisual, CHANTIER_TYPE_VISUAL
 } from '@app/shared/chantier-visual';
@@ -56,6 +57,7 @@ const STATUS_OPTS = [
     ChipModule,
     TooltipModule,
     EmptyStateComponent,
+    LoadErrorComponent,
   ],
   templateUrl: './projects.component.html',
   styleUrl: './projects.component.scss'
@@ -73,6 +75,7 @@ export class ProjectsComponent implements OnInit {
   /** Chantiers chargés depuis l'API (signal → l'UI se met à jour automatiquement). */
   projects = signal<Project[]>([]);
   userOptions = signal<SelectOption[]>([]);
+  memberOptionsError = signal(false);
   readonly statusOpts = STATUS_OPTS;
   readonly projectTypeOpts = PROJECT_TYPE_OPTS;
 
@@ -253,13 +256,14 @@ export class ProjectsComponent implements OnInit {
     });
   }
 
-  private loadMemberOptions(): void {
+  loadMemberOptions(): void {
     if (!this.canWrite()) { return; }
+    this.memberOptionsError.set(false);
     this.userService.options().subscribe({
       next: list => this.userOptions.set(
         (list ?? []).map(u => ({ label: u.fullName || u.email, value: u.id }))
       ),
-      error: () => this.userOptions.set([])
+      error: () => { this.userOptions.set([]); this.memberOptionsError.set(true); }
     });
   }
 

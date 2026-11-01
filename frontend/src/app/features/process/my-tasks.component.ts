@@ -11,12 +11,13 @@ import { BadgeModule } from 'primeng/badge';
 import { ProcessService } from '@app/core/services/process.service';
 import { MyTask, StepStatus, ROLE_ICONS, STATUS_INFO, dotColorClass, roleLabel } from '@app/core/models/process.model';
 import { formatAmount } from '@app/core/models/cash.model';
+import { LoadErrorComponent } from '@app/shared/load-error.component';
 
 @Component({
   selector: 'app-my-tasks',
   standalone: true,
   styleUrl: './my-tasks.component.scss',
-  imports: [ButtonModule, NgClass, FormsModule, DialogModule, InputTextarea, TagModule, BadgeModule],
+  imports: [ButtonModule, NgClass, FormsModule, DialogModule, InputTextarea, TagModule, BadgeModule, LoadErrorComponent],
   template: `
     <section class="my-tasks proc-bg">
       <header class="section-header">
@@ -28,6 +29,8 @@ import { formatAmount } from '@app/core/models/cash.model';
 
       @if (loading()) {
         <p class="skeleton">Chargement\u2026</p>
+      } @else if (loadError()) {
+        <app-load-error message="Impossible de charger vos t\u00e2ches." (retry)="reload()" />
       } @else if (allTasks().length === 0) {
         <div class="empty-state">
           <i class="pi pi-inbox"></i>
@@ -132,6 +135,7 @@ export class MyTasksComponent implements OnInit {
   private router = inject(Router);
 
   loading = signal(true);
+  loadError = signal(false);
   allTasks = signal<MyTask[]>([]);
   activeFilter = signal<StepStatus | null>(null);
 
@@ -181,14 +185,15 @@ export class MyTasksComponent implements OnInit {
 
   reload(): void {
     this.loading.set(true);
+    this.loadError.set(false);
     this.processService.myTasks().subscribe({
       next: (tasks: MyTask[]) => {
         this.allTasks.set(tasks ?? []);
         this.loading.set(false);
       },
       error: () => {
-        this.msgs.add({ severity: 'error', summary: 'Erreur', detail: 'Impossible de charger mes t\u00e2ches' });
         this.allTasks.set([]);
+        this.loadError.set(true);
         this.loading.set(false);
       },
     });

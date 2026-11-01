@@ -19,6 +19,9 @@
     }
   </div>
 
+  @if (foldersError()) {
+    <app-load-error message="Impossible de charger les dossiers du chantier." (retry)="loadFolders()" />
+  }
   @if (loading()) {
     <div class="loading"><i class="pi pi-spin pi-spinner"></i> Chargement…</div>
   } @else {
@@ -38,7 +41,9 @@
       </ul>
     }
     <div class="panel">
-      @if (documents().length) {
+      @if (documentsError()) {
+        <app-load-error message="Impossible de charger les documents de ce dossier." (retry)="loadDocuments()" />
+      } @else if (documents().length) {
         <div class="dtable">
           <div class="dthead drow">
             <span class="c-ref">Référence</span>
