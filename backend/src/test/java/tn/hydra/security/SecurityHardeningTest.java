@@ -37,6 +37,15 @@ class SecurityHardeningTest {
     }
 
     @Test
+    void securityHeadersArePresent() throws Exception {
+        MockHttpServletResponse res = get("/health", null);
+
+        assertThat(res.getHeader("X-Content-Type-Options")).isEqualTo("nosniff");
+        assertThat(res.getHeader("X-Frame-Options")).isEqualTo("DENY");
+        assertThat(res.getHeader("Referrer-Policy")).isEqualTo("strict-origin-when-cross-origin");
+    }
+
+    @Test
     void anAllowedOrigin_getsItsOwnOriginBack_neverAWildcard() throws Exception {
         MockHttpServletResponse res = get("/health", "http://localhost:4200");
 

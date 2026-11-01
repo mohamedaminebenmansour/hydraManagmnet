@@ -15,6 +15,8 @@ import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.web.authentication.www.BasicAuthenticationFilter;
 import org.springframework.security.web.csrf.CookieCsrfTokenRepository;
 import org.springframework.security.web.csrf.CsrfTokenRequestAttributeHandler;
+import org.springframework.security.config.Customizer;
+import org.springframework.security.web.header.writers.ReferrerPolicyHeaderWriter;
 import org.springframework.web.cors.CorsConfigurationSource;
 import tn.hydra.security.HydraUserDetailsService;
 
@@ -45,6 +47,12 @@ public class SecurityConfig {
                     .anyRequest().authenticated())
             // Allowed origins from HYDRA_ALLOWED_ORIGINS (CorsConfig.corsConfigurationSource).
             .cors(cors -> cors.configurationSource(corsConfigurationSource))
+            // Security headers: nosniff, no framing, referrer limited to the origin cross-site.
+            .headers(h -> h
+                    .contentTypeOptions(Customizer.withDefaults())
+                    .frameOptions(f -> f.deny())
+                    .referrerPolicy(r -> r.policy(
+                            ReferrerPolicyHeaderWriter.ReferrerPolicy.STRICT_ORIGIN_WHEN_CROSS_ORIGIN)))
             .formLogin(f -> f.disable())
             .httpBasic(b -> b.disable())
             .logout(l -> l.disable())
