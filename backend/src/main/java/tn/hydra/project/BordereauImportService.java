@@ -1,5 +1,7 @@
 package tn.hydra.project;
 
+import jakarta.persistence.EntityManager;
+import jakarta.persistence.PersistenceContext;
 import org.apache.poi.ss.usermodel.*;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.security.core.Authentication;
@@ -59,6 +61,10 @@ public class BordereauImportService {
     private final RevisionService revisions;
     private final FolderAccessService folderAccess;
     private final FileStorage storage;
+
+    /** JPA + JdbcTemplate share the transaction but not the session cache: see storeSourceFile. */
+    @PersistenceContext
+    private EntityManager entityManager;
 
     /** Sub-folder of 02_TECH holding the imported Excel files, and the one document in it. */
     static final String BORDEREAU_FOLDER_NAME = "Bordereaux et DQE";
@@ -466,10 +472,16 @@ public class BordereauImportService {
                 // ETUDE: doc_type has a DB check constraint; a new BORDEREAU value would need one more migration.
                 DocumentResponse doc = documents.upload(auth, folderId, BORDEREAU_DOCUMENT_TITLE, DocType.ETUDE,
                         null, null, null, "Bordereau des prix importé depuis Excel.", file);
+                // Flush rule: document / revision are written through JPA, which may keep them in
+                // the session until flush. JdbcTemplate reads (storage_key lookup) and the
+                // bordereau_version insert referencing the document go straight to the database
+                // in the same transaction, so flush first or they do not see the new rows.
+                entityManager.flush();
                 source = new SourceFile(doc.id(), doc.currentRev());
             } else {
                 RevisionResponse rev = revisions.uploadNewRevision(auth, documentId, file,
                         "Import du bordereau — version " + versionNo, null);
+                entityManager.flush(); // same flush rule as above (documents.save does not flush)
                 source = new SourceFile(documentId, rev.revLabel());
             }
         } catch (AccessDeniedException | BusinessRuleException | BadRequestException e) {
@@ -487,7 +499,8 @@ public class BordereauImportService {
         String key = jdbc.queryForList(
                 "select storage_key from document_revision where document_id = ? and rev_label = ?",
                 String.class, source.documentId(), source.revision()).stream().findFirst().orElse(null);
-        if (key == null) return;
+        // Never skip the cleanup silently: after the flush in storeSourceFile the row must exist.
+        if (key == null) throw new IllegalStateException("source revision not found after flush");
         TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
             @Override
             public void afterCompletion(int status) {
