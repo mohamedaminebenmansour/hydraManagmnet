@@ -129,27 +129,24 @@ class ApprovalRuleServiceTest {
     }
 
     // ══════════════════════════════════════════════════════════════
-    //  Point 0 — whitelist: a chantier with a row enabling another template
-    //  must NOT pick PAYMENT_APPROVAL (which has no row).
+    //  Opt-out — a chantier with a row DISABLING another rule still picks
+    //  PAYMENT_APPROVAL (no row = enabled).
     // ══════════════════════════════════════════════════════════════
     @Test
-    void findRule_whitelist_excludesPaymentApprovalWhenChantierHasAnyRow() {
-        // PAYMENT_APPROVAL (system, priority 1000) would normally win on
-        // priority against X (priority 2000). But the chantier has ONE row
-        // enabling X, so the whitelist excludes every template without an
-        // enabled row — including PAYMENT_APPROVAL. X wins.
+    void findRule_optout_paymentApprovalStillPickedWhenOtherRuleDisabled() {
+        // Opt-out: PAYMENT_APPROVAL (no row = enabled) is still picked even when
+        // the chantier has a row disabling another rule (X, enabled = false).
         UUID paymentApprovalId = jdbc.queryForObject(
                 "select id from process_template where key = 'PAYMENT_APPROVAL' and org_id is null",
                 UUID.class);
         UUID x = insertCashPaymentTemplate(2000, "{}");
-        setProjectTemplate(x, true, null); // the chantier's only row -> enables X
+        setProjectTemplate(x, false, null); // disable X on the chantier
 
         Optional<UUID> picked = approvalRuleService.findRule(
                 orgId, "CASH_PAYMENT", facts(new BigDecimal("500")));
 
-        assertThat(picked).as("PAYMENT_APPROVAL is not picked under the whitelist")
-                .isNotEqualTo(paymentApprovalId);
-        assertThat(picked).as("the whitelisted template X is picked").contains(x);
+        assertThat(picked).as("PAYMENT_APPROVAL is picked (opt-out: no row = enabled)")
+                .contains(paymentApprovalId);
     }
 
     // ══════════════════════════════════════════════════════════════

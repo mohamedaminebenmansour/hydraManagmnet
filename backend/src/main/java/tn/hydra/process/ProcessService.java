@@ -635,24 +635,13 @@ public class ProcessService {
         }
         String templateKey = (String) tmplRows.get(0).get("key");
 
-        // (3) Project enablement check — whitelist: no rows => all active; any
-        //     row => only templates with an enabled = true row are allowed.
-        //     Same rule as ApprovalRuleService.findRule (one meaning for the
-        //     chantier switch).
-        Integer ptCount = jdbc.queryForObject(
-                "select count(*) from project_process_template where project_id = ?",
-                Integer.class, projectId);
-        if (ptCount != null && ptCount > 0) {
-            Integer enabledCount = jdbc.queryForObject(
-                    """
-                    select count(*) from project_process_template
-                    where project_id = ? and template_id = ? and enabled = true
-                    """,
-                    Integer.class, projectId, templateId);
-            if (enabledCount == null || enabledCount == 0) {
-                throw new BusinessRuleException("TEMPLATE_NOT_ENABLED_ON_PROJECT",
-                        "Ce template n'est pas activé sur ce projet");
-            }
+        // (3) Project enablement check — opt-out: a template is enabled on the
+        //     chantier unless a project_process_template row says enabled = false.
+        //     Same rule as ApprovalRuleService.findRule, via the shared
+        //     isTemplateEnabledForProject helper (one meaning for the chantier switch).
+        if (!approvalRuleService.isTemplateEnabledForProject(projectId, templateId)) {
+            throw new BusinessRuleException("TEMPLATE_NOT_ENABLED_ON_PROJECT",
+                    "Ce template n'est pas activé sur ce projet");
         }
 
         // (4) Guard: only one RUNNING instance per (org, subjectType, subjectId)
@@ -1916,6 +1905,22 @@ public class ProcessService {
                     "Template introuvable ou non modifiable (template système)");
         }
 
+        // Validate: the request must contain every step of the template exactly once.
+        List<UUID> templateStepIds = jdbc.queryForList(
+                "select id from process_template_step where template_id = ?",
+                UUID.class, templateId);
+        if (items == null || items.size() != templateStepIds.size()) {
+            throw new BadRequestException("REORDER_INCOMPLETE",
+                    "La liste doit contenir toutes les étapes");
+        }
+        Set<UUID> itemIds = new HashSet<>();
+        for (ReorderStepItem item : items) {
+            if (!templateStepIds.contains(item.stepId()) || !itemIds.add(item.stepId())) {
+                throw new BadRequestException("REORDER_INCOMPLETE",
+                        "La liste doit contenir toutes les étapes");
+            }
+        }
+
         // Two-phase in one transaction: first shift ALL steps of the template to a
         // temp range so the (template_id, step_order) unique constraint cannot
         // clash during the swap, then set the final orders from the items.
@@ -2178,7 +2183,7 @@ public class ProcessService {
     private String stepRender(TemplateStepView step, UUID orgId) {
         String label = roleLabel(step.assigneeRole(), orgId);
         if ("ALL".equals(step.approvalMode())) {
-            return "tous les " + pluralRole(label);
+            return "tous les membres " + label;
         }
         return label;
     }
@@ -2553,6 +2558,37 @@ public class ProcessService {
                 Integer.class, projectId, orgId);
         if (projCnt == null || projCnt == 0) {
             throw new ResourceNotFoundException("PROJECT_NOT_FOUND", "Projet introuvable");
+        }
+
+        // Refuse disabling the last unconditional (empty conditions) CASH_PAYMENT
+        // rule on this chantier.
+        if (Boolean.FALSE.equals(req.enabled())) {
+            List<Map<String, Object>> tmpl = jdbc.queryForList(
+                    "select subject_type, conditions::text as conditions from process_template where id = ?",
+                    templateId);
+            if (!tmpl.isEmpty()) {
+                String st = (String) tmpl.get(0).get("subject_type");
+                String cond = (String) tmpl.get(0).get("conditions");
+                boolean emptyCond = cond == null || cond.isBlank() || "{}".equals(cond.trim());
+                if ("CASH_PAYMENT".equals(st) && emptyCond) {
+                    Integer others = jdbc.queryForObject(
+                            """
+                            select count(*) from process_template pt
+                            where pt.subject_type = 'CASH_PAYMENT' and pt.active = true
+                              and (pt.org_id = ? or pt.org_id is null)
+                              and pt.id <> ?
+                              and pt.conditions::text = '{}'
+                              and not exists (
+                                  select 1 from project_process_template p2
+                                  where p2.project_id = ? and p2.template_id = pt.id and p2.enabled = false
+                              )
+                            """, Integer.class, orgId, templateId, projectId);
+                    if (others != null && others == 0) {
+                        throw new BusinessRuleException("LAST_UNCONDITIONAL_RULE",
+                                "Au moins une règle de paiement sans condition doit rester active sur ce chantier");
+                    }
+                }
+            }
         }
 
         jdbc.update(

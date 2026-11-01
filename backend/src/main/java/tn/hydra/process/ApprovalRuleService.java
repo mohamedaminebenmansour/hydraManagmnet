@@ -107,6 +107,23 @@ public class ApprovalRuleService {
         return new RuleExplanation(chosen, results);
     }
 
+    /** Opt-out rule: a template is enabled on a chantier unless its
+     *  project_process_template row says enabled = false (null = no row = enabled).
+     *  Shared by startByTemplateId (via isTemplateEnabledForProject) + findRule
+     *  (via loadedCandidates). */
+    static boolean enabledFromRow(Map<String, Object> row) {
+        return row == null || !Boolean.FALSE.equals(row.get("enabled"));
+    }
+
+    /** Single-template check for startByTemplateId. */
+    public boolean isTemplateEnabledForProject(UUID projectId, UUID templateId) {
+        if (projectId == null || templateId == null) return true;
+        List<Map<String, Object>> rows = jdbc.queryForList(
+                "select enabled from project_process_template where project_id = ? and template_id = ?",
+                projectId, templateId);
+        return enabledFromRow(rows.isEmpty() ? null : rows.get(0));
+    }
+
     /** Load + build RuleCandidates for every active template visible to the org.
      *  forceIncludeId (nullable) is included as if active — used by /test. */
     private List<LoadedCandidate> loadedCandidates(UUID orgId, String subjectType, RuleMatcher.PaymentFacts facts,
@@ -126,25 +143,19 @@ public class ApprovalRuleService {
             return List.of();
         }
 
-        // Whitelist enablement — SAME rule as ProcessService.start:
-        // no rows for the chantier => all active templates enabled;
-        // any row => only templates with an enabled = true row are enabled.
-        boolean projectHasRows = false;
+        // Per-chantier enablement (opt-out): a template is enabled unless its
+        // project_process_template row says enabled = false (no row = enabled).
+        // Same rule as startByTemplateId (via isTemplateEnabledForProject +
+        // enabledFromRow).
         Map<UUID, Map<String, Object>> perProject = new HashMap<>();
         if (facts.projectId() != null) {
-            Integer rowCount = jdbc.queryForObject(
-                    "select count(*) from project_process_template where project_id = ?",
-                    Integer.class, facts.projectId());
-            projectHasRows = rowCount != null && rowCount > 0;
-            if (projectHasRows) {
-                List<Map<String, Object>> rows = jdbc.queryForList("""
-                        select template_id, enabled, amount_threshold_override
-                        from project_process_template
-                        where project_id = ?
-                        """, facts.projectId());
-                for (Map<String, Object> r : rows) {
-                    perProject.put((UUID) r.get("template_id"), r);
-                }
+            List<Map<String, Object>> rows = jdbc.queryForList("""
+                    select template_id, enabled, amount_threshold_override
+                    from project_process_template
+                    where project_id = ?
+                    """, facts.projectId());
+            for (Map<String, Object> r : rows) {
+                perProject.put((UUID) r.get("template_id"), r);
             }
         }
 
@@ -161,18 +172,9 @@ public class ApprovalRuleService {
                 continue;
             }
 
-            boolean enabledForProject;
-            BigDecimal override = null;
-            if (!projectHasRows) {
-                enabledForProject = true; // whitelist open
-            } else {
-                Map<String, Object> row = perProject.get(templateId);
-                enabledForProject = row != null
-                        && (row.get("enabled") == null || Boolean.TRUE.equals(row.get("enabled")));
-                if (row != null) {
-                    override = toBigDecimal(row.get("amount_threshold_override"));
-                }
-            }
+            Map<String, Object> row = perProject.get(templateId);
+            boolean enabledForProject = enabledFromRow(row);
+            BigDecimal override = row != null ? toBigDecimal(row.get("amount_threshold_override")) : null;
             boolean orgScoped = Boolean.TRUE.equals(t.get("org_scoped"));
             Instant createdAt = toInstant(t.get("created_at"));
             RuleMatcher.RuleCandidate cand = new RuleMatcher.RuleCandidate(
