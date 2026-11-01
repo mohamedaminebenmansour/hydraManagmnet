@@ -272,6 +272,10 @@ public class ProcessService {
         }
     }
 
+    /** Template option + its steps (ordered by step_order), for the owner's Processus page. */
+    public record AdminTemplateOption(UUID id, String key, String name, boolean active,
+                                      String description, List<TemplateStepView> steps) {}
+
     /** Full template detail (for admin screens). */
     public record TemplateDetail(
             UUID id, String key, String name, UUID orgId, boolean active,
@@ -1782,22 +1786,52 @@ public class ProcessService {
                 orgId);
     }
 
-    public List<TemplateOption> listAllTemplates(Authentication auth) {
+    public List<AdminTemplateOption> listAllTemplates(Authentication auth) {
         AppUser me = currentUser(auth);
         requireOwner(me);
         UUID orgId = me.getOrgId();
+
+        // One query for the steps of every visible template, grouped in memory.
+        Map<UUID, List<TemplateStepView>> stepsByTemplate = new HashMap<>();
+        jdbc.query(
+                """
+                select s.template_id, s.id, s.step_order, s.step_key, s.name, s.assignee_role,
+                       s.requires_attachment, s.approval_mode, s.due_days
+                from process_template_step s
+                join process_template t on t.id = s.template_id
+                where t.org_id = ? or t.org_id is null
+                order by s.template_id, s.step_order asc
+                """,
+                rs -> {
+                    stepsByTemplate.computeIfAbsent((UUID) rs.getObject("template_id"), k -> new ArrayList<>())
+                            .add(new TemplateStepView(
+                                    (UUID) rs.getObject("id"),
+                                    rs.getInt("step_order"),
+                                    rs.getString("step_key"),
+                                    rs.getString("name"),
+                                    rs.getString("assignee_role"),
+                                    rs.getBoolean("requires_attachment"),
+                                    rs.getString("approval_mode"),
+                                    (Integer) rs.getObject("due_days")));
+                },
+                orgId);
+
         return jdbc.query(
                 """
                 select id, key, name, active, description from process_template
                 where org_id = ? or org_id is null
                 order by key
                 """,
-                (rs, rowNum) -> new TemplateOption(
-                        (UUID) rs.getObject("id"),
-                        rs.getString("key"),
-                        rs.getString("name"),
-                        rs.getBoolean("active"),
-                        rs.getString("description")),
+                (rs, rowNum) -> {
+                    UUID id = (UUID) rs.getObject("id");
+                    return new AdminTemplateOption(
+                            id,
+                            rs.getString("key"),
+                            rs.getString("name"),
+                            rs.getBoolean("active"),
+                            rs.getString("description"),
+                            stepsByTemplate.getOrDefault(id, List.of()));
+                },
                 orgId);
     }
 
@@ -2285,14 +2319,19 @@ public class ProcessService {
             if (i > 0) sb.append(", puis ");
             sb.append(stepRender(step, t.orgId()));
             if (!allSame && step.dueDays() != null) {
-                sb.append(" (").append(step.dueDays()).append(" jours)");
+                sb.append(" (").append(daysLabel(step.dueDays())).append(")");
             }
         }
         if (allSame && common != null) {
-            sb.append(" (").append(common).append(" jours chacun)");
+            sb.append(" (").append(daysLabel(common)).append(" chacun)");
         }
         sb.append(".");
         return sb.toString();
+    }
+
+    /** "1 jour" (singular) or "N jours". */
+    private static String daysLabel(int n) {
+        return n == 1 ? "1 jour" : n + " jours";
     }
 
     /** Render one step: ANY -> role label; ALL -> "tous les {plural}". */
@@ -2458,6 +2497,9 @@ public class ProcessService {
         return d == 0 ? null : d;
     }
 
+    private static final String EMPTY_CONDITION_LIST_MSG =
+            "Choisissez au moins une valeur ou désactivez cette condition";
+
     private Map<String, Object> validateConditions(UUID orgId, Map<String, Object> conditions) {
         if (conditions == null || conditions.isEmpty()) return new HashMap<>();
         Map<String, Object> normalized = new HashMap<>();
@@ -2470,6 +2512,8 @@ public class ProcessService {
                             "Le montant minimum doit être un nombre");
                     if (bd.signum() < 0) throw new BadRequestException("INVALID_AMOUNT_MIN",
                             "Le montant minimum ne peut pas être négatif");
+                    if (bd.signum() == 0) throw new BadRequestException("INVALID_AMOUNT_MIN",
+                            "Le montant minimum doit être supérieur à 0");
                     if (bd.scale() > 3) throw new BadRequestException("INVALID_AMOUNT_MIN",
                             "Le montant minimum doit avoir au plus 3 décimales");
                     amountMin = bd;
@@ -2480,6 +2524,8 @@ public class ProcessService {
                             "Le montant maximum doit être un nombre");
                     if (bd.signum() < 0) throw new BadRequestException("INVALID_AMOUNT_MAX",
                             "Le montant maximum ne peut pas être négatif");
+                    if (bd.signum() == 0) throw new BadRequestException("INVALID_AMOUNT_MAX",
+                            "Le montant maximum doit être supérieur à 0");
                     if (bd.scale() > 3) throw new BadRequestException("INVALID_AMOUNT_MAX",
                             "Le montant maximum doit avoir au plus 3 décimales");
                     amountMax = bd;
@@ -2487,6 +2533,8 @@ public class ProcessService {
                 }
                 case "natures" -> {
                     List<String> codes = toStringList(e.getValue(), "INVALID_NATURES", "Les natures doivent être une liste");
+                    if (codes.isEmpty())
+                        throw new BadRequestException("INVALID_NATURES", EMPTY_CONDITION_LIST_MSG);
                     for (String code : codes) {
                         if (natureCode(code) == null)
                             throw new BadRequestException("INVALID_NATURES", "Nature inconnue : " + code);
@@ -2495,6 +2543,8 @@ public class ProcessService {
                 }
                 case "payment_modes" -> {
                     List<String> codes = toStringList(e.getValue(), "INVALID_PAYMENT_MODES", "Les modes de règlement doivent être une liste");
+                    if (codes.isEmpty())
+                        throw new BadRequestException("INVALID_PAYMENT_MODES", EMPTY_CONDITION_LIST_MSG);
                     for (String code : codes) {
                         if (paymentModeCode(code) == null)
                             throw new BadRequestException("INVALID_PAYMENT_MODES", "Mode de règlement inconnu : " + code);

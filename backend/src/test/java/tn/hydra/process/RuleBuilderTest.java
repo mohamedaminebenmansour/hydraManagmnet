@@ -393,4 +393,31 @@ class RuleBuilderTest {
         String s = svc.getTemplateSentence(ownerAuth, t);
         assertThat(s).contains("tous les membres Finance");
     }
+
+    // ══════════════════════════════════════════════════════════════
+    //  fix/rule-builder-ui — admin list steps, empty lists, amount > 0
+    // ══════════════════════════════════════════════════════════════
+    @Test
+    void adminTemplateList_returnsPaymentApprovalWithItsThreeStepsInOrder() {
+        ProcessService.AdminTemplateOption pa = svc.listAllTemplates(ownerAuth).stream()
+                .filter(o -> o.id().equals(systemTemplateId("PAYMENT_APPROVAL")))
+                .findFirst().orElseThrow();
+        assertThat(pa.steps()).hasSize(3);
+        assertThat(pa.steps()).extracting(ProcessService.TemplateStepView::stepOrder).containsExactly(1, 2, 3);
+    }
+
+    @Test
+    void rejectsEmptyNaturesList() {
+        BadRequestException ex = assertThrows(BadRequestException.class,
+                () -> svc.createTemplate(ownerAuth, req(map("natures", List.of()), "CASH_PAYMENT")));
+        assertThat(ex.getCode()).isEqualTo("INVALID_NATURES");
+        assertThat(ex.getMessage()).contains("Choisissez au moins une valeur ou désactivez cette condition");
+    }
+
+    @Test
+    void rejectsAmountMinMinusNine() {
+        BadRequestException ex = assertThrows(BadRequestException.class,
+                () -> svc.createTemplate(ownerAuth, req(map("amount_min", new BigDecimal("-9")), "CASH_PAYMENT")));
+        assertThat(ex.getCode()).isEqualTo("INVALID_AMOUNT_MIN");
+    }
 }

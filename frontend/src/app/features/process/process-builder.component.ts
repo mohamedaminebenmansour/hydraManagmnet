@@ -131,7 +131,8 @@ interface DraftStep {
                          (ngModelChange)="setCondition('amount_min', toAmount($event))" placeholder="TND" />
                 </div>
               }
-              @if (chipErrors()['amount_min']; as err) { <div class="chip-err">{{ err }}</div> }
+              @if (amountError('amount_min'); as err) { <div class="chip-err">{{ err }}</div> }
+              @else if (chipErrors()['amount_min']) { <div class="chip-err">{{ chipErrors()['amount_min'] }}</div> }
             </div>
 
             <div class="chip">
@@ -145,23 +146,8 @@ interface DraftStep {
                          (ngModelChange)="setCondition('amount_max', toAmount($event))" placeholder="TND" />
                 </div>
               }
-              @if (chipErrors()['amount_max']; as err) { <div class="chip-err">{{ err }}</div> }
-            </div>
-
-            <div class="chip">
-              <div class="chip-head">
-                <p-toggleswitch [ngModel]="chipActive('project_ids')" (ngModelChange)="toggleChip('project_ids', $event)" />
-                <span>Chantiers</span>
-              </div>
-              @if (chipActive('project_ids')) {
-                <div class="chip-body">
-                  <p-multiSelect [options]="projects()" optionValue="id" optionLabel="name"
-                            [ngModel]="conditions()['project_ids']"
-                            (ngModelChange)="setCondition('project_ids', $event)"
-                            placeholder="Sélectionner les chantiers" styleClass="chip-select"></p-multiSelect>
-                </div>
-              }
-              @if (chipErrors()['project_ids']; as err) { <div class="chip-err">{{ err }}</div> }
+              @if (amountError('amount_max'); as err) { <div class="chip-err">{{ err }}</div> }
+              @else if (chipErrors()['amount_max']) { <div class="chip-err">{{ chipErrors()['amount_max'] }}</div> }
             </div>
 
             <div class="chip">
@@ -197,6 +183,13 @@ interface DraftStep {
             </div>
           </div>
 
+          @if (chipActive('project_ids')) {
+            <div class="chip-empty">
+              Cette règle est limitée à certains chantiers (ancienne méthode).
+              Gérez les chantiers dans l'onglet Règles de chaque chantier.
+            </div>
+          }
+
           @if (!hasConditions()) {
             <div class="chip-empty">Aucune condition — tous les paiements sont concernés.</div>
           }
@@ -205,7 +198,8 @@ interface DraftStep {
             <button pButton label="Retour" icon="pi pi-arrow-left" severity="secondary" [text]="true"
                     (click)="goto(1)"></button>
             <button pButton label="Continuer" icon="pi pi-arrow-right" severity="success"
-                    (click)="continueFromQuand()" [loading]="saving()"></button>
+                    (click)="continueFromQuand()" [loading]="saving()"
+                    [disabled]="!!amountError('amount_min') || !!amountError('amount_max')"></button>
           </div>
         </div>
       }
@@ -291,8 +285,11 @@ interface DraftStep {
                         placeholder="Chantier"></p-select>
               <button pButton label="Tester" icon="pi pi-play" severity="info"
                       (click)="runTest()" [loading]="testing()"
-                      [disabled]="testAmount() == null"></button>
+                      [disabled]="testAmount() == null || !testProject()"></button>
             </div>
+            @if (!testProject()) {
+              <div class="chip-err">Choisissez un chantier</div>
+            }
             @if (testResult(); as tr) {
               <div class="test-result">
                 @if (testVerdict(); as v) {
@@ -403,6 +400,13 @@ export class ProcessBuilderComponent implements OnInit {
     this.clearChipError(key);
   }
 
+  /** Error under an active amount chip when the value is empty, zero or negative. */
+  amountError(key: 'amount_min' | 'amount_max'): string | null {
+    if (!this.chipActive(key)) return null;
+    const v = this.conditions()[key];
+    return v == null || v <= 0 ? 'Entrez un montant supérieur à 0' : null;
+  }
+
   hasConditions(): boolean {
     return Object.keys(this.conditions()).length > 0;
   }
@@ -472,6 +476,7 @@ export class ProcessBuilderComponent implements OnInit {
   // ── Screen 2 — Quand ──────────────────────────────────────────
   continueFromQuand(): void {
     if (!this.templateId()) { this.goto(1); return; }
+    if (this.amountError('amount_min') || this.amountError('amount_max')) return;
     this.saving.set(true);
     this.chipErrors.set({});
     this.processService.updateTemplate(this.templateId(), { conditions: this.conditions() }).subscribe(r => {
@@ -569,7 +574,7 @@ export class ProcessBuilderComponent implements OnInit {
   }
 
   runTest(): void {
-    if (!this.templateId() || this.testAmount() == null) return;
+    if (!this.templateId() || this.testAmount() == null || !this.testProject()) return;
     this.testing.set(true);
     this.processService.testRule(this.templateId(), {
       projectId: this.testProject(),

@@ -42,7 +42,7 @@ public class ProcessController {
 
     /** List ALL templates (incl. inactive) — owner only. */
     @GetMapping("/api/processes/templates/admin")
-    public ResponseEntity<List<ProcessService.TemplateOption>> listAllTemplates() {
+    public ResponseEntity<List<ProcessService.AdminTemplateOption>> listAllTemplates() {
         Authentication auth = SecurityContextHolder.getContext().getAuthentication();
         return ResponseEntity.ok(svc.listAllTemplates(auth));
     }
