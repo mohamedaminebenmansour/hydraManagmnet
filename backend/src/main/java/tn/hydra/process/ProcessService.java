@@ -218,7 +218,18 @@ public class ProcessService {
             java.math.BigDecimal subjectAmount,
             // due_days SLA: true when a PENDING step started more than due_days
             // days ago (null due_days => never late).
-            boolean late) {}
+            boolean late,
+            // When the substitute sees a step (the main assignee is absent/inactive),
+            // this is the main person's full name; null otherwise.
+            String onBehalfOf) {
+
+        public MyTaskSummary withOnBehalfOf(String onBehalf) {
+            return new MyTaskSummary(stepInstanceId, instanceId, projectId, projectName,
+                    templateKey, templateName, subjectType, subjectId, stepKey, stepName,
+                    status, assigneeRole, assigneeUserId, assigneeName, requiresAttachment,
+                    startedAt, subjectLabel, subjectAmount, late, onBehalf);
+        }
+    }
 
     /** One pending approval on a chantier (the "En attente" block). */
     public record PendingApproval(
@@ -461,6 +472,19 @@ public class ProcessService {
                 """,
                 UUID.class, projectId, me.getId(), assigneeRole);
         if (!roleMatch.isEmpty()) return;
+        // Substitute path: if the step's assignee is absent or inactive, the
+        // substitute for that role on the chantier may act.
+        if (assigneeUserId != null) {
+            Integer absentOrInactive = jdbc.queryForObject(
+                    "select count(*) from app_user where id = ? and (is_active = false or (absent_until is not null and absent_until >= current_date))",
+                    Integer.class, assigneeUserId);
+            if (absentOrInactive != null && absentOrInactive > 0) {
+                Integer subMatch = jdbc.queryForObject(
+                        "select count(*) from project_role_assignee where project_id = ? and upper(role_code) = upper(?) and substitute_user_id = ?",
+                        Integer.class, projectId, assigneeRole, me.getId());
+                if (subMatch != null && subMatch > 0) return;
+            }
+        }
         throw new BusinessRuleException("NOT_ALLOWED",
                 "Vous n'êtes pas autorisé à agir sur cette étape");
     }
@@ -494,8 +518,10 @@ public class ProcessService {
         List<Map<String, Object>> mappingRows = jdbc.queryForList(
                 """
                 select pra.user_id, u.is_owner as user_is_owner, u.is_active as user_active,
+                       u.absent_until as user_absent_until,
                        pm.user_id as pm_user_id,
-                       pra.substitute_user_id, su.is_active as substitute_active
+                       pra.substitute_user_id, su.is_active as substitute_active,
+                       su.absent_until as substitute_absent_until
                 from project_role_assignee pra
                 join app_user u on u.id = pra.user_id
                 left join app_user su on su.id = pra.substitute_user_id
@@ -510,19 +536,22 @@ public class ProcessService {
             UUID mappedUser = (UUID) row.get("user_id");
             boolean userActive = row.get("user_active") == null
                     || Boolean.TRUE.equals(row.get("user_active"));
+            boolean userAbsent = isAbsent(row.get("user_absent_until"));
             boolean isOwnerRole = "OWNER".equalsIgnoreCase(assigneeRole);
             // For OWNER role: mapped user may be org owner OR a project_member.
             // For other roles: mapped user must be a project_member.
             boolean pmFound = row.get("pm_user_id") != null;
-            if (userActive && (isOwnerRole || pmFound)) {
+            if (userActive && !userAbsent && (isOwnerRole || pmFound)) {
                 return mappedUser;
             }
-            // Main person absent (inactive) — fall back to the substitute if set + active.
+            // Main person absent (inactive OR absent_until >= today) — fall back
+            // to the substitute if set + active + not absent.
             UUID substitute = (UUID) row.get("substitute_user_id");
             if (substitute != null) {
                 boolean subActive = row.get("substitute_active") == null
                         || Boolean.TRUE.equals(row.get("substitute_active"));
-                if (subActive) {
+                boolean subAbsent = isAbsent(row.get("substitute_absent_until"));
+                if (subActive && !subAbsent) {
                     return substitute;
                 }
             }
@@ -559,6 +588,18 @@ public class ProcessService {
                 """,
                 UUID.class, projectId, assigneeRole);
         return rows.isEmpty() ? null : rows.get(0);
+    }
+
+    /** A user is absent when absent_until >= today (null = not absent). */
+    private static boolean isAbsent(Object absentUntil) {
+        if (absentUntil == null) return false;
+        if (absentUntil instanceof java.sql.Date d) {
+            return !d.toLocalDate().isBefore(java.time.LocalDate.now());
+        }
+        if (absentUntil instanceof java.time.LocalDate ld) {
+            return !ld.isBefore(java.time.LocalDate.now());
+        }
+        return false;
     }
 
     private static Instant toInstant(Timestamp ts) {
@@ -961,6 +1002,29 @@ public class ProcessService {
                 ",\"hasAttachment\":" + hasAttachment +
                 (assessedAmount != null ? ",\"assessedAmount\":" + assessedAmount : "") +
                 "}");
+
+        // If the actor is the substitute (acting on behalf of an absent/inactive
+        // assignee), log STEP_COMPLETED_BY_SUBSTITUTE in addition to STEP_COMPLETED.
+        if (!Objects.equals(me.getId(), assigneeUserId) && assigneeUserId != null) {
+            Integer absentOrInactive = jdbc.queryForObject(
+                    "select count(*) from app_user where id = ? and (is_active = false or (absent_until is not null and absent_until >= current_date))",
+                    Integer.class, assigneeUserId);
+            if (absentOrInactive != null && absentOrInactive > 0) {
+                Integer subMatch = jdbc.queryForObject(
+                        "select count(*) from project_role_assignee where project_id = ? and upper(role_code) = upper(?) and substitute_user_id = ?",
+                        Integer.class, projectId, assigneeRole, me.getId());
+                if (subMatch != null && subMatch > 0) {
+                    String mainName = jdbc.queryForObject(
+                            "select full_name from app_user where id = ?", String.class, assigneeUserId);
+                    audit.log("STEP_COMPLETED_BY_SUBSTITUTE", "process_step_instance", stepInstanceId,
+                            "{\"instanceId\":\"" + instanceId +
+                            "\",\"stepKey\":\"" + jsonEscape(stepKey) +
+                            "\",\"substitute\":\"" + me.getId() + "\"" +
+                            ",\"onBehalfOf\":\"" + jsonEscape(mainName) + "\"" +
+                            "}");
+                }
+            }
+        }
 
         if (!nextSteps.isEmpty()) {
             Map<String, Object> next = nextSteps.get(0);
@@ -1508,7 +1572,7 @@ public class ProcessService {
          * (FINANCE/ACHAT/CHEF_CHANTIER). The fallback join must go through
          * user_role + role.code.
          */
-        return jdbc.query(
+        List<MyTaskSummary> tasks = jdbc.query(
                 """
                 select psi.id as step_instance_id, pi.id as instance_id, pi.project_id,
                        p.name as project_name,
@@ -1545,6 +1609,20 @@ public class ProcessService {
                               and pm2.user_id = ?
                               and r2.code = psi.assignee_role
                         ))
+                    or (psi.assignee_user_id is not null                    -- substitute path
+                        and exists (
+                            select 1 from project_role_assignee pra
+                            where pra.project_id = pi.project_id
+                              and upper(pra.role_code) = upper(psi.assignee_role)
+                              and pra.substitute_user_id = ?
+                              and pra.user_id = psi.assignee_user_id
+                              and exists (
+                                  select 1 from app_user au
+                                  where au.id = psi.assignee_user_id
+                                    and (au.is_active = false
+                                         or (au.absent_until is not null and au.absent_until >= current_date))
+                              )
+                        ))
                   )
                 order by psi.started_at asc nulls last
                 """,
@@ -1567,9 +1645,38 @@ public class ProcessService {
                         toInstant(rs.getTimestamp("started_at")),
                         rs.getString("subject_label"),
                         rs.getBigDecimal("subject_amount"),
-                        rs.getBoolean("late")
+                        rs.getBoolean("late"),
+                        null  // onBehalfOf — set in post-processing
                 ),
-                orgId, isOwner, me.getId(), me.getId());
+                orgId, isOwner, me.getId(), me.getId(), me.getId());
+
+        // Post-process: set onBehalfOf for tasks seen via the substitute path
+        // (the main assignee is absent/inactive and I am the substitute).
+        if (!isOwner) {
+            List<MyTaskSummary> result = new ArrayList<>();
+            for (MyTaskSummary t : tasks) {
+                if (t.assigneeUserId() != null && !t.assigneeUserId().equals(me.getId())
+                        && t.assigneeName() != null) {
+                    Integer subMatch = jdbc.queryForObject(
+                            """
+                            select count(*) from project_role_assignee pra
+                            join app_user au on au.id = pra.user_id
+                            where pra.project_id = ? and upper(pra.role_code) = upper(?)
+                              and pra.substitute_user_id = ? and pra.user_id = ?
+                              and (au.is_active = false
+                                   or (au.absent_until is not null and au.absent_until >= current_date))
+                            """,
+                            Integer.class, t.projectId(), t.assigneeRole(), me.getId(), t.assigneeUserId());
+                    if (subMatch != null && subMatch > 0) {
+                        result.add(t.withOnBehalfOf(t.assigneeName()));
+                        continue;
+                    }
+                }
+                result.add(t);
+            }
+            return result;
+        }
+        return tasks;
     }
 
     // ═══════════════════════════════════════════════════════════════

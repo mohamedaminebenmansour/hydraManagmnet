@@ -11,11 +11,15 @@ import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.test.annotation.Rollback;
 import org.springframework.transaction.annotation.Transactional;
+import tn.hydra.common.BusinessRuleException;
+import tn.hydra.user.UserService;
 
+import java.time.LocalDate;
 import java.util.List;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 
 /**
  * ============================================================================
@@ -34,6 +38,7 @@ class ChantierRulesTest {
 
     @Autowired private ProcessService svc;
     @Autowired private JdbcTemplate jdbc;
+    @Autowired private UserService userService;
 
     private UUID orgId;
     private UUID ownerId;
@@ -151,5 +156,103 @@ class ChantierRulesTest {
         // Just started → 0 days waiting (whole days).
         assertThat(p.daysWaiting()).isNotNull();
         assertThat(p.daysWaiting()).isGreaterThanOrEqualTo(0);
+    }
+
+    // ══════════════════════════════════════════════════════════════
+    //  Absence — absent_until >= today → substitute resolves at start +
+    //  sees + completes the step; absence ended → substitute no longer sees.
+    // ══════════════════════════════════════════════════════════════
+    @Test
+    void absentMain_newProcessAssignsSubstitute() {
+        UUID main = newFinanceUser("chantier.absent.new@hydra.test", "Absent New Main");
+        UUID sub = newFinanceUser("chantier.absent.newsub@hydra.test", "Absent New Sub");
+        svc.upsertRoleAssignees(ownerAuth, projectId, new ProcessService.UpsertRoleAssigneesRequest(
+                List.of(new ProcessService.RoleAssigneeItem("FINANCE", main, sub))));
+
+        // Mark main absent (absent_until = today).
+        jdbc.update("update app_user set absent_until = current_date where id = ?", main);
+
+        // Start a process — the first step should be assigned to the substitute.
+        ProcessService.StartProcessResponse started = svc.startByTemplateId(
+                ownerAuth, projectId, paymentApprovalId(), "CASH_MOVEMENT", UUID.randomUUID());
+        assertThat(firstStepAssignee(started.id())).isEqualTo(sub);
+    }
+
+    @Test
+    void absentMain_substituteSeesAndCompletesStep_withOnBehalfOfAndAudit() {
+        UUID main = newFinanceUser("chantier.absent.main@hydra.test", "Absent Main");
+        UUID sub = newFinanceUser("chantier.absent.sub@hydra.test", "Absent Sub");
+        svc.upsertRoleAssignees(ownerAuth, projectId, new ProcessService.UpsertRoleAssigneesRequest(
+                List.of(new ProcessService.RoleAssigneeItem("FINANCE", main, sub))));
+
+        // Start a process — step 1 is assigned to main (active at start).
+        ProcessService.StartProcessResponse started = svc.startByTemplateId(
+                ownerAuth, projectId, paymentApprovalId(), "CASH_MOVEMENT", UUID.randomUUID());
+        UUID stepId = jdbc.queryForObject(
+                "select id from process_step_instance where instance_id = ? and step_order = 1",
+                UUID.class, started.id());
+        assertThat(firstStepAssignee(started.id())).isEqualTo(main);
+
+        // Mark main absent (absent_until = today).
+        jdbc.update("update app_user set absent_until = current_date where id = ?", main);
+
+        // The substitute sees the step in my-tasks with onBehalfOf = main's name.
+        Authentication subAuth = new UsernamePasswordAuthenticationToken(
+                "chantier.absent.sub@hydra.test", null, List.of());
+        List<ProcessService.MyTaskSummary> tasks = svc.listMyTasks(subAuth);
+        assertThat(tasks).isNotEmpty();
+        ProcessService.MyTaskSummary task = tasks.stream()
+                .filter(t -> t.stepInstanceId().equals(stepId)).findFirst().orElseThrow();
+        assertThat(task.onBehalfOf()).isEqualTo("Absent Main");
+
+        // The substitute completes the step.
+        SecurityContextHolder.getContext().setAuthentication(subAuth);
+        ProcessService.StepResult result = svc.completeStep(subAuth, started.id(), stepId,
+                new ProcessService.CompleteStepRequest("substitute approval", null));
+        assertThat(result.newStatus()).isEqualTo("DONE");
+
+        // STEP_COMPLETED_BY_SUBSTITUTE was logged.
+        Integer substituteEvents = jdbc.queryForObject(
+                "select count(*) from event_log where action = 'STEP_COMPLETED_BY_SUBSTITUTE' and entity_id = ?",
+                Integer.class, stepId);
+        assertThat(substituteEvents).isEqualTo(1);
+    }
+
+    @Test
+    void absenceEnded_substituteNoLongerSeesStep() {
+        UUID main = newFinanceUser("chantier.ended.main@hydra.test", "Ended Main");
+        UUID sub = newFinanceUser("chantier.ended.sub@hydra.test", "Ended Sub");
+        svc.upsertRoleAssignees(ownerAuth, projectId, new ProcessService.UpsertRoleAssigneesRequest(
+                List.of(new ProcessService.RoleAssigneeItem("FINANCE", main, sub))));
+
+        ProcessService.StartProcessResponse started = svc.startByTemplateId(
+                ownerAuth, projectId, paymentApprovalId(), "CASH_MOVEMENT", UUID.randomUUID());
+
+        // Mark main absent → substitute sees the step.
+        jdbc.update("update app_user set absent_until = current_date where id = ?", main);
+        Authentication subAuth = new UsernamePasswordAuthenticationToken(
+                "chantier.ended.sub@hydra.test", null, List.of());
+        assertThat(svc.listMyTasks(subAuth).stream().anyMatch(t -> t.instanceId().equals(started.id()))).isTrue();
+
+        // End the absence → substitute no longer sees it.
+        jdbc.update("update app_user set absent_until = null where id = ?", main);
+        assertThat(svc.listMyTasks(subAuth).stream().noneMatch(t -> t.instanceId().equals(started.id()))).isTrue();
+    }
+
+    @Test
+    void absenceDateInThePastRefused() {
+        UUID user = newFinanceUser("chantier.past@hydra.test", "Past User");
+        assertThrows(BusinessRuleException.class, () ->
+                userService.setAbsence(ownerAuth, user, LocalDate.now().minusDays(1)));
+    }
+
+    @Test
+    void nonOwnerCannotSetAnotherUserAbsence() {
+        UUID user1 = newFinanceUser("chantier.nonowner1@hydra.test", "Non Owner 1");
+        UUID user2 = newFinanceUser("chantier.nonowner2@hydra.test", "Non Owner 2");
+        Authentication user1Auth = new UsernamePasswordAuthenticationToken(
+                "chantier.nonowner1@hydra.test", null, List.of());
+        assertThrows(BusinessRuleException.class, () ->
+                userService.setAbsence(user1Auth, user2, LocalDate.now().plusDays(1)));
     }
 }
