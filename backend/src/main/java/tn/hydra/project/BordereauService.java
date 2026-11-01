@@ -260,6 +260,37 @@ public class BordereauService {
                 body.importWarnings(),
                 lineId, me.getOrgId());
 
+        // Re-run warnings for this line (unit normalisation + unknown unit).
+        // Re-read the updated line to get the current values.
+        List<Map<String, Object>> updatedRows = jdbc.queryForList(
+                "select * from bordereau_line where id = ? and org_id = ?", lineId, me.getOrgId());
+        if (!updatedRows.isEmpty()) {
+            Map<String, Object> r = updatedRows.get(0);
+            String updatedUnitRaw = (String) r.get("unit_raw");
+            String updatedUnit = (String) r.get("unit");
+            String updatedDesignation = (String) r.get("designation");
+            List<String> newWarnings = new ArrayList<>();
+
+            // §6 rule 5: unknown unit.
+            if (updatedUnitRaw != null && !updatedUnitRaw.isBlank() && updatedUnit == null) {
+                newWarnings.add("Unité inconnue : « " + updatedUnitRaw + " ».");
+            }
+            // §6 rule 3: unit but no quantity.
+            Object updatedQty = r.get("quantity");
+            if (updatedUnitRaw != null && !updatedUnitRaw.isBlank() && updatedQty == null) {
+                newWarnings.add("Quantité manquante (considérée comme 0).");
+            }
+            // §7.3: re-extract specs from the updated designation.
+            Map<String, Object> newSpecs = BordereauImportService.extractSpecs(updatedDesignation);
+            if (!newSpecs.isEmpty()) {
+                jdbc.update("update bordereau_line set specs = ?::jsonb where id = ? and org_id = ?",
+                        mapToJson(newSpecs), lineId, me.getOrgId());
+            }
+            // Save the re-run warnings.
+            jdbc.update("update bordereau_line set import_warnings = ? where id = ? and org_id = ?",
+                    newWarnings.toArray(new String[0]), lineId, me.getOrgId());
+        }
+
         audit.log("BORDEREAU_LINE_UPDATED", "bordereau_line", lineId,
                 "{\"versionId\":\"" + versionId + "\"}");
         return getLineResponse(lineId, me.getOrgId());

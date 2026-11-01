@@ -143,6 +143,7 @@
       <p-tab value="1"><i class="pi pi-users"></i> Équipe</p-tab>
       <p-tab value="2"><i class="pi pi-sitemap"></i> Processus</p-tab>
       <p-tab value="4"><i class="pi pi-bookmark"></i> Règles</p-tab>
+      <p-tab value="5"><i class="pi pi-file-excel"></i> Bordereau</p-tab>
     </p-tablist>
     <p-tabpanels>
       <!-- ==================== DOSSIERS ==================== -->
@@ -197,6 +198,11 @@
       <!-- ==================== RÈGLES (approvals for this chantier) ==================== -->
       <p-tabpanel value="4">
         <app-project-rules-tab [projectId]="projectId ?? ''" />
+      </p-tabpanel>
+
+      <!-- ==================== BORDEREAU (Excel import) ==================== -->
+      <p-tabpanel value="5">
+        <app-bordereau-tab [projectId]="projectId ?? ''" (changed)="onOuvragesChanged()" />
       </p-tabpanel>
 
       <!-- ==================== ÉQUIPE ==================== -->

@@ -23,9 +23,11 @@ import java.util.UUID;
 public class BordereauController {
 
     private final BordereauService bordereau;
+    private final BordereauImportService importService;
 
-    public BordereauController(BordereauService bordereau) {
+    public BordereauController(BordereauService bordereau, BordereauImportService importService) {
         this.bordereau = bordereau;
+        this.importService = importService;
     }
 
     // ── VERSIONS ────────────────────────────────────────────────────
@@ -36,6 +38,17 @@ public class BordereauController {
     public List<BordereauService.VersionResponse> listVersions(@PathVariable UUID projectId,
                                                                 Authentication auth) {
         return bordereau.listVersions(auth, projectId);
+    }
+
+    /** POST /api/projects/{projectId}/bordereau/import (multipart .xls/.xlsx) —
+     *  import an Excel bordereau as a new DRAFT version. Returns a preview
+     *  with warnings + pairs. */
+    @PostMapping(value = "/import", consumes = "multipart/form-data")
+    @PreAuthorize("hasAuthority('PERM_PROJECT_WRITE')")
+    public BordereauImportService.ImportPreview importExcel(@PathVariable UUID projectId,
+                                                             @RequestParam("file") org.springframework.web.multipart.MultipartFile file,
+                                                             Authentication auth) {
+        return importService.importExcel(auth, projectId, file);
     }
 
     /** POST /api/projects/{projectId}/bordereau/versions — create a new DRAFT version
