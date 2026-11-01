@@ -53,9 +53,21 @@ public class BordereauService {
     // RESPONSE SHAPES
     // ═══════════════════════════════════════════════════════════════
 
+    /** sourceDocumentId / sourceRevision / sourceRevisionId: the imported Excel file
+     *  (V45), null for versions not created by an import. */
     public record VersionResponse(UUID id, UUID projectId, int versionNo, String label,
                                   String reason, UUID documentId, String status,
-                                  UUID createdBy, Instant createdAt) {}
+                                  UUID createdBy, Instant createdAt,
+                                  UUID sourceDocumentId, String sourceRevision, UUID sourceRevisionId) {}
+
+    /** Version columns + the id of the source revision (resolved from its label). */
+    private static final String VERSION_SELECT = """
+            select v.id, v.project_id, v.version_no, v.label, v.reason, v.document_id, v.status,
+                   v.created_by, v.created_at, v.source_document_id, v.source_revision,
+                   (select r.id from document_revision r
+                     where r.document_id = v.source_document_id and r.rev_label = v.source_revision) as source_revision_id
+            from bordereau_version v
+            """;
 
     public record LineResponse(UUID id, UUID versionId, String[] sectionPath, String articleNo,
                               int sortOrder, String designation, String unitRaw, String unit,
@@ -77,12 +89,9 @@ public class BordereauService {
     public List<VersionResponse> listVersions(Authentication auth, UUID projectId) {
         AppUser me = users.findByEmail(auth.getName()).orElseThrow();
         projects.requireReadableForOuvrage(auth, me, projectId);
-        return jdbc.queryForList("""
-                select id, project_id, version_no, label, reason, document_id, status,
-                       created_by, created_at
-                from bordereau_version
-                where org_id = ? and project_id = ?
-                order by version_no desc
+        return jdbc.queryForList(VERSION_SELECT + """
+                where v.org_id = ? and v.project_id = ?
+                order by v.version_no desc
                 """, me.getOrgId(), projectId).stream()
                 .map(BordereauService::toVersionResponse).toList();
     }
@@ -556,7 +565,7 @@ public class BordereauService {
 
     private VersionResponse getVersionResponse(UUID versionId, UUID orgId) {
         List<Map<String, Object>> rows = jdbc.queryForList(
-                "select * from bordereau_version where id = ? and org_id = ?", versionId, orgId);
+                VERSION_SELECT + " where v.id = ? and v.org_id = ?", versionId, orgId);
         return rows.isEmpty() ? null : toVersionResponse(rows.get(0));
     }
 
@@ -574,7 +583,9 @@ public class BordereauService {
                 row.get("version_no") == null ? 0 : ((Number) row.get("version_no")).intValue(),
                 (String) row.get("label"), (String) row.get("reason"),
                 (UUID) row.get("document_id"), (String) row.get("status"),
-                (UUID) row.get("created_by"), toInstant(row.get("created_at")));
+                (UUID) row.get("created_by"), toInstant(row.get("created_at")),
+                (UUID) row.get("source_document_id"), (String) row.get("source_revision"),
+                (UUID) row.get("source_revision_id"));
     }
 
     @SuppressWarnings("unchecked")

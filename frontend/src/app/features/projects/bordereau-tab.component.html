@@ -7,6 +7,12 @@
                 placeholder="Choisir une version" styleClass="w100"
                 (onChange)="selectVersion($event.value)" />
     </div>
+    @if (selectedVersion(); as sv) {
+      @if (sv.sourceDocumentId && sv.sourceRevisionId) {
+        <p-button [label]="'Fichier source (rév. ' + (sv.sourceRevision ?? '—') + ')'" icon="pi pi-file-excel"
+                  [link]="true" size="small" [loading]="sourceLoading()" (onClick)="downloadSource()" />
+      }
+    }
     @if (activeVersion(); as av) {
       <p-tag [value]="'Active : ' + av.label" severity="success" />
     }
