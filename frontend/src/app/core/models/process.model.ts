@@ -41,6 +41,9 @@ export interface MyTask {
   currentAssigneeRole?: string;
   totalSteps?: number;
   createdAt?: string;
+  // When the substitute sees a step (main assignee absent/inactive),
+  // this is the main person's full name; null otherwise.
+  onBehalfOf?: string | null;
 }
 
 /** A single step in the timeline */
@@ -173,6 +176,7 @@ export function mapMyTask(raw: any): MyTask {
     currentAssigneeRole: String(raw?.currentAssigneeRole ?? raw?.current_assignee_role ?? ''),
     totalSteps: raw?.totalSteps ?? raw?.total_steps ?? undefined,
     createdAt: String(raw?.createdAt ?? raw?.created_at ?? ''),
+    onBehalfOf: raw?.onBehalfOf ?? raw?.on_behalf_of ?? null,
   };
 }
 
@@ -352,11 +356,17 @@ export interface RoleAssignee {
   userId: string;
   userName: string;
   userEmail: string;
+  substituteUserId?: string | null;
+  substituteUserName?: string | null;
+  // V44 — absence dates read from app_user.absent_until (ISO yyyy-MM-dd).
+  // Null when the person is not absent or the stored date is before today.
+  absentUntil?: string | null;
+  substituteAbsentUntil?: string | null;
 }
 
 /** Body for PUT /api/projects/:id/process-role-assignees — upsert batch. */
 export interface UpsertRoleAssigneesBody {
-  items: { roleCode: string; userId: string }[];
+  items: { roleCode: string; userId: string; substituteUserId?: string | null }[];
 }
 
 /** One candidate user the owner can pick from. */
@@ -366,6 +376,42 @@ export interface RoleCandidate {
   userEmail: string;
   isOwner: boolean;
   isProjectMember: boolean;
+  // V44 — ISO yyyy-MM-dd, or null when not absent / absence already ended.
+  absentUntil?: string | null;
+}
+
+/** Body PUT /api/projects/{id}/process-templates (enable/disable + threshold). */
+export interface AssignTemplateBody {
+  templateKey: string;
+  enabled: boolean;
+  defaultForSubjectType?: string | null;
+  amountThresholdOverride?: number | null;
+}
+
+/** Per-chantier config of a template (GET /api/projects/{id}/process-templates). */
+export interface ProjectTemplateConfig {
+  templateId: string;
+  templateKey: string;
+  templateName: string;
+  enabled: boolean;
+  defaultForSubjectType?: string | null;
+  amountThresholdOverride?: number | null;
+}
+
+/** One pending approval on a chantier (GET /api/projects/{id}/pending-approvals). */
+export interface PendingApproval {
+  stepInstanceId: string;
+  instanceId: string;
+  templateName: string;
+  stepName: string;
+  assigneeRole: string;
+  assigneeName: string | null;
+  subjectLabel: string | null;
+  subjectAmount: number | null;
+  startedAt: string | null;
+  dueDays: number | null;
+  late: boolean;
+  daysWaiting: number | null;
 }
 
 /** Composite view returned by GET /process-roles-needed. */
@@ -382,6 +428,11 @@ export function mapRoleAssignee(raw: any): RoleAssignee {
     userId: String(raw?.userId ?? raw?.user_id ?? ''),
     userName: String(raw?.userName ?? raw?.user_name ?? ''),
     userEmail: String(raw?.userEmail ?? raw?.user_email ?? ''),
+    substituteUserId: raw?.substituteUserId ?? raw?.substitute_user_id ?? null,
+    substituteUserName: raw?.substituteUserName ?? raw?.substitute_name ?? raw?.substituteName ?? null,
+    // V44 — absence dates (null when absent / before today).
+    absentUntil: raw?.absentUntil ?? raw?.absent_until ?? null,
+    substituteAbsentUntil: raw?.substituteAbsentUntil ?? raw?.substitute_absent_until ?? null,
   };
 }
 
@@ -399,6 +450,7 @@ export function mapRoleNeeded(raw: any): RoleNeeded {
       userEmail: String(c?.userEmail ?? c?.user_email ?? ''),
       isOwner: Boolean(c?.isOwner ?? c?.is_owner ?? false),
       isProjectMember: Boolean(c?.isProjectMember ?? c?.is_project_member ?? false),
+      absentUntil: c?.absentUntil ?? c?.absent_until ?? null,
     })),
   };
 }

@@ -199,6 +199,18 @@ public class ProcessController {
         return ResponseEntity.ok().build();
     }
 
+    /**
+     * Pending approval steps for a chantier (the "En attente" block):
+     * who, days waiting, due_days, late flag.
+     * GET /api/projects/{projectId}/pending-approvals
+     */
+    @GetMapping("/api/projects/{projectId}/pending-approvals")
+    public ResponseEntity<List<ProcessService.PendingApproval>> listPendingApprovals(
+            @PathVariable UUID projectId) {
+        Authentication auth = SecurityContextHolder.getContext().getAuthentication();
+        return ResponseEntity.ok(svc.listPendingApprovals(auth, projectId));
+    }
+
     // ══════════════════════════════════════════════════════════════
     //  RUNTIME — start / complete / reject / cancel
     // ══════════════════════════════════════════════════════════════

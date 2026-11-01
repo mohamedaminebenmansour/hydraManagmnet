@@ -19,6 +19,7 @@ import java.math.BigDecimal;
 import java.text.DecimalFormat;
 import java.text.DecimalFormatSymbols;
 import java.time.Instant;
+import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -218,7 +219,33 @@ public class ProcessService {
             java.math.BigDecimal subjectAmount,
             // due_days SLA: true when a PENDING step started more than due_days
             // days ago (null due_days => never late).
-            boolean late) {}
+            boolean late,
+            // When the substitute sees a step (the main assignee is absent/inactive),
+            // this is the main person's full name; null otherwise.
+            String onBehalfOf) {
+
+        public MyTaskSummary withOnBehalfOf(String onBehalf) {
+            return new MyTaskSummary(stepInstanceId, instanceId, projectId, projectName,
+                    templateKey, templateName, subjectType, subjectId, stepKey, stepName,
+                    status, assigneeRole, assigneeUserId, assigneeName, requiresAttachment,
+                    startedAt, subjectLabel, subjectAmount, late, onBehalf);
+        }
+    }
+
+    /** One pending approval on a chantier (the "En attente" block). */
+    public record PendingApproval(
+            UUID stepInstanceId,
+            UUID instanceId,
+            String templateName,
+            String stepName,
+            String assigneeRole,
+            String assigneeName,
+            String subjectLabel,
+            java.math.BigDecimal subjectAmount,
+            Instant startedAt,
+            Integer dueDays,
+            boolean late,
+            Integer daysWaiting) {}
 
     /** Summary row for the project chantier screen. */
     public record ProcessInstanceSummary(
@@ -312,11 +339,13 @@ public class ProcessService {
 
     // Project template assignment
     public record AssignTemplateRequest(String templateKey, boolean enabled,
-                                        String defaultForSubjectType) {}
+                                        String defaultForSubjectType,
+                                        BigDecimal amountThresholdOverride) {}
 
     public record ProjectTemplateConfig(
             UUID templateId, String templateKey, String templateName,
-            boolean enabled, String defaultForSubjectType) {}
+            boolean enabled, String defaultForSubjectType,
+            BigDecimal amountThresholdOverride) {}
 
     // ═══════════════════════════════════════════════════════════════
     // V27 (TASK 1) — Project role assignee records
@@ -327,12 +356,20 @@ public class ProcessService {
             String roleCode,
             UUID userId,
             String userName,
-            String userEmail) {}
+            String userEmail,
+            UUID substituteUserId,
+            String substituteUserName,
+            // V44 — absence dates read from app_user.absent_until. Null when the
+            // person is not absent or the stored date is before today (absence
+            // already ended). Powers the chantier "Règles" tab badge + the
+            // candidate dropdown hint.
+            LocalDate absentUntil,
+            LocalDate substituteAbsentUntil) {}
 
     /** Body for PUT /api/projects/{id}/process-role-assignees — upsert batch. */
     public record UpsertRoleAssigneesRequest(List<RoleAssigneeItem> items) {}
 
-    public record RoleAssigneeItem(String roleCode, UUID userId) {}
+    public record RoleAssigneeItem(String roleCode, UUID userId, UUID substituteUserId) {}
 
     /**
      * Composite view returned by GET /process-roles-needed: for each distinct
@@ -350,7 +387,9 @@ public class ProcessService {
             String userName,
             String userEmail,
             boolean isOwner,
-            boolean isProjectMember) {}
+            boolean isProjectMember,
+            // V44 — null when not absent or the date is before today.
+            LocalDate absentUntil) {}
 
     // ═══════════════════════════════════════════════════════════════
     // DEPENDENCIES
@@ -442,6 +481,19 @@ public class ProcessService {
                 """,
                 UUID.class, projectId, me.getId(), assigneeRole);
         if (!roleMatch.isEmpty()) return;
+        // Substitute path: if the step's assignee is absent or inactive, the
+        // substitute for that role on the chantier may act.
+        if (assigneeUserId != null) {
+            Integer absentOrInactive = jdbc.queryForObject(
+                    "select count(*) from app_user where id = ? and (is_active = false or (absent_until is not null and absent_until >= current_date))",
+                    Integer.class, assigneeUserId);
+            if (absentOrInactive != null && absentOrInactive > 0) {
+                Integer subMatch = jdbc.queryForObject(
+                        "select count(*) from project_role_assignee where project_id = ? and upper(role_code) = upper(?) and substitute_user_id = ?",
+                        Integer.class, projectId, assigneeRole, me.getId());
+                if (subMatch != null && subMatch > 0) return;
+            }
+        }
         throw new BusinessRuleException("NOT_ALLOWED",
                 "Vous n'êtes pas autorisé à agir sur cette étape");
     }
@@ -475,9 +527,13 @@ public class ProcessService {
         List<Map<String, Object>> mappingRows = jdbc.queryForList(
                 """
                 select pra.user_id, u.is_owner as user_is_owner, u.is_active as user_active,
-                       pm.user_id as pm_user_id
+                       u.absent_until as user_absent_until,
+                       pm.user_id as pm_user_id,
+                       pra.substitute_user_id, su.is_active as substitute_active,
+                       su.absent_until as substitute_absent_until
                 from project_role_assignee pra
                 join app_user u on u.id = pra.user_id
+                left join app_user su on su.id = pra.substitute_user_id
                 left join project_member pm on pm.project_id = pra.project_id
                                           and pm.user_id = pra.user_id
                 where pra.project_id = ? and upper(pra.role_code) = upper(?)
@@ -489,14 +545,26 @@ public class ProcessService {
             UUID mappedUser = (UUID) row.get("user_id");
             boolean userActive = row.get("user_active") == null
                     || Boolean.TRUE.equals(row.get("user_active"));
+            boolean userAbsent = isAbsent(row.get("user_absent_until"));
             boolean isOwnerRole = "OWNER".equalsIgnoreCase(assigneeRole);
             // For OWNER role: mapped user may be org owner OR a project_member.
             // For other roles: mapped user must be a project_member.
             boolean pmFound = row.get("pm_user_id") != null;
-            if (userActive && (isOwnerRole || pmFound)) {
+            if (userActive && !userAbsent && (isOwnerRole || pmFound)) {
                 return mappedUser;
             }
-            // Mapping is stale (user inactive or no longer member) → fall through
+            // Main person absent (inactive OR absent_until >= today) — fall back
+            // to the substitute if set + active + not absent.
+            UUID substitute = (UUID) row.get("substitute_user_id");
+            if (substitute != null) {
+                boolean subActive = row.get("substitute_active") == null
+                        || Boolean.TRUE.equals(row.get("substitute_active"));
+                boolean subAbsent = isAbsent(row.get("substitute_absent_until"));
+                if (subActive && !subAbsent) {
+                    return substitute;
+                }
+            }
+            // Mapping is stale (user inactive, no usable substitute) → fall through
             // to the legacy path so the process still starts. The owner will be
             // able to reassign via the UI; for now the role-based fallback keeps
             // the workflow alive.
@@ -529,6 +597,18 @@ public class ProcessService {
                 """,
                 UUID.class, projectId, assigneeRole);
         return rows.isEmpty() ? null : rows.get(0);
+    }
+
+    /** A user is absent when absent_until >= today (null = not absent). */
+    private static boolean isAbsent(Object absentUntil) {
+        if (absentUntil == null) return false;
+        if (absentUntil instanceof java.sql.Date d) {
+            return !d.toLocalDate().isBefore(java.time.LocalDate.now());
+        }
+        if (absentUntil instanceof java.time.LocalDate ld) {
+            return !ld.isBefore(java.time.LocalDate.now());
+        }
+        return false;
     }
 
     private static Instant toInstant(Timestamp ts) {
@@ -605,24 +685,13 @@ public class ProcessService {
         }
         String templateKey = (String) tmplRows.get(0).get("key");
 
-        // (3) Project enablement check — whitelist: no rows => all active; any
-        //     row => only templates with an enabled = true row are allowed.
-        //     Same rule as ApprovalRuleService.findRule (one meaning for the
-        //     chantier switch).
-        Integer ptCount = jdbc.queryForObject(
-                "select count(*) from project_process_template where project_id = ?",
-                Integer.class, projectId);
-        if (ptCount != null && ptCount > 0) {
-            Integer enabledCount = jdbc.queryForObject(
-                    """
-                    select count(*) from project_process_template
-                    where project_id = ? and template_id = ? and enabled = true
-                    """,
-                    Integer.class, projectId, templateId);
-            if (enabledCount == null || enabledCount == 0) {
-                throw new BusinessRuleException("TEMPLATE_NOT_ENABLED_ON_PROJECT",
-                        "Ce template n'est pas activé sur ce projet");
-            }
+        // (3) Project enablement check — opt-out: a template is enabled on the
+        //     chantier unless a project_process_template row says enabled = false.
+        //     Same rule as ApprovalRuleService.findRule, via the shared
+        //     isTemplateEnabledForProject helper (one meaning for the chantier switch).
+        if (!approvalRuleService.isTemplateEnabledForProject(projectId, templateId)) {
+            throw new BusinessRuleException("TEMPLATE_NOT_ENABLED_ON_PROJECT",
+                    "Ce template n'est pas activé sur ce projet");
         }
 
         // (4) Guard: only one RUNNING instance per (org, subjectType, subjectId)
@@ -942,6 +1011,29 @@ public class ProcessService {
                 ",\"hasAttachment\":" + hasAttachment +
                 (assessedAmount != null ? ",\"assessedAmount\":" + assessedAmount : "") +
                 "}");
+
+        // If the actor is the substitute (acting on behalf of an absent/inactive
+        // assignee), log STEP_COMPLETED_BY_SUBSTITUTE in addition to STEP_COMPLETED.
+        if (!Objects.equals(me.getId(), assigneeUserId) && assigneeUserId != null) {
+            Integer absentOrInactive = jdbc.queryForObject(
+                    "select count(*) from app_user where id = ? and (is_active = false or (absent_until is not null and absent_until >= current_date))",
+                    Integer.class, assigneeUserId);
+            if (absentOrInactive != null && absentOrInactive > 0) {
+                Integer subMatch = jdbc.queryForObject(
+                        "select count(*) from project_role_assignee where project_id = ? and upper(role_code) = upper(?) and substitute_user_id = ?",
+                        Integer.class, projectId, assigneeRole, me.getId());
+                if (subMatch != null && subMatch > 0) {
+                    String mainName = jdbc.queryForObject(
+                            "select full_name from app_user where id = ?", String.class, assigneeUserId);
+                    audit.log("STEP_COMPLETED_BY_SUBSTITUTE", "process_step_instance", stepInstanceId,
+                            "{\"instanceId\":\"" + instanceId +
+                            "\",\"stepKey\":\"" + jsonEscape(stepKey) +
+                            "\",\"substitute\":\"" + me.getId() + "\"" +
+                            ",\"onBehalfOf\":\"" + jsonEscape(mainName) + "\"" +
+                            "}");
+                }
+            }
+        }
 
         if (!nextSteps.isEmpty()) {
             Map<String, Object> next = nextSteps.get(0);
@@ -1489,7 +1581,7 @@ public class ProcessService {
          * (FINANCE/ACHAT/CHEF_CHANTIER). The fallback join must go through
          * user_role + role.code.
          */
-        return jdbc.query(
+        List<MyTaskSummary> tasks = jdbc.query(
                 """
                 select psi.id as step_instance_id, pi.id as instance_id, pi.project_id,
                        p.name as project_name,
@@ -1526,6 +1618,20 @@ public class ProcessService {
                               and pm2.user_id = ?
                               and r2.code = psi.assignee_role
                         ))
+                    or (psi.assignee_user_id is not null                    -- substitute path
+                        and exists (
+                            select 1 from project_role_assignee pra
+                            where pra.project_id = pi.project_id
+                              and upper(pra.role_code) = upper(psi.assignee_role)
+                              and pra.substitute_user_id = ?
+                              and pra.user_id = psi.assignee_user_id
+                              and exists (
+                                  select 1 from app_user au
+                                  where au.id = psi.assignee_user_id
+                                    and (au.is_active = false
+                                         or (au.absent_until is not null and au.absent_until >= current_date))
+                              )
+                        ))
                   )
                 order by psi.started_at asc nulls last
                 """,
@@ -1548,9 +1654,38 @@ public class ProcessService {
                         toInstant(rs.getTimestamp("started_at")),
                         rs.getString("subject_label"),
                         rs.getBigDecimal("subject_amount"),
-                        rs.getBoolean("late")
+                        rs.getBoolean("late"),
+                        null  // onBehalfOf — set in post-processing
                 ),
-                orgId, isOwner, me.getId(), me.getId());
+                orgId, isOwner, me.getId(), me.getId(), me.getId());
+
+        // Post-process: set onBehalfOf for tasks seen via the substitute path
+        // (the main assignee is absent/inactive and I am the substitute).
+        if (!isOwner) {
+            List<MyTaskSummary> result = new ArrayList<>();
+            for (MyTaskSummary t : tasks) {
+                if (t.assigneeUserId() != null && !t.assigneeUserId().equals(me.getId())
+                        && t.assigneeName() != null) {
+                    Integer subMatch = jdbc.queryForObject(
+                            """
+                            select count(*) from project_role_assignee pra
+                            join app_user au on au.id = pra.user_id
+                            where pra.project_id = ? and upper(pra.role_code) = upper(?)
+                              and pra.substitute_user_id = ? and pra.user_id = ?
+                              and (au.is_active = false
+                                   or (au.absent_until is not null and au.absent_until >= current_date))
+                            """,
+                            Integer.class, t.projectId(), t.assigneeRole(), me.getId(), t.assigneeUserId());
+                    if (subMatch != null && subMatch > 0) {
+                        result.add(t.withOnBehalfOf(t.assigneeName()));
+                        continue;
+                    }
+                }
+                result.add(t);
+            }
+            return result;
+        }
+        return tasks;
     }
 
     // ═══════════════════════════════════════════════════════════════
@@ -1886,6 +2021,22 @@ public class ProcessService {
                     "Template introuvable ou non modifiable (template système)");
         }
 
+        // Validate: the request must contain every step of the template exactly once.
+        List<UUID> templateStepIds = jdbc.queryForList(
+                "select id from process_template_step where template_id = ?",
+                UUID.class, templateId);
+        if (items == null || items.size() != templateStepIds.size()) {
+            throw new BadRequestException("REORDER_INCOMPLETE",
+                    "La liste doit contenir toutes les étapes");
+        }
+        Set<UUID> itemIds = new HashSet<>();
+        for (ReorderStepItem item : items) {
+            if (!templateStepIds.contains(item.stepId()) || !itemIds.add(item.stepId())) {
+                throw new BadRequestException("REORDER_INCOMPLETE",
+                        "La liste doit contenir toutes les étapes");
+            }
+        }
+
         // Two-phase in one transaction: first shift ALL steps of the template to a
         // temp range so the (template_id, step_order) unique constraint cannot
         // clash during the swap, then set the final orders from the items.
@@ -2148,7 +2299,7 @@ public class ProcessService {
     private String stepRender(TemplateStepView step, UUID orgId) {
         String label = roleLabel(step.assigneeRole(), orgId);
         if ("ALL".equals(step.approvalMode())) {
-            return "tous les " + pluralRole(label);
+            return "tous les membres " + label;
         }
         return label;
     }
@@ -2486,7 +2637,7 @@ public class ProcessService {
         return jdbc.query(
                 """
                 select pt.id as template_id, pt.key as template_key, pt.name as template_name,
-                       ppt.enabled, ppt.default_for_subject_type
+                       ppt.enabled, ppt.default_for_subject_type, ppt.amount_threshold_override
                 from process_template pt
                 left join project_process_template ppt
                        on ppt.template_id = pt.id and ppt.project_id = ?
@@ -2498,7 +2649,8 @@ public class ProcessService {
                         rs.getString("template_key"),
                         rs.getString("template_name"),
                         Boolean.TRUE.equals(rs.getObject("enabled")),
-                        rs.getString("default_for_subject_type")),
+                        rs.getString("default_for_subject_type"),
+                        rs.getBigDecimal("amount_threshold_override")),
                 projectId, orgId);
     }
 
@@ -2524,16 +2676,58 @@ public class ProcessService {
             throw new ResourceNotFoundException("PROJECT_NOT_FOUND", "Projet introuvable");
         }
 
+        // Refuse disabling the last unconditional (empty conditions) CASH_PAYMENT
+        // rule on this chantier. Also refuse setting a non-null threshold override
+        // on the last unconditional CASH_PAYMENT rule (a threshold would make it
+        // miss small payments with no other unconditional rule to cover them).
+        {
+            List<Map<String, Object>> tmpl = jdbc.queryForList(
+                    "select subject_type, conditions::text as conditions from process_template where id = ?",
+                    templateId);
+            if (!tmpl.isEmpty()) {
+                String st = (String) tmpl.get(0).get("subject_type");
+                String cond = (String) tmpl.get(0).get("conditions");
+                boolean emptyCond = cond == null || cond.isBlank() || "{}".equals(cond.trim());
+                if ("CASH_PAYMENT".equals(st) && emptyCond) {
+                    // Count OTHER enabled unconditional CASH_PAYMENT rules on this chantier.
+                    Integer others = jdbc.queryForObject(
+                            """
+                            select count(*) from process_template pt
+                            where pt.subject_type = 'CASH_PAYMENT' and pt.active = true
+                              and (pt.org_id = ? or pt.org_id is null)
+                              and pt.id <> ?
+                              and pt.conditions::text = '{}'
+                              and not exists (
+                                  select 1 from project_process_template p2
+                                  where p2.project_id = ? and p2.template_id = pt.id and p2.enabled = false
+                              )
+                            """, Integer.class, orgId, templateId, projectId);
+                    boolean isLast = others == null || others == 0;
+                    // Refuse disabling the last one.
+                    if (isLast && Boolean.FALSE.equals(req.enabled())) {
+                        throw new BusinessRuleException("LAST_UNCONDITIONAL_RULE",
+                                "Au moins une règle de paiement sans condition doit rester active sur ce chantier");
+                    }
+                    // Refuse setting a non-null threshold on the last one.
+                    if (isLast && req.amountThresholdOverride() != null) {
+                        throw new BusinessRuleException("LAST_UNCONDITIONAL_RULE",
+                                "La règle de paiement sans condition ne peut pas avoir de seuil sur ce chantier : aucune autre règle ne couvrirait les petits montants");
+                    }
+                }
+            }
+        }
+
         jdbc.update(
                 """
                 insert into project_process_template
-                  (project_id, template_id, enabled, default_for_subject_type)
-                values (?, ?, ?, ?)
+                  (project_id, template_id, enabled, default_for_subject_type, amount_threshold_override)
+                values (?, ?, ?, ?, ?)
                 on conflict (project_id, template_id)
                 do update set enabled = excluded.enabled,
-                              default_for_subject_type = excluded.default_for_subject_type
+                              default_for_subject_type = excluded.default_for_subject_type,
+                              amount_threshold_override = excluded.amount_threshold_override
                 """,
-                projectId, templateId, req.enabled(), req.defaultForSubjectType());
+                projectId, templateId, req.enabled(), req.defaultForSubjectType(), req.amountThresholdOverride());
 
         audit.log("PROCESS_TEMPLATE_ASSIGNED", "project_process_template", projectId,
                 "{\"templateKey\":\"" + jsonEscape(req.templateKey()) +
@@ -2546,7 +2740,54 @@ public class ProcessService {
     public void assignTemplateToProject(Authentication auth, UUID projectId,
                                         String templateKey, boolean enabled) {
         assignTemplateToProject(auth, projectId,
-                new AssignTemplateRequest(templateKey, enabled, null));
+                new AssignTemplateRequest(templateKey, enabled, null, null));
+    }
+
+    /**
+     *  GET /api/projects/{projectId}/pending-approvals — pending approval steps
+     *  for this chantier (the "En attente" block): who, days waiting, due_days,
+     *  and a late flag (started more than due_days days ago).
+     */
+    public List<PendingApproval> listPendingApprovals(Authentication auth, UUID projectId) {
+        AppUser me = currentUser(auth);
+        requireProjectAccess(me, projectId);
+        return jdbc.query(
+                """
+                select psi.id as step_instance_id, pi.id as instance_id,
+                       pt.name as template_name, psi.name as step_name,
+                       psi.assignee_role, u.full_name as assignee_name,
+                       cm.label as subject_label, cm.amount as subject_amount,
+                       psi.started_at, pts.due_days,
+                       (psi.started_at is not null and pts.due_days is not null
+                            and psi.started_at < now() - (pts.due_days * interval '1 day')) as late,
+                       (case when psi.started_at is not null
+                             then (extract(epoch from now() - psi.started_at) / 86400)::int
+                             else null end) as days_waiting
+                from process_step_instance psi
+                join process_instance pi on pi.id = psi.instance_id
+                join process_template pt on pt.id = pi.template_id
+                left join process_template_step pts
+                       on pts.template_id = pi.template_id and pts.step_order = psi.step_order
+                left join app_user u on u.id = psi.assignee_user_id
+                left join cash_movement cm
+                       on pi.subject_type = 'CASH_MOVEMENT' and cm.id = pi.subject_id
+                where psi.status = 'PENDING' and pi.status = 'RUNNING' and pi.project_id = ?
+                order by psi.started_at asc nulls last
+                """,
+                (rs, rowNum) -> new PendingApproval(
+                        (UUID) rs.getObject("step_instance_id"),
+                        (UUID) rs.getObject("instance_id"),
+                        rs.getString("template_name"),
+                        rs.getString("step_name"),
+                        rs.getString("assignee_role"),
+                        rs.getString("assignee_name"),
+                        rs.getString("subject_label"),
+                        rs.getBigDecimal("subject_amount"),
+                        toInstant(rs.getTimestamp("started_at")),
+                        (Integer) rs.getObject("due_days"),
+                        rs.getBoolean("late"),
+                        (Integer) rs.getObject("days_waiting")),
+                projectId);
     }
 
     // ═══════════════════════════════════════════════════════════════
@@ -2557,15 +2798,41 @@ public class ProcessService {
     //   GET    /api/projects/{projectId}/process-roles-needed
     // ═══════════════════════════════════════════════════════════════
 
+    /**
+     * V44 helper — normalises a raw app_user.absent_until value (read via
+     * JdbcTemplate, so typically a java.sql.Date) into a LocalDate, and
+     * returns null when the person is not absent (null column) or when the
+     * stored date is before today (the absence has already ended). A date
+     * equal to today is still considered absent (absent_until &gt;= today).
+     */
+    private LocalDate effectiveAbsence(Object raw) {
+        if (raw == null) return null;
+        LocalDate d;
+        if (raw instanceof LocalDate ld) {
+            d = ld;
+        } else if (raw instanceof java.sql.Date sd) {
+            d = sd.toLocalDate();
+        } else if (raw instanceof java.util.Date ud) {
+            d = ud.toInstant().atZone(java.time.ZoneId.systemDefault()).toLocalDate();
+        } else {
+            d = LocalDate.parse(raw.toString());
+        }
+        return d.isBefore(LocalDate.now()) ? null : d;
+    }
+
     /** GET — list all role→user mappings for this project. */
     public List<RoleAssigneeResponse> listRoleAssignees(Authentication auth, UUID projectId) {
         AppUser me = currentUser(auth);
         requireProjectAccess(me, projectId);
         return jdbc.queryForList(
                 """
-                select pra.role_code, pra.user_id, u.full_name as user_name, u.email as user_email
+                select pra.role_code, pra.user_id, u.full_name as user_name, u.email as user_email,
+                       pra.substitute_user_id, su.full_name as substitute_name,
+                       u.absent_until as user_absent_until,
+                       su.absent_until as substitute_absent_until
                 from project_role_assignee pra
                 join app_user u on u.id = pra.user_id
+                left join app_user su on su.id = pra.substitute_user_id
                 where pra.project_id = ?
                 order by pra.role_code asc
                 """,
@@ -2575,7 +2842,11 @@ public class ProcessService {
                         (String) r.get("role_code"),
                         (UUID) r.get("user_id"),
                         (String) r.get("user_name"),
-                        (String) r.get("user_email")))
+                        (String) r.get("user_email"),
+                        (UUID) r.get("substitute_user_id"),
+                        (String) r.get("substitute_name"),
+                        effectiveAbsence(r.get("user_absent_until")),
+                        effectiveAbsence(r.get("substitute_absent_until"))))
                 .toList();
     }
 
@@ -2643,15 +2914,34 @@ public class ProcessService {
                         "Pour le rôle OWNER : l'utilisateur doit être gérant de l'organisation ou membre du projet");
             }
 
+            // Validate the substitute (if any): must be in the org; for non-OWNER
+            // roles, must be a project member (same rules as the main user).
+            UUID substituteId = item.substituteUserId();
+            if (substituteId != null) {
+                Integer subCnt = jdbc.queryForObject(
+                        "select count(*) from app_user where id = ? and org_id = ?",
+                        Integer.class, substituteId, orgId);
+                if (subCnt == null || subCnt == 0) {
+                    throw new BadRequestException("UNKNOWN_USER",
+                            "Remplaçant introuvable ou hors de votre organisation");
+                }
+                if (!isOwnerRole && !projectMembers.contains(substituteId)) {
+                    throw new BadRequestException("USER_NOT_PROJECT_MEMBER",
+                            "Le remplaçant n'est pas membre de ce projet (rôle " + item.roleCode() + ")");
+                }
+            }
+
             // Upsert: ON CONFLICT (project_id, role_code) DO UPDATE
             jdbc.update(
                     """
-                    insert into project_role_assignee (project_id, role_code, user_id, updated_at)
-                    values (?, upper(?), ?, now())
+                    insert into project_role_assignee (project_id, role_code, user_id, substitute_user_id, updated_at)
+                    values (?, upper(?), ?, ?, now())
                     on conflict (project_id, role_code)
-                    do update set user_id = excluded.user_id, updated_at = now()
+                    do update set user_id = excluded.user_id,
+                                  substitute_user_id = excluded.substitute_user_id,
+                                  updated_at = now()
                     """,
-                    projectId, item.roleCode().trim(), item.userId());
+                    projectId, item.roleCode().trim(), item.userId(), substituteId);
 
             audit.log("PROJECT_ROLE_ASSIGNED", "project_role_assignee", projectId,
                     "{\"roleCode\":\"" + item.roleCode().trim().toUpperCase() +
@@ -2733,9 +3023,13 @@ public class ProcessService {
         Map<String, RoleAssigneeResponse> current = new HashMap<>();
         for (Map<String, Object> r : jdbc.queryForList(
                 """
-                select pra.role_code, pra.user_id, u.full_name as user_name, u.email as user_email
+                select pra.role_code, pra.user_id, u.full_name as user_name, u.email as user_email,
+                       pra.substitute_user_id, su.full_name as substitute_name,
+                       u.absent_until as user_absent_until,
+                       su.absent_until as substitute_absent_until
                 from project_role_assignee pra
                 join app_user u on u.id = pra.user_id
+                left join app_user su on su.id = pra.substitute_user_id
                 where pra.project_id = ?
                 """, projectId)) {
             current.put(
@@ -2744,7 +3038,11 @@ public class ProcessService {
                             (String) r.get("role_code"),
                             (UUID) r.get("user_id"),
                             (String) r.get("user_name"),
-                            (String) r.get("user_email")));
+                            (String) r.get("user_email"),
+                            (UUID) r.get("substitute_user_id"),
+                            (String) r.get("substitute_name"),
+                            effectiveAbsence(r.get("user_absent_until")),
+                            effectiveAbsence(r.get("substitute_absent_until"))));
         }
 
         // ── (3) candidate users — project members + org owner (single query) ──
@@ -2753,7 +3051,8 @@ public class ProcessService {
         List<RoleCandidate> allCandidates = jdbc.queryForList(
                 """
                 select u.id, u.full_name, u.email, u.is_owner,
-                       (pm.user_id is not null) as is_project_member
+                       (pm.user_id is not null) as is_project_member,
+                       u.absent_until
                 from app_user u
                 left join project_member pm on pm.project_id = ? and pm.user_id = u.id
                 where u.org_id = ?
@@ -2768,7 +3067,8 @@ public class ProcessService {
                         (String) r.get("full_name"),
                         (String) r.get("email"),
                         Boolean.TRUE.equals(r.get("is_owner")),
-                        Boolean.TRUE.equals(r.get("is_project_member"))))
+                        Boolean.TRUE.equals(r.get("is_project_member")),
+                        effectiveAbsence(r.get("absent_until"))))
                 .toList();
 
         // ── (4) assemble per role ──

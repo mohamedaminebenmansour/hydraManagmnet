@@ -289,15 +289,15 @@ class RuleBuilderTest {
     }
 
     @Test
-    void sentence_allModeStep_tousLesPluralRole() {
-        // Org-scoped role with a label that pluralizes nicely.
+    void sentence_allModeStep_tousLesMembresLabel() {
+        // Org-scoped role with a label.
         jdbc.update("insert into role (id, org_id, code, label) values (?, ?, 'CHEF_PROJET', 'Chef de projet')",
                 UUID.randomUUID(), orgId);
         UUID t = createRule(new HashMap<>());
         svc.addStep(ownerAuth, t, new ProcessService.CreateStepRequest(1, "APPROVE", "Approve", "CHEF_PROJET", false, "ALL", null));
 
         String s = svc.getTemplateSentence(ownerAuth, t);
-        assertThat(s).contains("tous les Chefs de projet");
+        assertThat(s).contains("tous les membres Chef de projet");
     }
 
     // ══════════════════════════════════════════════════════════════
@@ -349,5 +349,48 @@ class RuleBuilderTest {
                 .containsExactly("C", "B", "A");
         assertThat(ordered.stream().map(ProcessService.TemplateStepView::stepOrder).toList())
                 .containsExactly(1, 2, 3);
+    }
+
+    // ══════════════════════════════════════════════════════════════
+    //  Opt-out — refusing to disable the last unconditional payment rule.
+    // ══════════════════════════════════════════════════════════════
+    @Test
+    void refuseDisablingLastUnconditionalCashPaymentRule() {
+        // PAYMENT_APPROVAL is the only active CASH_PAYMENT rule with empty
+        // conditions visible to this org. Disabling it must be refused.
+        UUID payAppr = systemTemplateId("PAYMENT_APPROVAL");
+        assertThatThrownBy(() -> svc.assignTemplateToProject(ownerAuth, projectId,
+                new ProcessService.AssignTemplateRequest("PAYMENT_APPROVAL", false, null, null)))
+                .isInstanceOf(BusinessRuleException.class)
+                .hasMessageContaining("Au moins une règle de paiement sans condition doit rester active");
+    }
+
+    // ══════════════════════════════════════════════════════════════
+    //  Reorder — incomplete list refused.
+    // ══════════════════════════════════════════════════════════════
+    @Test
+    void reorderSteps_incompleteListRefused() {
+        UUID t = createRule(new HashMap<>());
+        svc.addStep(ownerAuth, t, new ProcessService.CreateStepRequest(1, "A", "A", "FINANCE", false, "ANY", null));
+        svc.addStep(ownerAuth, t, new ProcessService.CreateStepRequest(2, "B", "B", "FINANCE", false, "ANY", null));
+        svc.addStep(ownerAuth, t, new ProcessService.CreateStepRequest(3, "C", "C", "FINANCE", false, "ANY", null));
+
+        UUID stepA = svc.getTemplate(ownerAuth, t).steps().get(0).id();
+        // Send only 1 of 3 steps.
+        assertThatThrownBy(() -> svc.reorderSteps(ownerAuth, t,
+                List.of(new ProcessService.ReorderStepItem(stepA, 3))))
+                .isInstanceOf(BadRequestException.class)
+                .hasMessageContaining("La liste doit contenir toutes les étapes");
+    }
+
+    // ══════════════════════════════════════════════════════════════
+    //  Sentence — ALL mode with FINANCE reads "tous les membres Finance".
+    // ══════════════════════════════════════════════════════════════
+    @Test
+    void sentence_allModeFinance_tousLesMembresFinance() {
+        UUID t = createRule(new HashMap<>());
+        svc.addStep(ownerAuth, t, new ProcessService.CreateStepRequest(1, "APPROVE", "Approve", "FINANCE", false, "ALL", null));
+        String s = svc.getTemplateSentence(ownerAuth, t);
+        assertThat(s).contains("tous les membres Finance");
     }
 }

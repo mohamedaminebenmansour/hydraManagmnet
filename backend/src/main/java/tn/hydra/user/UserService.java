@@ -351,4 +351,36 @@ public class UserService {
         if (s == null) return "";
         return s.replace("\\", "\\\\").replace("\"", "\\\"");
     }
+
+    // ══════════════════ ABSENCE ══════════════════
+
+    /**
+     * Set or clear a user's absence (absentUntil = null ends it).
+     * Allowed for the org owner, or the user for himself. Same org only.
+     * Date must not be in the past. Audits USER_ABSENCE_SET.
+     */
+    @Transactional
+    public void setAbsence(Authentication auth, UUID id, java.time.LocalDate absentUntil) {
+        AppUser me = users.findByEmail(auth.getName())
+                .orElseThrow(() -> new BusinessRuleException("UNKNOWN_USER", "Utilisateur inconnu"));
+        // Owner or self only.
+        if (!Boolean.TRUE.equals(me.getIsOwner()) && !me.getId().equals(id)) {
+            throw new BusinessRuleException("NOT_ALLOWED",
+                    "Vous ne pouvez modifier que votre propre absence");
+        }
+        // Same org only.
+        AppUser target = users.findById(id)
+                .orElseThrow(() -> new BusinessRuleException("USER_NOT_FOUND", "Utilisateur introuvable"));
+        if (!Objects.equals(me.getOrgId(), target.getOrgId())) {
+            throw new BusinessRuleException("USER_NOT_FOUND", "Utilisateur introuvable");
+        }
+        // Date must not be in the past (null = end absence).
+        if (absentUntil != null && absentUntil.isBefore(java.time.LocalDate.now())) {
+            throw new BusinessRuleException("ABSENCE_DATE_PAST",
+                    "La date d'absence ne peut pas être dans le passé");
+        }
+        jdbc.update("update app_user set absent_until = ? where id = ?", absentUntil, id);
+        audit.log("USER_ABSENCE_SET", "app_user", id,
+                "{\"absentUntil\":" + (absentUntil != null ? "\"" + absentUntil + "\"" : "null") + "}");
+    }
 }

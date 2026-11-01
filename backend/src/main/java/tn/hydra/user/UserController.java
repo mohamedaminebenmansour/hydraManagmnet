@@ -6,6 +6,7 @@ import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.*;
 import tn.hydra.common.BusinessRuleException;
 
+import java.time.LocalDate;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -26,6 +27,7 @@ public class UserController {
     public record ResetPasswordRequest(String newPassword) {}
     public record UpdateUserRequest(String fullName, String password) {}
     public record UpdateRolesRequest(List<String> roleCodes, String overrideReason) {}
+    public record AbsenceRequest(LocalDate absentUntil) {}
 
     @GetMapping
     @PreAuthorize("hasAnyAuthority('PERM_USER_CREATE','PERM_USER_UPDATE','PERM_ROLE_ASSIGN')")
@@ -90,6 +92,17 @@ public class UserController {
                                            @RequestBody ResetPasswordRequest body,
                                            Authentication auth) {
         service.resetPassword(auth, id, body.newPassword());
+        return ResponseEntity.ok().build();
+    }
+
+    /**
+     * PUT /api/users/{id}/absence — set or clear the absence (absentUntil = null
+     * ends the absence). Allowed for the org owner, or the user for himself.
+     */
+    @PutMapping("/{id}/absence")
+    public ResponseEntity<?> setAbsence(@PathVariable UUID id, @RequestBody AbsenceRequest body,
+                                          Authentication auth) {
+        service.setAbsence(auth, id, body.absentUntil());
         return ResponseEntity.ok().build();
     }
 }

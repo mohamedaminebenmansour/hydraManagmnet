@@ -2,6 +2,7 @@ package tn.hydra.user;
 
 import jakarta.persistence.*;
 import java.time.Instant;
+import java.time.LocalDate;
 import java.util.UUID;
 
 @Entity
@@ -15,6 +16,7 @@ public class AppUser {
     @Column(name = "is_owner") private Boolean isOwner;
     @Column(name = "is_active") private Boolean isActive;
     @Column(name = "must_change_password") private Boolean mustChangePassword;
+    @Column(name = "absent_until") private LocalDate absentUntil;
     @Column(name = "created_at") private Instant createdAt;
 
     public UUID getId() { return id; }                 public void setId(UUID v) { id = v; }
@@ -25,5 +27,6 @@ public class AppUser {
     public Boolean getIsOwner() { return isOwner; }    public void setIsOwner(Boolean v) { isOwner = v; }
     public Boolean getIsActive() { return isActive; }  public void setIsActive(Boolean v) { isActive = v; }
     public Boolean getMustChangePassword() { return mustChangePassword; } public void setMustChangePassword(Boolean v) { mustChangePassword = v; }
+    public LocalDate getAbsentUntil() { return absentUntil; }   public void setAbsentUntil(LocalDate v) { absentUntil = v; }
     public Instant getCreatedAt() { return createdAt; } public void setCreatedAt(Instant v) { createdAt = v; }
 }

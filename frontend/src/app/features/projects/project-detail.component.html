@@ -142,6 +142,7 @@
       <p-tab value="3"><i class="pi pi-database"></i> Ouvrages</p-tab>
       <p-tab value="1"><i class="pi pi-users"></i> Équipe</p-tab>
       <p-tab value="2"><i class="pi pi-sitemap"></i> Processus</p-tab>
+      <p-tab value="4"><i class="pi pi-bookmark"></i> Règles</p-tab>
     </p-tablist>
     <p-tabpanels>
       <!-- ==================== DOSSIERS ==================== -->
@@ -191,6 +192,11 @@
       <!-- ==================== OUVRAGES (PHASE-OUVRAGE-EXTRACT) ==================== -->
       <p-tabpanel value="3">
         <app-ouvrages-tab [projectId]="projectId ?? ''" (changed)="onOuvragesChanged()" />
+      </p-tabpanel>
+
+      <!-- ==================== RÈGLES (approvals for this chantier) ==================== -->
+      <p-tabpanel value="4">
+        <app-project-rules-tab [projectId]="projectId ?? ''" />
       </p-tabpanel>
 
       <!-- ==================== ÉQUIPE ==================== -->

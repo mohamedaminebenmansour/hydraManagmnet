@@ -1,4 +1,4 @@
-﻿import { Component, OnInit, computed, inject, signal } from '@angular/core';
+﻿import { Component, OnInit, OnDestroy, HostListener, computed, inject, signal } from '@angular/core';
 import { ActivatedRoute, Router } from '@angular/router';
 import { FormsModule } from '@angular/forms';
 import { DatePipe } from '@angular/common';
@@ -33,6 +33,7 @@ import {
 import { UserOptionDto, UserDto } from '@app/core/models/user.model';
 import { EmptyStateComponent } from '@app/shared/empty-state.component';
 import { OuvragesTabComponent } from './ouvrages-tab.component'; // PHASE-OUVRAGE-EXTRACT
+import { ProjectRulesTabComponent } from './project-rules-tab.component';
 import {
   typeVisual, statusVisual, folderIcon,
   processTypeVisual, roleVisual, stepStatusVisual,
@@ -61,13 +62,14 @@ import { ProjectRoleAssigneesComponent } from './project-role-assignees.componen
     DatePipe,
     EmptyStateComponent,
     OuvragesTabComponent,
+    ProjectRulesTabComponent,
     FolderAccessDialogComponent,
     ProjectRoleAssigneesComponent
   ],
   templateUrl: './project-detail.component.html',
   styleUrl: './project-detail.component.scss'
 })
-export class ProjectDetailComponent implements OnInit {
+export class ProjectDetailComponent implements OnInit, OnDestroy {
   private projectService = inject(ProjectService);
   private processService = inject(ProcessService);
   private folderAccessService = inject(FolderAccessService);
@@ -245,6 +247,14 @@ export class ProjectDetailComponent implements OnInit {
   }
 
   back(): void { this.router.navigate(['/projects']); }
+
+  /** Listen for the "open-rules-tab" custom event from the read-only role-assignees component. */
+  @HostListener('window:open-rules-tab')
+  onOpenRulesTab(): void {
+    this.activeTab.set('4');
+  }
+
+  ngOnDestroy(): void {}
 
   /** Ouvrir la modification du chantier courant (réutilise le dialogue du composant liste). */
   openEditFromDetail(): void {
