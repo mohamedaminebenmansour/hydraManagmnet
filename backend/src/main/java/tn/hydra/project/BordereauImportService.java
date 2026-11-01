@@ -71,11 +71,13 @@ public class BordereauImportService {
     // Testable without a database.
     // ═══════════════════════════════════════════════════════════════
 
-    /** A parsed line after analysis: warnings, specs, suggestion, pairing. */
+    /** A parsed line after analysis: warnings, specs, suggestion, pairing.
+     *  lineId is given at analysis time and becomes bordereau_line.id on import,
+     *  so pairedLineId always points to the real id of the partner line. */
     record AnalysedLine(ParsedRow row, String normalisedUnit, Map<String, Object> specs,
                         OuvrageSuggestion suggestion, String workNature,
                         List<String> warnings, BigDecimal montant, UUID pairedLineId,
-                        int sortOrder) {
+                        int sortOrder, UUID lineId) {
         /** Effective quantity for montant computation: null→ZERO (§6 rule 3). */
         BigDecimal effectiveQuantity() {
             BigDecimal q = row.quantity();
@@ -152,7 +154,7 @@ public class BordereauImportService {
                                 prevWarnings.add("Numéro d'article dupliqué dans cette section : « " + row.articleNo() + " ».");
                                 result.set(ri, new AnalysedLine(prev.row(), prev.normalisedUnit(), prev.specs(),
                                         prev.suggestion(), prev.workNature(), prevWarnings, prev.montant(),
-                                        prev.pairedLineId(), prev.sortOrder()));
+                                        prev.pairedLineId(), prev.sortOrder(), prev.lineId()));
                                 break;
                             }
                         }
@@ -180,14 +182,27 @@ public class BordereauImportService {
                 }
 
                 result.add(new AnalysedLine(row, normalisedUnit, specs, suggestion, workNature,
-                        warnings, montant, null, sortOrder));
+                        warnings, montant, null, sortOrder, UUID.randomUUID()));
             }
         }
 
-        // §2.2: fourniture/pose pairing — second pass.
-        pairLines(result);
+        // §2.2: fourniture/pose pairing — second pass. Each side gets the other's lineId.
+        for (Pair p : pairLines(result)) {
+            AnalysedLine f = result.get(p.fournitureIndex());
+            AnalysedLine po = result.get(p.poseIndex());
+            result.set(p.fournitureIndex(), withPairedLineId(f, po.lineId()));
+            result.set(p.poseIndex(), withPairedLineId(po, f.lineId()));
+        }
 
         return result;
+    }
+
+    /** A fourniture ↔ pose pair, as indexes into the analysed line list. */
+    record Pair(int fournitureIndex, int poseIndex) {}
+
+    private static AnalysedLine withPairedLineId(AnalysedLine al, UUID pairedLineId) {
+        return new AnalysedLine(al.row(), al.normalisedUnit(), al.specs(), al.suggestion(),
+                al.workNature(), al.warnings(), al.montant(), pairedLineId, al.sortOrder(), al.lineId());
     }
 
     /**
@@ -195,13 +210,11 @@ public class BordereauImportService {
      * A link is created only when exactly one pose line matches. If 0 or 2+
      * match, no link is created and a warning is added to the fourniture line.
      *
-     * <p>Package-private so the test can call it directly.
+     * <p>Returns the pairs (each pair once); pairCount = the list size.
+     * Package-private so the test can call it directly.
      */
-    static int pairLines(List<AnalysedLine> lines) {
-        // Build a mutable copy so we can set pairedLineId (record → can't mutate,
-        // so we rebuild the list with the paired IDs set).
-        Map<Integer, UUID> indexToPairedId = new HashMap<>();
-        int pairCount = 0;
+    static List<Pair> pairLines(List<AnalysedLine> lines) {
+        List<Pair> pairs = new ArrayList<>();
 
         for (int fi = 0; fi < lines.size(); fi++) {
             AnalysedLine fourniture = lines.get(fi);
@@ -231,34 +244,11 @@ public class BordereauImportService {
             }
 
             if (matchIndices.size() == 1) {
-                // Use a synthetic UUID to represent the pose line index for testing.
-                // In the DB path, the real lineId is used.
-                UUID poseId = UUID.randomUUID();
-                indexToPairedId.put(fi, poseId);
-                indexToPairedId.put(matchIndices.get(0), UUID.randomUUID()); // mark pose as paired too
-                pairCount++;
+                pairs.add(new Pair(fi, matchIndices.get(0)));
             }
         }
 
-        // Rebuild the list with pairedLineId set.
-        if (!indexToPairedId.isEmpty()) {
-            List<AnalysedLine> rebuilt = new ArrayList<>();
-            for (int i = 0; i < lines.size(); i++) {
-                AnalysedLine al = lines.get(i);
-                UUID pairedId = indexToPairedId.get(i);
-                if (pairedId != null) {
-                    rebuilt.add(new AnalysedLine(al.row(), al.normalisedUnit(), al.specs(),
-                            al.suggestion(), al.workNature(), al.warnings(), al.montant(),
-                            pairedId, al.sortOrder()));
-                } else {
-                    rebuilt.add(al);
-                }
-            }
-            lines.clear();
-            lines.addAll(rebuilt);
-        }
-
-        return pairCount;
+        return pairs;
     }
 
     // ═══════════════════════════════════════════════════════════════
@@ -319,17 +309,17 @@ public class BordereauImportService {
         int sortOrder = 0;
         int totalWarnings = 0;
 
-        // Insert lines into the DB.
+        // Insert lines into the DB with the ids given at analysis (paired_line_id null:
+        // the FK target may not be inserted yet).
         for (AnalysedLine al : analysed) {
             sortOrder++;
-            UUID lineId = UUID.randomUUID();
             jdbc.update("""
                     insert into bordereau_line (id, org_id, version_id, section_path, article_no,
                         sort_order, designation, unit_raw, unit, quantity, unit_price,
                         ouvrage_id, work_nature, paired_line_id, specs, import_warnings)
                     values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?::jsonb, ?)
                     """,
-                    lineId, me.getOrgId(), versionId,
+                    al.lineId(), me.getOrgId(), versionId,
                     al.row().sectionPath().toArray(new String[0]),
                     al.row().articleNo(), al.sortOrder(),
                     al.row().designation(),
@@ -337,21 +327,22 @@ public class BordereauImportService {
                     al.row().quantity(), al.row().unitPrice(),
                     al.suggestion().ouvrageId(),
                     al.workNature(),
-                    null, // paired_line_id set by pairLines (synthetic UUID in test, real in DB)
+                    null, // paired_line_id set below, once every line exists
                     specsToJson(al.specs()),
                     al.warnings().toArray(new String[0]));
             totalWarnings += al.warnings().size();
         }
 
-        // Re-run pairing with real DB line IDs (the test version uses synthetic UUIDs).
-        // For the DB path, we need to update paired_line_id in the DB.
-        // We already have al.pairedLineId() from parseAndAnalyse, but those are synthetic.
-        // For production, we'd need to re-map them. For now, the preview shows the pairing
-        // status; the DB update can be done in a follow-up.
-
+        // Link fourniture ↔ pose both ways with the real line ids (same transaction).
         int pairCount = 0;
-        for (AnalysedLine al : analysed) {
-            if (al.pairedLineId() != null) pairCount++;
+        for (Pair p : pairLines(analysed)) {
+            UUID fournitureId = analysed.get(p.fournitureIndex()).lineId();
+            UUID poseId = analysed.get(p.poseIndex()).lineId();
+            jdbc.update("update bordereau_line set paired_line_id = ? where id = ? and org_id = ?",
+                    poseId, fournitureId, me.getOrgId());
+            jdbc.update("update bordereau_line set paired_line_id = ? where id = ? and org_id = ?",
+                    fournitureId, poseId, me.getOrgId());
+            pairCount++;
         }
 
         audit.log("BORDEREAU_IMPORTED", "bordereau_version", versionId,

@@ -207,7 +207,12 @@ class BordereauBouslimIntegrationTest {
             // The fourniture's pairedLineId should match the pose's pairedLineId
             // (both are set by pairLines to a synthetic UUID).
             assertThat(f.pairedLineId()).isNotNull();
+            // Added (feature/bordereau-import): the link is a real line id, both ways.
+            assertThat(f.pairedLineId()).isEqualTo(matchingPose.get().lineId());
+            assertThat(matchingPose.get().pairedLineId()).isEqualTo(f.lineId());
         }
+        // Added: pairLines returns each pair once.
+        assertThat(BordereauImportService.pairLines(analysed)).hasSize(6);
 
         // ── Check 19: ouvrage suggestion ──
         // Sections I, II, III → Conduite
