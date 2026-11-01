@@ -89,6 +89,12 @@ xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/x
 <artifactId>s3</artifactId>
 <version>${awssdk.version}</version>
 </dependency>
+<!-- Apache POI — Excel .xls/.xlsx import for bordereaux -->
+<dependency>
+<groupId>org.apache.poi</groupId>
+<artifactId>poi-ooxml</artifactId>
+<version>5.3.0</version>
+</dependency>
 </dependencies>
 <build>
 <plugins>
