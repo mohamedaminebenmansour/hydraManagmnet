@@ -19,11 +19,14 @@ import tn.hydra.user.AppUserRepository;
 
 import java.math.BigDecimal;
 import java.sql.Date;
+import java.text.DecimalFormat;
+import java.text.DecimalFormatSymbols;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
@@ -538,6 +541,39 @@ public class CashService {
         if (bal == null) bal = BigDecimal.ZERO;
         if (out == null) out = BigDecimal.ZERO;
         return bal.subtract(out);
+    }
+
+    /**
+     * No-overdraft guard: refuses (CAISSE_INSUFFISANTE) when balance - amount < 0.
+     * lock=true takes the pot row lock (FOR UPDATE) first, so two concurrent posts
+     * on the same pot are serialized and the second one sees the first one's OUT.
+     * lock=false is the early warning at submit time; the locked check at posting
+     * time is the one that counts. Returns the balance after the movement.
+     */
+    public BigDecimal requireSufficientBalance(UUID potId, UUID orgId, BigDecimal amount, boolean lock) {
+        List<String> names = jdbc.queryForList(
+                "select name from cash_pot where id = ? and org_id = ?" + (lock ? " for update" : ""),
+                String.class, potId, orgId);
+        if (names.isEmpty()) {
+            throw new ResourceNotFoundException("POT_NOT_FOUND", "Caisse introuvable");
+        }
+        BigDecimal before = computeBalance(potId);
+        BigDecimal after = before.subtract(amount);
+        if (after.signum() < 0) {
+            throw new BusinessRuleException("CAISSE_INSUFFISANTE",
+                    "Solde insuffisant dans la caisse « " + names.get(0) + " » : "
+                            + formatTnd(before) + " TND disponibles, "
+                            + formatTnd(amount) + " TND demandés.");
+        }
+        return after;
+    }
+
+    /** French amount: "63 000,000". New DecimalFormat per call (not thread-safe). */
+    private static String formatTnd(BigDecimal amount) {
+        DecimalFormatSymbols symbols = new DecimalFormatSymbols(Locale.FRANCE);
+        symbols.setGroupingSeparator(' ');
+        symbols.setDecimalSeparator(',');
+        return new DecimalFormat("#,##0.000", symbols).format(amount);
     }
 
     // ══════════════════════════════════════════════════════════════
@@ -1409,16 +1445,10 @@ public class CashService {
             }
         }
 
-        // Negative balance guard for OUT / TRANSFER
+        // Negative balance guard for OUT / TRANSFER (pot row locked)
         BigDecimal fromPotBalanceAfter = null;
         if ("OUT".equals(type) || "TRANSFER".equals(type)) {
-            BigDecimal before = computeBalance(fromPotId);
-            BigDecimal after = before.subtract(amount);
-            fromPotBalanceAfter = after;
-            if (after.signum() < 0) {
-                throw new BusinessRuleException("INSUFFICIENT_BALANCE",
-                        "Solde insuffisant sur la caisse source (" + before + " < " + amount + " " + row.get("currency") + ")");
-            }
+            fromPotBalanceAfter = requireSufficientBalance(fromPotId, me.getOrgId(), amount, true);
         }
 
         jdbc.update("""
@@ -1599,14 +1629,9 @@ public class CashService {
         BigDecimal claimed = (BigDecimal) row.get("claimed_amount");
         BigDecimal assessedAmt = (BigDecimal) row.get("assessed_amount");
 
-        // 5. Negative balance guard for OUT / TRANSFER (same as manual post)
+        // 5. Negative balance guard for OUT / TRANSFER (same as manual post, pot row locked)
         if ("OUT".equals(type) || "TRANSFER".equals(type)) {
-            BigDecimal before = computeBalance(fromPotId);
-            BigDecimal after = before.subtract(amount);
-            if (after.signum() < 0) {
-                throw new BusinessRuleException("INSUFFICIENT_BALANCE",
-                        "Solde insuffisant sur la caisse source (" + before + " < " + amount + " " + currency + ")");
-            }
+            requireSufficientBalance(fromPotId, orgId, amount, true);
         }
 
         // 6. Flip status → POSTED

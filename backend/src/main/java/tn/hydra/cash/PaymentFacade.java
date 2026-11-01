@@ -173,6 +173,10 @@ public class PaymentFacade {
         );
         CashService.MovementResponse movement = cashService.createMovement(auth, draftReq);
 
+        // Early warning: refuse now if the caisse can't cover it. The locked check
+        // when the movement is POSTED (end of the approval) is the one that counts.
+        cashService.requireSufficientBalance(movement.fromPotId(), movement.orgId(), movement.amount(), false);
+
         // Resolve project + user for the process start
         AppUser me = users.findByEmail(auth.getName())
                 .orElseThrow(() -> new IllegalStateException("Unknown user: " + auth.getName()));
