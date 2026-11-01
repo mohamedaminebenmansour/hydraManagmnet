@@ -44,6 +44,12 @@ The human merges. Claude never merges and never pushes to `main`.
 ## Git
 - Work on `feature/<topic>`, `fix/<topic>` or `chore/<topic>`. Push the branch only.
 - Never: push to `main`, merge, force-push, `git stash drop`, `git reset --hard`, `git clean`.
+- Start every task with: `git switch main`, `git pull`, `git switch -c <type>/<topic>`.
+- Before every commit run: `git branch --show-current`. If it prints `main`, stop.
+- After every push run: `git log --oneline -1` and `git log --oneline -1 origin/<branch>`,
+  paste both. If they differ, the push failed: say so, never report "pushed".
+- One-time setup for the human (enables the `.githooks/pre-commit` guard against commits on `main`):
+  `git config core.hooksPath .githooks`
 
 # Compact instructions
 When compacting, keep: the task, the branch name, files changed, test results,

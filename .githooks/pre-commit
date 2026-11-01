@@ -1,0 +1,6 @@
+#!/bin/sh
+branch=$(git rev-parse --abbrev-ref HEAD)
+if [ "$branch" = "main" ]; then
+  echo "Refusé : pas de commit sur main. Créez une branche : git switch -c fix/mon-sujet"
+  exit 1
+fi
