@@ -55,6 +55,26 @@ class BordereauOuvrageMatchingTest {
     }
 
     @Test
+    void reservoirWithNonNumericCapacity_isSkipped_andTheAnalysisSucceeds() throws Exception {
+        UUID badId = UUID.randomUUID();
+        UUID reservoir150Id = UUID.randomUUID();
+        List<Map<String, Object>> ouvrages = List.of(
+                Map.of("id", badId, "type", "RESERVOIR", "name", "Réservoir sur piliers",
+                        "characteristics", "{\"capacite_m3\": \"250 m3\"}"),
+                Map.of("id", reservoir150Id, "type", "RESERVOIR", "name", "Réservoir semi-enterré",
+                        "characteristics", "{\"capacite_m3\": 150}"));
+
+        List<BordereauImportService.AnalysedLine> analysed =
+                BordereauImportService.parseAndAnalyse(Files.readAllBytes(Path.of(TEST_FILE)), ouvrages);
+        List<BordereauImportService.AnalysedLine> articles = analysed.stream()
+                .filter(a -> a.row().articleNo() != null && !a.row().articleNo().isBlank())
+                .toList();
+
+        assertThat(inSection(articles, "42")).allSatisfy(a -> assertThat(a.suggestion().ouvrageId()).isNull());
+        assertThat(inSection(articles, "44")).allSatisfy(a -> assertThat(a.suggestion().ouvrageId()).isEqualTo(reservoir150Id));
+    }
+
+    @Test
     void secondFournitureOnAnAlreadyPairedPose_isNotPaired_andGetsTheWarning() {
         List<BordereauImportService.AnalysedLine> lines = new ArrayList<>(List.of(
                 line("I", "1", "Fourniture conduite PEHD PN10 DE 110"),

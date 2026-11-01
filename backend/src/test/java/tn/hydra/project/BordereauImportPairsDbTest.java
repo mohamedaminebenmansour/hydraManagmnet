@@ -115,4 +115,24 @@ class BordereauImportPairsDbTest {
                     .contains((UUID) f.get("paired_line_id"));
         }
     }
+
+    @Test
+    void importExcel_skipsAReservoirWithNonNumericCapacity_andSucceeds() throws Exception {
+        jdbc.update("""
+                insert into ouvrage (org_id, project_id, type, name, characteristics)
+                values (?, ?, 'RESERVOIR', 'Réservoir sur piliers', '{"capacite_m3": "250 m3"}'::jsonb)
+                """, orgId, projectId);
+        MockMultipartFile file = new MockMultipartFile("file", "HYDRA-test-bordereau-Bouslim.xlsx",
+                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                Files.readAllBytes(Path.of(TEST_FILE)));
+
+        BordereauImportService.ImportPreview preview = importService.importExcel(auth, projectId, file);
+
+        assertThat(preview.versionId()).isNotNull();
+        Integer withReservoir = jdbc.queryForObject("""
+                select count(*) from bordereau_line l join ouvrage o on o.id = l.ouvrage_id
+                where l.version_id = ? and o.type = 'RESERVOIR'
+                """, Integer.class, preview.versionId());
+        assertThat(withReservoir).isZero();
+    }
 }

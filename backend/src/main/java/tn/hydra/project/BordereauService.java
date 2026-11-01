@@ -263,7 +263,14 @@ public class BordereauService {
                 body.importWarnings(),
                 lineId, me.getOrgId());
 
-        // Re-run warnings for this line (unit normalisation + unknown unit).
+        // §2.4: a new unit_raw gets its normalised unit from the import's function
+        // (null when unknown, which coalesce above cannot write).
+        if (body.unitRaw() != null) {
+            jdbc.update("update bordereau_line set unit = ? where id = ? and org_id = ?",
+                    BordereauImportService.normaliseUnit(body.unitRaw()), lineId, me.getOrgId());
+        }
+
+        // Re-run the warnings this line can be checked for; keep every other one.
         // Re-read the updated line to get the current values.
         List<Map<String, Object>> updatedRows = jdbc.queryForList(
                 "select * from bordereau_line where id = ? and org_id = ?", lineId, me.getOrgId());
@@ -272,22 +279,38 @@ public class BordereauService {
             String updatedUnitRaw = (String) r.get("unit_raw");
             String updatedUnit = (String) r.get("unit");
             String updatedDesignation = (String) r.get("designation");
-            List<String> newWarnings = new ArrayList<>();
-
-            // §6 rule 5: unknown unit.
-            if (updatedUnitRaw != null && !updatedUnitRaw.isBlank() && updatedUnit == null) {
-                newWarnings.add("Unité inconnue : « " + updatedUnitRaw + " ».");
-            }
-            // §6 rule 3: unit but no quantity.
             Object updatedQty = r.get("quantity");
-            if (updatedUnitRaw != null && !updatedUnitRaw.isBlank() && updatedQty == null) {
-                newWarnings.add("Quantité manquante (considérée comme 0).");
+            boolean hasUnit = updatedUnitRaw != null && !updatedUnitRaw.isBlank();
+
+            List<String> newWarnings = new ArrayList<>();
+            boolean nonNumericKept = false;
+            for (String w : toStringArray(r.get("import_warnings"))) {
+                if (w.startsWith(BordereauImportService.UNKNOWN_UNIT_PREFIX)
+                        || w.equals(BordereauImportService.MISSING_QUANTITY_WARNING)) continue;
+                if (w.startsWith(BordereauImportService.NON_NUMERIC_QUANTITY_PREFIX)) {
+                    // The raw text is not stored: the warning stays until a quantity is entered.
+                    if (updatedQty != null) continue;
+                    nonNumericKept = true;
+                }
+                newWarnings.add(w); // pairing, section title, duplicate (rechecked below)…
             }
-            // §7.3: re-extract specs from the updated designation.
+            // §6 rule 5: unknown unit.
+            if (hasUnit && updatedUnit == null) {
+                newWarnings.add(BordereauImportService.unknownUnitWarning(updatedUnitRaw));
+            }
+            // §6 rule 3: unit but no quantity (not when the quantity was non-numeric).
+            if (hasUnit && updatedQty == null && !nonNumericKept) {
+                newWarnings.add(BordereauImportService.MISSING_QUANTITY_WARNING);
+            }
+            // §7.3: re-extract specs from the designation and merge them into the stored
+            // specs; keys the designation does not mention (e.g. capacite_m3 from the
+            // section title) are kept.
             Map<String, Object> newSpecs = BordereauImportService.extractSpecs(updatedDesignation);
             if (!newSpecs.isEmpty()) {
+                Map<String, Object> merged = new LinkedHashMap<>(toResponseSpecs(r.get("specs")));
+                merged.putAll(newSpecs);
                 jdbc.update("update bordereau_line set specs = ?::jsonb where id = ? and org_id = ?",
-                        mapToJson(newSpecs), lineId, me.getOrgId());
+                        mapToJson(merged), lineId, me.getOrgId());
             }
             // Save the re-run warnings.
             jdbc.update("update bordereau_line set import_warnings = ? where id = ? and org_id = ?",
@@ -566,12 +589,7 @@ public class BordereauService {
         try { warnings = warningsArr != null ? (String[]) warningsArr.getArray() : new String[0]; }
         catch (Exception e) { warnings = new String[0]; }
 
-        String specsStr = row.get("specs") != null ? row.get("specs").toString() : "{}";
-        Map<String, Object> specs;
-        try {
-            tools.jackson.databind.ObjectMapper m = new tools.jackson.databind.ObjectMapper();
-            specs = m.readValue(specsStr, Map.class);
-        } catch (Exception e) { specs = Map.of(); }
+        Map<String, Object> specs = toResponseSpecs(row.get("specs"));
 
         return new LineResponse(
                 (UUID) row.get("id"), (UUID) row.get("version_id"),
@@ -603,6 +621,16 @@ public class BordereauService {
         if (v instanceof Instant i) return i;
         if (v instanceof java.sql.Timestamp ts) return ts.toInstant();
         return null;
+    }
+
+    /** jsonb specs column → Map ({} when absent or invalid). */
+    @SuppressWarnings("unchecked")
+    private static Map<String, Object> toResponseSpecs(Object specsColumn) {
+        String specsStr = specsColumn != null ? specsColumn.toString() : "{}";
+        try {
+            tools.jackson.databind.ObjectMapper m = new tools.jackson.databind.ObjectMapper();
+            return m.readValue(specsStr, Map.class);
+        } catch (Exception e) { return Map.of(); }
     }
 
     private String mapToJson(Map<String, Object> map) {

@@ -127,6 +127,52 @@ class BordereauEditAndBulkDbTest {
     }
 
     @Test
+    void editingTheDesignation_keepsCapaciteM3_andAddsTheNewKeys() {
+        UUID a = insertLine(orgId, versionId, "1", "Béton de propreté");
+        jdbc.update("update bordereau_line set specs = '{\"capacite_m3\": 250}'::jsonb where id = ?", a);
+
+        bordereau.updateLine(auth, projectId, versionId, a, new BordereauService.UpdateLineRequest(
+                null, "Conduite PEHD PN10 DE 110", null, null, null, null, null, null, null, null, null));
+
+        var specs = jdbc.queryForMap("""
+                select specs->>'capacite_m3' as cap, specs->>'de_mm' as de, specs->>'pn_bar' as pn,
+                       specs->>'materiau' as mat
+                from bordereau_line where id = ?
+                """, a);
+        assertThat(specs.get("cap")).isEqualTo("250");
+        assertThat(specs.get("de")).isEqualTo("110");
+        assertThat(specs.get("pn")).isEqualTo("10");
+        assertThat(specs.get("mat")).isEqualTo("PEHD");
+    }
+
+    @Test
+    void aPairingWarning_isKeptAfterTheQuantityIsEdited() throws Exception {
+        UUID a = insertLine(orgId, versionId, "1", "Fourniture conduite PEHD PN10 DE 110");
+        jdbc.update("update bordereau_line set import_warnings = ? where id = ?",
+                new String[]{"Plusieurs poses possibles, aucun lien créé."}, a);
+
+        bordereau.updateLine(auth, projectId, versionId, a, new BordereauService.UpdateLineRequest(
+                null, null, null, null, new java.math.BigDecimal("20"), null, null, null, null, null, null));
+
+        assertThat(warnings(a)).containsExactly("Plusieurs poses possibles, aucun lien créé.");
+    }
+
+    @Test
+    void editingUnitRaw_recomputesUnitAndTheUnknownUnitWarning() throws Exception {
+        UUID a = insertLine(orgId, versionId, "1", "Conduite PEHD PN10 DE 110");
+
+        bordereau.updateLine(auth, projectId, versionId, a, new BordereauService.UpdateLineRequest(
+                null, null, "xyz", null, null, null, null, null, null, null, null));
+        assertThat(warnings(a)).contains("Unité inconnue : « xyz ».");
+        assertThat(jdbc.queryForObject("select unit from bordereau_line where id = ?", String.class, a)).isNull();
+
+        bordereau.updateLine(auth, projectId, versionId, a, new BordereauService.UpdateLineRequest(
+                null, null, "ml", null, null, null, null, null, null, null, null));
+        assertThat(warnings(a)).noneMatch(w -> w.startsWith("Unité inconnue"));
+        assertThat(jdbc.queryForObject("select unit from bordereau_line where id = ?", String.class, a)).isEqualTo("ML");
+    }
+
+    @Test
     void assignOuvrage_setsTheOuvrageOnAllSelectedLines() {
         UUID a = insertLine(orgId, versionId, "1", "Conduite PEHD PN10 DE 110");
         UUID b = insertLine(orgId, versionId, "2", "Conduite PEHD PN10 DE 160");

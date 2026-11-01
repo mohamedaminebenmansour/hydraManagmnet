@@ -216,6 +216,12 @@ export class BordereauTabComponent implements OnInit {
 
   // ── Ouvrage assignment ──────────────────────────────────────────
 
+  /** Read-only ouvrage name (ACTIVE / ARCHIVED versions); "—" when none. */
+  ouvrageName(ouvrageId: string | null | undefined): string {
+    if (!ouvrageId) return '—';
+    return this.ouvrages().find(o => o.id === ouvrageId)?.name ?? '—';
+  }
+
   isSelected(lineId: string): boolean { return this.selectedIds().has(lineId); }
 
   toggleSelected(lineId: string, checked: boolean): void {

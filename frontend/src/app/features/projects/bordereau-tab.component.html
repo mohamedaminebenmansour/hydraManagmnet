@@ -70,9 +70,7 @@
               <th class="c-qty">Qté</th>
               <th class="c-pu">PU</th>
               <th class="c-montant">Montant</th>
-              @if (isDraft()) {
-                <th class="c-ouvrage">Ouvrage</th>
-              }
+              <th class="c-ouvrage">Ouvrage</th>
               <th class="c-warn"></th>
             </tr>
           </thead>
@@ -142,6 +140,8 @@
                               appendTo="body" styleClass="w100"
                               [ariaLabel]="'Ouvrage de la ligne ' + (l.articleNo ?? l.designation)" />
                   </td>
+                } @else {
+                  <td class="c-ouvrage">{{ ouvrageName(l.ouvrageId) }}</td>
                 }
                 <td class="c-warn">
                   @if (l.importWarnings?.length) {

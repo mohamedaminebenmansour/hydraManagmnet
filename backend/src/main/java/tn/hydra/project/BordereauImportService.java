@@ -125,18 +125,18 @@ public class BordereauImportService {
                 BigDecimal effectiveQty = row.quantity();
                 if (!isSectionTitle && row.unitRaw() != null && !row.unitRaw().isBlank()
                         && effectiveQty == null && !row.quantityParseFailed()) {
-                    warnings.add("Quantité manquante (considérée comme 0).");
+                    warnings.add(MISSING_QUANTITY_WARNING);
                     effectiveQty = BigDecimal.ZERO;
                 }
                 if (row.quantityParseFailed()) {
-                    warnings.add("La quantité n'est pas un nombre valide : « " + row.quantityRaw() + " ».");
+                    warnings.add(nonNumericQuantityWarning(row.quantityRaw()));
                     effectiveQty = BigDecimal.ZERO;
                 }
 
                 // §6 rule 5: unknown unit → keep raw, set unit null, warn.
                 String normalisedUnit = normaliseUnit(row.unitRaw());
                 if (row.unitRaw() != null && !row.unitRaw().isBlank() && normalisedUnit == null) {
-                    warnings.add("Unité inconnue : « " + row.unitRaw() + " ».");
+                    warnings.add(unknownUnitWarning(row.unitRaw()));
                 }
 
                 // §6 rule 4: duplicate article_no in same section — warn BOTH lines.
@@ -891,6 +891,22 @@ public class BordereauImportService {
     /** §6 rule 4 warning text (same at import and on edit). */
     static String duplicateWarning(String articleNo) {
         return DUPLICATE_WARNING_PREFIX + " : « " + articleNo + " ».";
+    }
+
+    /** §6 rule 3 warning text (same at import and on edit). */
+    static final String MISSING_QUANTITY_WARNING = "Quantité manquante (considérée comme 0).";
+
+    static final String NON_NUMERIC_QUANTITY_PREFIX = "La quantité n'est pas un nombre valide";
+
+    static String nonNumericQuantityWarning(String quantityRaw) {
+        return NON_NUMERIC_QUANTITY_PREFIX + " : « " + quantityRaw + " ».";
+    }
+
+    static final String UNKNOWN_UNIT_PREFIX = "Unité inconnue";
+
+    /** §6 rule 5 warning text (same at import and on edit). */
+    static String unknownUnitWarning(String unitRaw) {
+        return UNKNOWN_UNIT_PREFIX + " : « " + unitRaw + " ».";
     }
 
     private static String specsToJson(Map<String, Object> specs) {
