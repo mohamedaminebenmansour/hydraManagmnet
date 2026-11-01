@@ -241,6 +241,78 @@ class ChantierRulesTest {
         assertThat(svc.listMyTasks(subAuth).stream().noneMatch(t -> t.instanceId().equals(started.id()))).isTrue();
     }
 
+    // ══════════════════════════════════════════════════════════════
+    //  V44 — listRolesNeeded surfaces absentUntil on the current assignee
+    //  (main + substitute) and on each candidate, read from
+    //  app_user.absent_until. Null when not absent or the date is before
+    //  today (absence already ended).
+    // ══════════════════════════════════════════════════════════════
+    @Test
+    void rolesNeeded_returnsAbsentUntilForAbsentMainAndSubstitute() {
+        UUID main = newFinanceUser("chantier.rn.main@hydra.test", "RN Main");
+        UUID sub = newFinanceUser("chantier.rn.sub@hydra.test", "RN Sub");
+        svc.upsertRoleAssignees(ownerAuth, projectId, new ProcessService.UpsertRoleAssigneesRequest(
+                List.of(new ProcessService.RoleAssigneeItem("FINANCE", main, sub))));
+
+        // Mark both absent: main until today, substitute until today + 3 days.
+        LocalDate today = LocalDate.now();
+        LocalDate subUntil = today.plusDays(3);
+        jdbc.update("update app_user set absent_until = ? where id = ?", today, main);
+        jdbc.update("update app_user set absent_until = ? where id = ?", subUntil, sub);
+
+        List<ProcessService.RoleNeeded> roles = svc.listRolesNeeded(ownerAuth, projectId);
+        ProcessService.RoleAssigneeResponse finance = roles.stream()
+                .filter(r -> "FINANCE".equalsIgnoreCase(r.roleCode()))
+                .findFirst().orElseThrow().currentAssignee();
+        assertThat(finance).isNotNull();
+        assertThat(finance.userId()).isEqualTo(main);
+        assertThat(finance.substituteUserId()).isEqualTo(sub);
+        // Main person absent until today (today is still considered absent).
+        assertThat(finance.absentUntil()).isEqualTo(today);
+        // Substitute absent until today + 3.
+        assertThat(finance.substituteAbsentUntil()).isEqualTo(subUntil);
+
+        // The main person is also a candidate and carries the same absentUntil.
+        ProcessService.RoleCandidate mainCandidate = roles.stream()
+                .flatMap(r -> r.candidates().stream())
+                .filter(c -> main.equals(c.userId()))
+                .findFirst().orElseThrow();
+        assertThat(mainCandidate.absentUntil()).isEqualTo(today);
+    }
+
+    @Test
+    void rolesNeeded_returnsNullAbsentUntilAfterAbsenceEnded() {
+        UUID main = newFinanceUser("chantier.rn.ended@hydra.test", "RN Ended Main");
+        UUID sub = newFinanceUser("chantier.rn.endedsub@hydra.test", "RN Ended Sub");
+        svc.upsertRoleAssignees(ownerAuth, projectId, new ProcessService.UpsertRoleAssigneesRequest(
+                List.of(new ProcessService.RoleAssigneeItem("FINANCE", main, sub))));
+
+        // Mark main absent → absentUntil is present on the current assignee.
+        jdbc.update("update app_user set absent_until = current_date where id = ?", main);
+        ProcessService.RoleAssigneeResponse before = svc.listRolesNeeded(ownerAuth, projectId).stream()
+                .filter(r -> "FINANCE".equalsIgnoreCase(r.roleCode()))
+                .findFirst().orElseThrow().currentAssignee();
+        assertThat(before).isNotNull();
+        assertThat(before.absentUntil()).isNotNull();
+
+        // End the absence (absent_until = null) → absentUntil becomes null.
+        jdbc.update("update app_user set absent_until = null where id = ?", main);
+        ProcessService.RoleAssigneeResponse after = svc.listRolesNeeded(ownerAuth, projectId).stream()
+                .filter(r -> "FINANCE".equalsIgnoreCase(r.roleCode()))
+                .findFirst().orElseThrow().currentAssignee();
+        assertThat(after).isNotNull();
+        assertThat(after.absentUntil()).isNull();
+
+        // A date in the past is also treated as "no longer absent" → null.
+        jdbc.update("update app_user set absent_until = ? where id = ?",
+                LocalDate.now().minusDays(1), main);
+        ProcessService.RoleAssigneeResponse past = svc.listRolesNeeded(ownerAuth, projectId).stream()
+                .filter(r -> "FINANCE".equalsIgnoreCase(r.roleCode()))
+                .findFirst().orElseThrow().currentAssignee();
+        assertThat(past).isNotNull();
+        assertThat(past.absentUntil()).isNull();
+    }
+
     @Test
     void absenceDateInThePastRefused() {
         UUID user = newFinanceUser("chantier.past@hydra.test", "Past User");

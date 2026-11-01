@@ -358,6 +358,10 @@ export interface RoleAssignee {
   userEmail: string;
   substituteUserId?: string | null;
   substituteUserName?: string | null;
+  // V44 — absence dates read from app_user.absent_until (ISO yyyy-MM-dd).
+  // Null when the person is not absent or the stored date is before today.
+  absentUntil?: string | null;
+  substituteAbsentUntil?: string | null;
 }
 
 /** Body for PUT /api/projects/:id/process-role-assignees — upsert batch. */
@@ -372,6 +376,8 @@ export interface RoleCandidate {
   userEmail: string;
   isOwner: boolean;
   isProjectMember: boolean;
+  // V44 — ISO yyyy-MM-dd, or null when not absent / absence already ended.
+  absentUntil?: string | null;
 }
 
 /** Body PUT /api/projects/{id}/process-templates (enable/disable + threshold). */
@@ -424,6 +430,9 @@ export function mapRoleAssignee(raw: any): RoleAssignee {
     userEmail: String(raw?.userEmail ?? raw?.user_email ?? ''),
     substituteUserId: raw?.substituteUserId ?? raw?.substitute_user_id ?? null,
     substituteUserName: raw?.substituteUserName ?? raw?.substitute_name ?? raw?.substituteName ?? null,
+    // V44 — absence dates (null when absent / before today).
+    absentUntil: raw?.absentUntil ?? raw?.absent_until ?? null,
+    substituteAbsentUntil: raw?.substituteAbsentUntil ?? raw?.substitute_absent_until ?? null,
   };
 }
 
@@ -441,6 +450,7 @@ export function mapRoleNeeded(raw: any): RoleNeeded {
       userEmail: String(c?.userEmail ?? c?.user_email ?? ''),
       isOwner: Boolean(c?.isOwner ?? c?.is_owner ?? false),
       isProjectMember: Boolean(c?.isProjectMember ?? c?.is_project_member ?? false),
+      absentUntil: c?.absentUntil ?? c?.absent_until ?? null,
     })),
   };
 }

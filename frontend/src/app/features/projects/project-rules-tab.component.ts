@@ -257,6 +257,15 @@ export class ProjectRulesTabComponent implements OnInit {
       for (const r of roles) {
         this.draftMain[r.roleCode] = r.currentAssignee?.userId ?? null;
         this.draftSub[r.roleCode] = r.currentAssignee?.substituteUserId ?? null;
+        // V44 — seed absence from the server: main person, substitute, and
+        // every candidate. Null when not absent / absence already ended.
+        const mainId = r.currentAssignee?.userId;
+        if (mainId) this.absenceMap[mainId] = r.currentAssignee?.absentUntil ?? null;
+        const subId = r.currentAssignee?.substituteUserId;
+        if (subId) this.absenceMap[subId] = r.currentAssignee?.substituteAbsentUntil ?? null;
+        for (const c of r.candidates ?? []) {
+          this.absenceMap[c.userId] = c.absentUntil ?? null;
+        }
       }
       this.rolesDirty.set(false);
       this.loadingRoles.set(false);
@@ -264,10 +273,13 @@ export class ProjectRulesTabComponent implements OnInit {
   }
 
   selectOptions(r: RoleNeeded): { userId: string; label: string }[] {
-    return (r.candidates ?? []).map(c => ({
-      userId: c.userId,
-      label: `${c.userName}${c.isOwner ? ' (gérant)' : ''}`,
-    }));
+    return (r.candidates ?? []).map(c => {
+      const parts = [c.userName];
+      if (c.isOwner) parts.push('(gérant)');
+      // V44 — show the absence hint next to absent people in both dropdowns.
+      if (c.absentUntil) parts.push(`(absent jusqu'au ${this.fmtDate(c.absentUntil)})`);
+      return { userId: c.userId, label: parts.join(' ') };
+    });
   }
 
   saveRoles(): void {
@@ -321,9 +333,11 @@ export class ProjectRulesTabComponent implements OnInit {
     const iso = this.absenceDate.toISOString().split('T')[0];
     this.userService.setAbsence(userId, iso).subscribe(result => {
       if (result.ok) {
-        this.absenceMap[userId] = iso;
         this.absencePickerUserId.set(null);
         this.msgs.add({ severity: 'success', summary: 'Absence enregistrée', detail: 'Le remplaçant prendra le relais.' });
+        // V44 — reload roles from the server so the absence badge reflects
+        // the persisted state (not only the in-memory map).
+        this.loadRoles();
       } else {
         this.absenceError.set(result.error ?? 'Erreur');
       }
@@ -334,8 +348,10 @@ export class ProjectRulesTabComponent implements OnInit {
     if (!userId) return;
     this.userService.setAbsence(userId, null).subscribe(result => {
       if (result.ok) {
-        this.absenceMap[userId] = null;
         this.msgs.add({ severity: 'success', summary: 'Fin d\u2019absence', detail: 'La personne est de nouveau disponible.' });
+        // V44 — reload roles from the server so the absence badge clears from
+        // the persisted state (not only the in-memory map).
+        this.loadRoles();
       } else {
         this.msgs.add({ severity: 'error', summary: 'Erreur', detail: result.error ?? 'Erreur' });
       }

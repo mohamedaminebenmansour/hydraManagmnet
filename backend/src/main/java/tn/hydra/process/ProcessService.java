@@ -19,6 +19,7 @@ import java.math.BigDecimal;
 import java.text.DecimalFormat;
 import java.text.DecimalFormatSymbols;
 import java.time.Instant;
+import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -357,7 +358,13 @@ public class ProcessService {
             String userName,
             String userEmail,
             UUID substituteUserId,
-            String substituteUserName) {}
+            String substituteUserName,
+            // V44 — absence dates read from app_user.absent_until. Null when the
+            // person is not absent or the stored date is before today (absence
+            // already ended). Powers the chantier "Règles" tab badge + the
+            // candidate dropdown hint.
+            LocalDate absentUntil,
+            LocalDate substituteAbsentUntil) {}
 
     /** Body for PUT /api/projects/{id}/process-role-assignees — upsert batch. */
     public record UpsertRoleAssigneesRequest(List<RoleAssigneeItem> items) {}
@@ -380,7 +387,9 @@ public class ProcessService {
             String userName,
             String userEmail,
             boolean isOwner,
-            boolean isProjectMember) {}
+            boolean isProjectMember,
+            // V44 — null when not absent or the date is before today.
+            LocalDate absentUntil) {}
 
     // ═══════════════════════════════════════════════════════════════
     // DEPENDENCIES
@@ -2789,6 +2798,28 @@ public class ProcessService {
     //   GET    /api/projects/{projectId}/process-roles-needed
     // ═══════════════════════════════════════════════════════════════
 
+    /**
+     * V44 helper — normalises a raw app_user.absent_until value (read via
+     * JdbcTemplate, so typically a java.sql.Date) into a LocalDate, and
+     * returns null when the person is not absent (null column) or when the
+     * stored date is before today (the absence has already ended). A date
+     * equal to today is still considered absent (absent_until &gt;= today).
+     */
+    private LocalDate effectiveAbsence(Object raw) {
+        if (raw == null) return null;
+        LocalDate d;
+        if (raw instanceof LocalDate ld) {
+            d = ld;
+        } else if (raw instanceof java.sql.Date sd) {
+            d = sd.toLocalDate();
+        } else if (raw instanceof java.util.Date ud) {
+            d = ud.toInstant().atZone(java.time.ZoneId.systemDefault()).toLocalDate();
+        } else {
+            d = LocalDate.parse(raw.toString());
+        }
+        return d.isBefore(LocalDate.now()) ? null : d;
+    }
+
     /** GET — list all role→user mappings for this project. */
     public List<RoleAssigneeResponse> listRoleAssignees(Authentication auth, UUID projectId) {
         AppUser me = currentUser(auth);
@@ -2796,7 +2827,9 @@ public class ProcessService {
         return jdbc.queryForList(
                 """
                 select pra.role_code, pra.user_id, u.full_name as user_name, u.email as user_email,
-                       pra.substitute_user_id, su.full_name as substitute_name
+                       pra.substitute_user_id, su.full_name as substitute_name,
+                       u.absent_until as user_absent_until,
+                       su.absent_until as substitute_absent_until
                 from project_role_assignee pra
                 join app_user u on u.id = pra.user_id
                 left join app_user su on su.id = pra.substitute_user_id
@@ -2811,7 +2844,9 @@ public class ProcessService {
                         (String) r.get("user_name"),
                         (String) r.get("user_email"),
                         (UUID) r.get("substitute_user_id"),
-                        (String) r.get("substitute_name")))
+                        (String) r.get("substitute_name"),
+                        effectiveAbsence(r.get("user_absent_until")),
+                        effectiveAbsence(r.get("substitute_absent_until"))))
                 .toList();
     }
 
@@ -2989,7 +3024,9 @@ public class ProcessService {
         for (Map<String, Object> r : jdbc.queryForList(
                 """
                 select pra.role_code, pra.user_id, u.full_name as user_name, u.email as user_email,
-                       pra.substitute_user_id, su.full_name as substitute_name
+                       pra.substitute_user_id, su.full_name as substitute_name,
+                       u.absent_until as user_absent_until,
+                       su.absent_until as substitute_absent_until
                 from project_role_assignee pra
                 join app_user u on u.id = pra.user_id
                 left join app_user su on su.id = pra.substitute_user_id
@@ -3003,7 +3040,9 @@ public class ProcessService {
                             (String) r.get("user_name"),
                             (String) r.get("user_email"),
                             (UUID) r.get("substitute_user_id"),
-                            (String) r.get("substitute_name")));
+                            (String) r.get("substitute_name"),
+                            effectiveAbsence(r.get("user_absent_until")),
+                            effectiveAbsence(r.get("substitute_absent_until"))));
         }
 
         // ── (3) candidate users — project members + org owner (single query) ──
@@ -3012,7 +3051,8 @@ public class ProcessService {
         List<RoleCandidate> allCandidates = jdbc.queryForList(
                 """
                 select u.id, u.full_name, u.email, u.is_owner,
-                       (pm.user_id is not null) as is_project_member
+                       (pm.user_id is not null) as is_project_member,
+                       u.absent_until
                 from app_user u
                 left join project_member pm on pm.project_id = ? and pm.user_id = u.id
                 where u.org_id = ?
@@ -3027,7 +3067,8 @@ public class ProcessService {
                         (String) r.get("full_name"),
                         (String) r.get("email"),
                         Boolean.TRUE.equals(r.get("is_owner")),
-                        Boolean.TRUE.equals(r.get("is_project_member"))))
+                        Boolean.TRUE.equals(r.get("is_project_member")),
+                        effectiveAbsence(r.get("absent_until"))))
                 .toList();
 
         // ── (4) assemble per role ──
