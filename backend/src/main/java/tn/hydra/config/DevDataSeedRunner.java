@@ -21,7 +21,7 @@ import java.util.UUID;
  *
  * <p>Creates, in the default organization ("Company"):
  * <ul>
- *   <li>10 test users (password {@code Test1234!}, BCrypt-hashed) covering every system role.</li>
+ *   <li>10 test users (password from HYDRA_DEV_SEED_PASSWORD, BCrypt-hashed) covering every system role.</li>
  *   <li>3 sample projects with members holding different project roles.</li>
  *   <li>Per-project folder clones + default {@code folder_access} grants
  *       (via {@link FolderAccessService#seedDefaults(UUID)}).</li>
@@ -35,7 +35,9 @@ import java.util.UUID;
 @Order(2)
 public class DevDataSeedRunner implements CommandLineRunner {
 
-    private static final String DEV_PASSWORD = "Test1234!";
+    /** Dev seed password from the environment (never in the code). */
+    @Value("${HYDRA_DEV_SEED_PASSWORD:}")
+    private String devPassword;
     private static final String ORG_NAME = "Company";
 
     private final JdbcTemplate jdbc;
@@ -57,6 +59,11 @@ public class DevDataSeedRunner implements CommandLineRunner {
     @Override
     @Transactional
     public void run(String... args) {
+        if (devPassword == null || devPassword.isBlank()) {
+            org.slf4j.LoggerFactory.getLogger(DevDataSeedRunner.class)
+                    .warn("Dev seed skipped: HYDRA_DEV_SEED_PASSWORD is not set.");
+            return;
+        }
         if (!devSeedEnabled) {
             return;
         }
@@ -156,7 +163,7 @@ public class DevDataSeedRunner implements CommandLineRunner {
         return jdbc.queryForObject("""
                 insert into app_user (org_id, email, password_hash, full_name, is_owner, is_active)
                 values (?, ?, ?, 'Propriétaire', true, true) returning id""",
-                UUID.class, orgId, "owner@hydra.tn", encoder.encode(DEV_PASSWORD));
+                UUID.class, orgId, "owner@hydra.tn", encoder.encode(devPassword));
     }
 
     private UUID insertUser(UUID orgId, UserSpec spec) {
@@ -165,7 +172,7 @@ public class DevDataSeedRunner implements CommandLineRunner {
                 select ?, ?, ?, ?, ?, true
                 where not exists (select 1 from app_user where email = ?)
                 returning id""",
-                UUID.class, orgId, spec.email(), encoder.encode(DEV_PASSWORD),
+                UUID.class, orgId, spec.email(), encoder.encode(devPassword),
                 spec.fullName(), spec.isOwner(), spec.email());
         if (id == null) {
             id = jdbc.queryForObject("select id from app_user where email = ?", UUID.class, spec.email());
