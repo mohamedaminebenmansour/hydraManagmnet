@@ -2668,8 +2668,10 @@ public class ProcessService {
         }
 
         // Refuse disabling the last unconditional (empty conditions) CASH_PAYMENT
-        // rule on this chantier.
-        if (Boolean.FALSE.equals(req.enabled())) {
+        // rule on this chantier. Also refuse setting a non-null threshold override
+        // on the last unconditional CASH_PAYMENT rule (a threshold would make it
+        // miss small payments with no other unconditional rule to cover them).
+        {
             List<Map<String, Object>> tmpl = jdbc.queryForList(
                     "select subject_type, conditions::text as conditions from process_template where id = ?",
                     templateId);
@@ -2678,6 +2680,7 @@ public class ProcessService {
                 String cond = (String) tmpl.get(0).get("conditions");
                 boolean emptyCond = cond == null || cond.isBlank() || "{}".equals(cond.trim());
                 if ("CASH_PAYMENT".equals(st) && emptyCond) {
+                    // Count OTHER enabled unconditional CASH_PAYMENT rules on this chantier.
                     Integer others = jdbc.queryForObject(
                             """
                             select count(*) from process_template pt
@@ -2690,9 +2693,16 @@ public class ProcessService {
                                   where p2.project_id = ? and p2.template_id = pt.id and p2.enabled = false
                               )
                             """, Integer.class, orgId, templateId, projectId);
-                    if (others != null && others == 0) {
+                    boolean isLast = others == null || others == 0;
+                    // Refuse disabling the last one.
+                    if (isLast && Boolean.FALSE.equals(req.enabled())) {
                         throw new BusinessRuleException("LAST_UNCONDITIONAL_RULE",
                                 "Au moins une règle de paiement sans condition doit rester active sur ce chantier");
+                    }
+                    // Refuse setting a non-null threshold on the last one.
+                    if (isLast && req.amountThresholdOverride() != null) {
+                        throw new BusinessRuleException("LAST_UNCONDITIONAL_RULE",
+                                "La règle de paiement sans condition ne peut pas avoir de seuil sur ce chantier : aucune autre règle ne couvrirait les petits montants");
                     }
                 }
             }

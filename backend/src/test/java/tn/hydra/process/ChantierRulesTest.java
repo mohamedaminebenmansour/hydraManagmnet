@@ -14,11 +14,13 @@ import org.springframework.transaction.annotation.Transactional;
 import tn.hydra.common.BusinessRuleException;
 import tn.hydra.user.UserService;
 
+import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.util.List;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
 /**
@@ -254,5 +256,114 @@ class ChantierRulesTest {
                 "chantier.nonowner1@hydra.test", null, List.of());
         assertThrows(BusinessRuleException.class, () ->
                 userService.setAbsence(user1Auth, user2, LocalDate.now().plusDays(1)));
+    }
+
+    // ══════════════════════════════════════════════════════════════
+    //  V43 — does not create rows for another organization's template.
+    //  This is a data-level check: V43 ran at Flyway startup (before the
+    //  test transaction), so we verify the result by inserting an org-scoped
+    //  template in another org + a project_process_template row in that org,
+    //  then checking our org's projects don't have a row for it.
+    //  Since V43 has already run, we simulate the "already has rows" state
+    //  and verify the org filter by checking which templates are visible.
+    // ══════════════════════════════════════════════════════════════
+    @Test
+    void v43_doesNotCreateRowsForOtherOrgTemplate() {
+        // V43 ran at Flyway startup; we test its SQL logic by re-running it manually
+        // inside the test transaction after setting up the data.
+
+        // Create a second org + owner + project.
+        UUID otherOrg = UUID.randomUUID();
+        UUID otherOwner = UUID.randomUUID();
+        UUID otherProject = UUID.randomUUID();
+        jdbc.update("insert into organization (id, name) values (?, ?)", otherOrg, "Other Org");
+        jdbc.update("""
+                insert into app_user (id, org_id, email, password_hash, full_name, is_owner, is_active)
+                values (?, ?, ?, ?, ?, true, true)
+                """, otherOwner, otherOrg, "other.owner@test.test", "hash", "Other Owner");
+        jdbc.update("insert into project (id, org_id, name, status, created_by) values (?, ?, ?, 'ACTIF', ?)",
+                otherProject, otherOrg, "Other Project", otherOwner);
+
+        // Insert an org-scoped CASH_PAYMENT template in the OTHER org.
+        UUID otherTemplate = UUID.randomUUID();
+        jdbc.update("""
+                insert into process_template (id, key, name, org_id, subject_type, conditions, priority, active)
+                values (?, 'OTHER_ORG_RULE', 'Other Org Rule', ?, 'CASH_PAYMENT', '{}'::jsonb, 100, true)
+                """, otherTemplate, otherOrg);
+
+        // Give BOTH projects a project_process_template row (so V43's CROSS JOIN triggers).
+        UUID payAppr = paymentApprovalId();
+        jdbc.update("""
+                insert into project_process_template (id, project_id, template_id, enabled)
+                values (?, ?, ?, true)
+                """, UUID.randomUUID(), projectId, payAppr);
+        jdbc.update("""
+                insert into project_process_template (id, project_id, template_id, enabled)
+                values (?, ?, ?, true)
+                """, UUID.randomUUID(), otherProject, payAppr);
+
+        // Run V43's SQL manually (the fixed version with the org filter).
+        jdbc.update("""
+                INSERT INTO project_process_template (project_id, template_id, enabled)
+                SELECT DISTINCT ppt.project_id, pt.id, false
+                FROM project_process_template ppt
+                JOIN project p ON p.id = ppt.project_id
+                CROSS JOIN process_template pt
+                WHERE pt.active = true
+                  AND (pt.org_id IS NULL OR pt.org_id = p.org_id)
+                  AND NOT EXISTS (
+                      SELECT 1 FROM project_process_template p2
+                      WHERE p2.project_id = ppt.project_id AND p2.template_id = pt.id
+                  )
+                """);
+
+        // Our project should NOT have a row for the other org's template.
+        Integer ourRows = jdbc.queryForObject(
+                "select count(*) from project_process_template where project_id = ? and template_id = ?",
+                Integer.class, projectId, otherTemplate);
+        assertThat(ourRows).as("V43 must not create rows for another org's template").isEqualTo(0);
+
+        // The other project SHOULD have a row for its own template (V43 seeds it).
+        Integer otherRows = jdbc.queryForObject(
+                "select count(*) from project_process_template where project_id = ? and template_id = ?",
+                Integer.class, otherProject, otherTemplate);
+        assertThat(otherRows).as("V43 should seed the other org's own template").isEqualTo(1);
+    }
+
+    // ══════════════════════════════════════════════════════════════
+    //  Threshold on the last unconditional rule — refused.
+    // ══════════════════════════════════════════════════════════════
+    @Test
+    void thresholdOnLastUnconditionalRule_refused() {
+        // PAYMENT_APPROVAL is the only unconditional CASH_PAYMENT rule visible to this org.
+        // Setting a threshold override on it must be refused.
+        assertThatThrownBy(() -> svc.assignTemplateToProject(ownerAuth, projectId,
+                new ProcessService.AssignTemplateRequest("PAYMENT_APPROVAL", true, null, new BigDecimal("500.000"))))
+                .isInstanceOf(BusinessRuleException.class)
+                .hasMessageContaining("La règle de paiement sans condition ne peut pas avoir de seuil sur ce chantier");
+    }
+
+    // ══════════════════════════════════════════════════════════════
+    //  Threshold when another unconditional rule is enabled — allowed.
+    // ══════════════════════════════════════════════════════════════
+    @Test
+    void thresholdWhenAnotherUnconditionalRuleEnabled_allowed() {
+        // Create a second unconditional CASH_PAYMENT rule in this org.
+        UUID secondRule = UUID.randomUUID();
+        jdbc.update("""
+                insert into process_template (id, key, name, org_id, subject_type, conditions, priority, active)
+                values (?, 'SECOND_UNCONDITIONAL', 'Second Unconditional', ?, 'CASH_PAYMENT', '{}'::jsonb, 100, true)
+                """, secondRule, orgId);
+
+        // Now there are two unconditional rules (PAYMENT_APPROVAL + SECOND_UNCONDITIONAL).
+        // Setting a threshold on PAYMENT_APPROVAL should be allowed.
+        svc.assignTemplateToProject(ownerAuth, projectId,
+                new ProcessService.AssignTemplateRequest("PAYMENT_APPROVAL", true, null, new BigDecimal("500.000")));
+
+        // Verify it was saved.
+        BigDecimal threshold = jdbc.queryForObject(
+                "select amount_threshold_override from project_process_template where project_id = ? and template_id = ?",
+                BigDecimal.class, projectId, paymentApprovalId());
+        assertThat(threshold).isEqualByComparingTo("500.000");
     }
 }
