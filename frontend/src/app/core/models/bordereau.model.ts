@@ -4,6 +4,8 @@ export interface BordereauVersion {
   id: string; projectId: string; versionNo: number; label: string;
   reason?: string | null; documentId?: string | null;
   status: BordereauVersionStatus; createdBy?: string | null; createdAt?: string | null;
+  /** Imported Excel file (document + revision), null when the version was not imported. */
+  sourceDocumentId?: string | null; sourceRevision?: string | null; sourceRevisionId?: string | null;
 }
 
 export interface BordereauLine {
@@ -42,6 +44,9 @@ export function mapVersion(raw: any): BordereauVersion {
     reason: raw?.reason ?? null, documentId: raw?.documentId ?? raw?.document_id ?? null,
     status: String(raw?.status ?? 'DRAFT').toUpperCase() as BordereauVersionStatus,
     createdBy: raw?.createdBy ?? raw?.created_by ?? null, createdAt: raw?.createdAt ?? raw?.created_at ?? null,
+    sourceDocumentId: raw?.sourceDocumentId ?? raw?.source_document_id ?? null,
+    sourceRevision: raw?.sourceRevision ?? raw?.source_revision ?? null,
+    sourceRevisionId: raw?.sourceRevisionId ?? raw?.source_revision_id ?? null,
   };
 }
 

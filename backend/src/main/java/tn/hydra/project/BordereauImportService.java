@@ -5,9 +5,20 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.security.core.Authentication;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.security.access.AccessDeniedException;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.web.multipart.MultipartFile;
 import tn.hydra.audit.EventLogService;
 import tn.hydra.common.BusinessRuleException;
+import tn.hydra.document.domain.DocType;
+import tn.hydra.document.dto.DocumentResponse;
+import tn.hydra.document.dto.RevisionResponse;
+import tn.hydra.document.service.DocumentService;
+import tn.hydra.document.service.FileStorage;
+import tn.hydra.document.service.RevisionService;
+import tn.hydra.exception.BadRequestException;
+import tn.hydra.security.FolderAccessService;
 import tn.hydra.user.AppUser;
 import tn.hydra.user.AppUserRepository;
 import tools.jackson.databind.ObjectMapper;
@@ -44,10 +55,25 @@ public class BordereauImportService {
     private final AppUserRepository users;
     private final ProjectService projects;
     private final EventLogService audit;
+    private final DocumentService documents;
+    private final RevisionService revisions;
+    private final FolderAccessService folderAccess;
+    private final FileStorage storage;
+
+    /** Sub-folder of 02_TECH holding the imported Excel files, and the one document in it. */
+    static final String BORDEREAU_FOLDER_NAME = "Bordereaux et DQE";
+    static final String BORDEREAU_FOLDER_CODE = "02_TECH_BDQE";
+    static final String BORDEREAU_DOCUMENT_TITLE = "Bordereau des prix";
+    static final String FILE_NOT_SAVED_MESSAGE =
+            "Le fichier n'a pas pu être enregistré dans les documents du chantier. Import annulé.";
 
     public BordereauImportService(JdbcTemplate jdbc, AppUserRepository users,
-                                  ProjectService projects, EventLogService audit) {
+                                  ProjectService projects, EventLogService audit,
+                                  DocumentService documents, RevisionService revisions,
+                                  FolderAccessService folderAccess, FileStorage storage) {
         this.jdbc = jdbc; this.users = users; this.projects = projects; this.audit = audit;
+        this.documents = documents; this.revisions = revisions;
+        this.folderAccess = folderAccess; this.storage = storage;
     }
 
     // ═══════════════════════════════════════════════════════════════
@@ -326,12 +352,18 @@ public class BordereauImportService {
         int newVersionNo = (maxVersionNo != null ? maxVersionNo : 0) + 1;
         String label = "Importé (" + (filename != null ? filename : "bordereau") + ")";
 
+        // Keep the original file in the chantier documents (same transaction: a failure
+        // here cancels the whole import).
+        SourceFile source = storeSourceFile(auth, me, projectId, file, newVersionNo);
+
         // Create DRAFT version.
         UUID versionId = jdbc.queryForObject("""
-                insert into bordereau_version (org_id, project_id, version_no, label, status, created_by)
-                values (?, ?, ?, ?, 'DRAFT', ?)
+                insert into bordereau_version (org_id, project_id, version_no, label, status, created_by,
+                                               source_document_id, source_revision)
+                values (?, ?, ?, ?, 'DRAFT', ?, ?, ?)
                 returning id
-                """, UUID.class, me.getOrgId(), projectId, newVersionNo, label, me.getId());
+                """, UUID.class, me.getOrgId(), projectId, newVersionNo, label, me.getId(),
+                source.documentId(), source.revision());
 
         // Load ouvrages for suggestion.
         List<Map<String, Object>> ouvrages = jdbc.queryForList(
@@ -403,6 +435,120 @@ public class BordereauImportService {
         }
 
         return new ImportPreview(versionId, newVersionNo, label, sortOrder, totalWarnings, pairCount, previewLines);
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // SOURCE FILE — kept in 02_TECH / "Bordereaux et DQE"
+    // ═══════════════════════════════════════════════════════════════
+
+    /** The document + revision label holding the imported Excel file. */
+    record SourceFile(UUID documentId, String revision) {}
+
+    /**
+     * Store the Excel file through the normal document upload: the first import of
+     * the chantier creates the document "Bordereau des prix", later imports add a
+     * revision to it. Permission errors (folder ACL / upload right) keep their own
+     * message; any other failure cancels the import with FILE_NOT_SAVED_MESSAGE.
+     * If the import rolls back later, the stored object is deleted.
+     */
+    private SourceFile storeSourceFile(Authentication auth, AppUser me, UUID projectId,
+                                       MultipartFile file, int versionNo) {
+        UUID folderId = ensureBordereauFolder(projectId);
+        SourceFile source;
+        try {
+            UUID documentId = jdbc.queryForList("""
+                    select id from document
+                    where folder_id = ? and org_id = ? and title = ? and deleted_at is null
+                    order by created_at limit 1
+                    """, UUID.class, folderId, me.getOrgId(), BORDEREAU_DOCUMENT_TITLE)
+                    .stream().findFirst().orElse(null);
+            if (documentId == null) {
+                // ETUDE: doc_type has a DB check constraint; a new BORDEREAU value would need one more migration.
+                DocumentResponse doc = documents.upload(auth, folderId, BORDEREAU_DOCUMENT_TITLE, DocType.ETUDE,
+                        null, null, null, "Bordereau des prix importé depuis Excel.", file);
+                source = new SourceFile(doc.id(), doc.currentRev());
+            } else {
+                RevisionResponse rev = revisions.uploadNewRevision(auth, documentId, file,
+                        "Import du bordereau — version " + versionNo, null);
+                source = new SourceFile(documentId, rev.revLabel());
+            }
+        } catch (AccessDeniedException | BusinessRuleException | BadRequestException e) {
+            throw e; // permission / validation: the existing French message is the right one
+        } catch (RuntimeException e) {
+            throw new BusinessRuleException("BORDEREAU_FILE_NOT_SAVED", FILE_NOT_SAVED_MESSAGE);
+        }
+        deleteStoredFileOnRollback(source);
+        return source;
+    }
+
+    /** Nothing half-saved: if the import transaction rolls back, remove the stored object too. */
+    private void deleteStoredFileOnRollback(SourceFile source) {
+        if (!TransactionSynchronizationManager.isSynchronizationActive()) return;
+        String key = jdbc.queryForList(
+                "select storage_key from document_revision where document_id = ? and rev_label = ?",
+                String.class, source.documentId(), source.revision()).stream().findFirst().orElse(null);
+        if (key == null) return;
+        TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+            @Override
+            public void afterCompletion(int status) {
+                if (status != STATUS_ROLLED_BACK) return;
+                try { storage.delete(key); } catch (RuntimeException ignored) { /* best effort */ }
+            }
+        });
+    }
+
+    /**
+     * The chantier's 02_TECH folder / "Bordereaux et DQE" sub-folder, created if missing.
+     * Idempotent: the chantier row is locked while looking for / creating them, so two
+     * imports at the same time cannot create either folder twice. A new sub-folder gets
+     * a copy of the Technique folder's access rules.
+     */
+    private UUID ensureBordereauFolder(UUID projectId) {
+        // Default ACL of the chantier first (own transaction, idempotent), so there is
+        // something to copy. Done before the lock so it never waits on this transaction.
+        UUID techBefore = findTechFolder(projectId);
+        if (techBefore != null) {
+            Integer techRules = jdbc.queryForObject(
+                    "select count(*) from folder_access where folder_id = ?", Integer.class, techBefore);
+            if (techRules == null || techRules == 0) folderAccess.seedDefaults(projectId);
+        }
+
+        // NO KEY UPDATE: serialises imports of this chantier without blocking FK checks on the row.
+        jdbc.queryForList("select id from project where id = ? for no key update", UUID.class, projectId);
+        UUID techId = findTechFolder(projectId);
+        if (techId == null) {
+            // Chantiers normally get 02_TECH when created (folder templates); recreate it if missing.
+            techId = jdbc.queryForObject("""
+                    insert into doc_folder (project_id, parent_id, code, name, sort_order)
+                    values (?, null, '02_TECH', 'Technique', 2) returning id
+                    """, UUID.class, projectId);
+        }
+        UUID existing = jdbc.queryForList(
+                "select id from doc_folder where parent_id = ? and name = ? order by created_at limit 1",
+                UUID.class, techId, BORDEREAU_FOLDER_NAME).stream().findFirst().orElse(null);
+        if (existing != null) return existing;
+
+        UUID subId = jdbc.queryForObject("""
+                insert into doc_folder (project_id, parent_id, code, name, sort_order)
+                values (?, ?, ?, ?, 0) returning id
+                """, UUID.class, projectId, techId, BORDEREAU_FOLDER_CODE, BORDEREAU_FOLDER_NAME);
+        jdbc.update("""
+                insert into folder_access (folder_id, role_code, user_id, can_read, can_upload,
+                                           can_download, can_approve, can_delete, granted_by)
+                select ?, role_code, user_id, can_read, can_upload, can_download, can_approve, can_delete, granted_by
+                from folder_access where folder_id = ?
+                """, subId, techId);
+        return subId;
+    }
+
+    /** Top-level Technique folder (02_TECH; legacy codes starting with '02' accepted), or null. */
+    private UUID findTechFolder(UUID projectId) {
+        return jdbc.queryForList("""
+                select id from doc_folder
+                where project_id = ? and parent_id is null and code like '02%'
+                order by (code = '02_TECH') desc, sort_order
+                limit 1
+                """, UUID.class, projectId).stream().findFirst().orElse(null);
     }
 
     // ═══════════════════════════════════════════════════════════════

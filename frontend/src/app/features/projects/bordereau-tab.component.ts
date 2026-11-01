@@ -14,6 +14,7 @@ import {
   BordereauVersion, BordereauLine, ImportPreview, BordereauDiff, lineMontant
 } from '@app/core/models/bordereau.model';
 import { ProjectService } from '@app/core/services/project.service';
+import { DocumentService } from '@app/core/services/document.service';
 import { Ouvrage } from '@app/core/models/ouvrage.model';
 import { EmptyStateComponent } from '@app/shared/empty-state.component';
 
@@ -30,6 +31,7 @@ import { EmptyStateComponent } from '@app/shared/empty-state.component';
 export class BordereauTabComponent implements OnInit, OnChanges {
   private bordereauService = inject(BordereauService);
   private projectService = inject(ProjectService);
+  private documentService = inject(DocumentService);
   private auth = inject(AuthService);
   private msgs = inject(MessageService);
 
@@ -67,6 +69,8 @@ export class BordereauTabComponent implements OnInit, OnChanges {
   newVersionReason = '';
 
   activeVersion = computed(() => this.versions().find(v => v.status === 'ACTIVE'));
+  selectedVersion = computed(() => this.versions().find(v => v.id === this.selectedVersionId()) ?? null);
+  sourceLoading = signal(false);
 
   // Ouvrage assignment (DRAFT only).
   ouvrages = signal<Ouvrage[]>([]);
@@ -390,6 +394,20 @@ export class BordereauTabComponent implements OnInit, OnChanges {
       },
       error: err => this.msgs.add({ severity: 'error', summary: 'Erreur', detail: err?.error?.message ?? 'Création impossible' })
     });
+  }
+
+  /** Download the Excel file this version was imported from (existing document download endpoint). */
+  downloadSource(): void {
+    const v = this.selectedVersion();
+    if (!v?.sourceDocumentId || !v.sourceRevisionId) return;
+    this.sourceLoading.set(true);
+    this.documentService.openRevision(v.sourceDocumentId, v.sourceRevisionId, `Bordereau-${v.sourceRevision ?? ''}.xlsx`)
+      .subscribe(outcome => {
+        this.sourceLoading.set(false);
+        if (outcome.kind === 'error') {
+          this.msgs.add({ severity: 'error', summary: 'Téléchargement impossible', detail: outcome.message });
+        }
+      });
   }
 
   /** "Activer cette version": confirm first (lines without ouvrage, warnings, total HT). */
