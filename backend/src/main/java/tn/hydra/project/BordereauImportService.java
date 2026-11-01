@@ -1,5 +1,7 @@
 package tn.hydra.project;
 
+import tn.hydra.event.DomainEventService;
+import tn.hydra.event.EventType;
 import jakarta.persistence.EntityManager;
 import jakarta.persistence.PersistenceContext;
 import org.apache.poi.ss.usermodel.*;
@@ -72,10 +74,14 @@ public class BordereauImportService {
     static final String FILE_NOT_SAVED_MESSAGE =
             "Le fichier n'a pas pu être enregistré dans les documents du chantier. Import annulé.";
 
+    private final DomainEventService domainEvents;
+
     public BordereauImportService(JdbcTemplate jdbc, AppUserRepository users,
                                   ProjectService projects, EventLogService audit,
                                   DocumentService documents, RevisionService revisions,
-                                  FolderFilingService folderFiling, FileStorage storage) {
+                                  FolderFilingService folderFiling, FileStorage storage,
+            DomainEventService domainEvents) {
+        this.domainEvents = domainEvents;
         this.jdbc = jdbc; this.users = users; this.projects = projects; this.audit = audit;
         this.documents = documents; this.revisions = revisions;
         this.folderFiling = folderFiling; this.storage = storage;
@@ -425,6 +431,11 @@ public class BordereauImportService {
         audit.log("BORDEREAU_IMPORTED", "bordereau_version", versionId,
                 "{\"projectId\":\"" + projectId + "\",\"lines\":" + sortOrder
                         + ",\"warnings\":" + totalWarnings + ",\"pairs\":" + pairCount + "}");
+
+        domainEvents.publish(me.getOrgId(), EventType.BORDEREAU_IMPORTED, "bordereau_version", versionId,
+                projectId, DomainEventService.payload("versionId", versionId, "versionNo", newVersionNo,
+                        "lineCount", sortOrder, "warningCount", totalWarnings, "pairCount", pairCount,
+                        "sourceDocumentId", source.documentId(), "sourceRevision", source.revision()));
 
         // Build preview lines.
         List<PreviewLine> previewLines = new ArrayList<>();

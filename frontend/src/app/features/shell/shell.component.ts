@@ -19,6 +19,7 @@ interface NavItem {
   color: string;
   badge?: 'count';
   children?: NavItem[]; // expandable sub-items (Part: Achats group)
+  ownerOnly?: boolean;  // shown to the account owner only
 }
 
 const NAV: NavItem[] = [
@@ -47,6 +48,8 @@ const NAV: NavItem[] = [
   { label: 'Utilisateurs',   icon: 'pi-users',        path: '/users',       perm: PERM.USER_CREATE, color: '#2563eb' },
   { label: 'Rôles',          icon: 'pi-id-card',      path: '/roles',       perm: PERM.ROLE_MANAGE, color: '#0891b2' },
   { label: 'Journal',        icon: 'pi-history',       path: '/audit',       perm: PERM.AUDIT_VIEW, color: '#64748b' },
+  // Business events (domain_event) — owner only, under Journal.
+  { label: 'Journal des événements', icon: 'pi-bolt', path: '/evenements', perm: '', color: '#64748b', ownerOnly: true },
 ];
 
 @Component({
@@ -361,7 +364,8 @@ export class ShellComponent implements OnInit {
   name = computed(() => this.auth.me()?.fullName ?? '');
   me = this.auth.me;
 
-  menu = computed(() => NAV.filter(i => !i.perm || this.auth.can(i.perm)));
+  menu = computed(() => NAV.filter(i => (!i.perm || this.auth.can(i.perm))
+      && (!i.ownerOnly || !!this.auth.me()?.isOwner)));
   achatsExpanded = signal(false);
 
   userInitials = computed(() => initials(this.auth.me()?.fullName));

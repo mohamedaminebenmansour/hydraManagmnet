@@ -1,5 +1,7 @@
 package tn.hydra.process;
 
+import tn.hydra.event.DomainEventService;
+import tn.hydra.event.EventType;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.security.core.Authentication;
 import org.springframework.stereotype.Service;
@@ -406,12 +408,16 @@ public class ProcessService {
     private final ObjectMapper objectMapper;              // conditions jsonb <-> Map
     private final ApprovalRuleService approvalRuleService; // for the /test endpoint
 
+    private final DomainEventService domainEvents;
+
     public ProcessService(JdbcTemplate jdbc,
                           AppUserRepository users,
                           EventLogService audit,
                           tn.hydra.cash.CashService cashService,
                           ObjectMapper objectMapper,
-                          ApprovalRuleService approvalRuleService) {
+                          ApprovalRuleService approvalRuleService,
+            DomainEventService domainEvents) {
+        this.domainEvents = domainEvents;
         this.jdbc = jdbc;
         this.users = users;
         this.audit = audit;
@@ -1105,6 +1111,12 @@ public class ProcessService {
                         "{\"instanceId\":\"" + instanceId + "\",\"approvedBy\":\"" + me.getId() + "\"}");
             }
         }
+
+        // Domain event: the step is DONE (an ALL-mode approval still waiting for others returned above).
+        domainEvents.publish(orgId != null ? orgId : me.getOrgId(), EventType.PROCESS_STEP_COMPLETED,
+                "process_step", stepInstanceId, projectId,
+                DomainEventService.payload("instanceId", instanceId, "stepInstanceId", stepInstanceId,
+                        "stepKey", stepKey, "subjectType", subjectType, "subjectId", subjectId));
 
         return new StepResult(stepInstanceId, "DONE");
     }

@@ -34,6 +34,11 @@ public class RevisionService {
     private final DocumentService documentService;
     private final tn.hydra.security.FolderAccessService folderAccess;
 
+    /** Field-injected (constructor unchanged for the unit tests that build this service by hand);
+     *  null only there, so no event is published in those tests. */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private tn.hydra.event.DomainEventService domainEvents;
+
     public RevisionService(DocumentRepository documents, DocumentRevisionRepository revisions,
                            AppUserRepository users, DocumentMapper mapper, FileStorage storage,
                            FilenameBuilder filenameBuilder, EventLogService audit,
@@ -96,6 +101,12 @@ public class RevisionService {
         documents.save(doc); // cascade persists the new revision
         audit.log("DOCUMENT_REVISION_UPLOADED", "document", doc.getId(),
                 "{\"rev\":\"" + revLabel + "\"}");
+        if (domainEvents != null) {
+            // publish() flushes JPA first, so the new revision row (and its id) exists.
+            domainEvents.publish(me.getOrgId(), tn.hydra.event.EventType.DOCUMENT_UPLOADED, "document", doc.getId(),
+                    folder.getProject().getId(), tn.hydra.event.DomainEventService.payload("documentId", doc.getId(),
+                            "revLabel", revLabel, "folderId", folder.getId(), "newRevision", "true"));
+        }
         return mapper.toRevisionResponse(rev);
     }
 

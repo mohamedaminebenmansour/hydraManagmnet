@@ -16,18 +16,19 @@ section (grep the method, then read around it).
 | `document` | service/`DocumentService`, `FolderFilingService`, `LocalFileStorage`, `S3FileStorage`, controller/, domain/, dto/ | Documents, revisions, folders, file storage. Folders = 2 levels by stable code (`02_TECH`, `02_TECH.BORDEREAUX`); `FolderFilingService.folderFor(projectId, code)` finds or creates a chantier folder from the template. `GET /api/system/storage` (owner, `StorageStatusService`) = storage type + persistent (shell shows a red banner when not) |
 | `security` | `PermissionService`, `FolderAccessService`, `ToxicPairService`, `HydraUserDetailsService`, `SessionRevoker` | Permissions, folder ACL (a folder without rows inherits its parent's), segregation of duties |
 | `audit` | `EventLogService`, `AuditService`, `AuditController` | Append-only event log |
+| `event` | `DomainEventService`, `EventType`, `DomainEventController` | Domain events (table domain_event, V47): one row per business action, written in the action's transaction by `DomainEventService.publish` (payment submitted, cash posted, step completed, BC created, BL received, facture recorded, bordereau imported / activated, document uploaded). Nothing consumes them yet. `GET /api/events` (owner) feeds the "Journal des événements" page. Not the audit log |
 | `ticket` | `TicketService`, `TicketController` | Issue tracking |
 | `user`, `role`, `auth` | `UserService`, `RoleService`, `AuthController` | Users (incl. absence `absent_until`), roles, login |
 | `config` | `SecurityConfig`, `CorsConfig`, `BootstrapRunner`, `DemoDataRunner`, `DevDataSeedRunner` | Security, CORS, seeding |
 | `common`, `exception` | `GlobalExceptionHandler`, `BusinessRuleException` | Errors → HTTP |
 
-Migrations: `backend/src/main/resources/db/migration/`, last on main = **V46__folder_tree.sql**.
-Never edit an existing migration; the next one is V47.
+Migrations: `backend/src/main/resources/db/migration/`, last on main = **V47__domain_event.sql**.
+Never edit an existing migration; the next one is V48.
 Recent ones: V38 rule columns · V39 FINANCE_ONLY rule · V40 step approvals (ALL mode) ·
 V41 project_member default · V42 role substitute · V43 opt-out seed · V44 absences ·
 V45 bordereau_version.source_document_id / source_revision · V46 two-level folder tree
 (doc_folder_template.parent_code, sub-folder codes '<main>.<KEY>', 08_SST, backfill function
-`hydra_backfill_folder_tree()`, unique (project_id, code) when no duplicates).
+`hydra_backfill_folder_tree()`, unique (project_id, code) when no duplicates) · V47 domain_event.
 
 Key behaviours to remember:
 - A rule is enabled on a chantier unless `project_process_template.enabled = false` (opt-out).
@@ -49,6 +50,7 @@ Tests: `backend/src/test/java/tn/hydra/<package>/`. Test DB: `hydra_test` on
 | `features/stock/` | `move-form` (~720), `stock-list`, `stock-moves`, BC / BL / facture list-form-detail, `match-overview` | Stock and achats |
 | `features/process/` | `process-builder` (~640: 4-screen rule builder Quoi/Quand/Qui/Aperçu), `process-hub` ("Modèles prêts"), `my-tasks` ("Remplace …"), `approval-desk`, `process-timeline`, `start-process` | Rules and approvals |
 | `features/home/` | `home.component` (~510) | Home page |
+| `features/events/` | `events.component` | "Journal des événements" (owner only, `/evenements`) |
 | `features/shell/` | `shell.component.ts` | Sidebar menu (MENU array) and top bar |
 | `shared/` | `hydra-design.ts`, `chantier-visual.ts`, `document-file-actions.component.ts`, `empty-state.component.ts` | Design system and shared components |
 | root | `app.routes.ts`, `app.config.ts` | Routes and providers |

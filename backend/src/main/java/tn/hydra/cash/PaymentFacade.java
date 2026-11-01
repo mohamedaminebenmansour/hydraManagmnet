@@ -1,5 +1,7 @@
 package tn.hydra.cash;
 
+import tn.hydra.event.DomainEventService;
+import tn.hydra.event.EventType;
 import org.springframework.security.core.Authentication;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -50,12 +52,16 @@ public class PaymentFacade {
     @org.springframework.beans.factory.annotation.Value("${hydra.payments.require-stock-match:false}")
     private boolean requireStockMatch;
 
+    private final DomainEventService domainEvents;
+
     public PaymentFacade(CashService cashService,
                          ProcessService processService,
                          ApprovalRuleService approvalRuleService,
                          AppUserRepository users,
                          EventLogService audit,
-                         PurchaseOrderService purchaseOrders) {
+                         PurchaseOrderService purchaseOrders,
+            DomainEventService domainEvents) {
+        this.domainEvents = domainEvents;
         this.cashService = cashService;
         this.processService = processService;
         this.approvalRuleService = approvalRuleService;
@@ -231,6 +237,11 @@ public class PaymentFacade {
 
         // Part 3.3 — soft material-proof warnings (never blocks unless flag is on)
         List<String> warnings = computePaymentWarnings(auth, req, started.warnings());
+
+        // Domain event (same transaction): the payment exists and its approval has started.
+        domainEvents.publish(movement.orgId(), EventType.PAYMENT_SUBMITTED, "cash_movement", movement.id(),
+                projectId, DomainEventService.payload("movementId", movement.id(), "processInstanceId", started.id(),
+                        "amount", movement.amount(), "fromPotId", movement.fromPotId()));
 
         return new SubmitPaymentResponse(linked, started.id(), warnings);
     }

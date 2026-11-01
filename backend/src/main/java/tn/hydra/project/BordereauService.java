@@ -1,5 +1,7 @@
 package tn.hydra.project;
 
+import tn.hydra.event.DomainEventService;
+import tn.hydra.event.EventType;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.security.core.Authentication;
 import org.springframework.stereotype.Service;
@@ -44,8 +46,12 @@ public class BordereauService {
     private final ProjectService projects;
     private final EventLogService audit;
 
+    private final DomainEventService domainEvents;
+
     public BordereauService(JdbcTemplate jdbc, AppUserRepository users,
-                            ProjectService projects, EventLogService audit) {
+                            ProjectService projects, EventLogService audit,
+            DomainEventService domainEvents) {
+        this.domainEvents = domainEvents;
         this.jdbc = jdbc; this.users = users; this.projects = projects; this.audit = audit;
     }
 
@@ -223,6 +229,8 @@ public class BordereauService {
 
         audit.log("BORDEREAU_VERSION_ACTIVATED", "bordereau_version", versionId,
                 "{\"projectId\":\"" + projectId + "\"}");
+        domainEvents.publish(me.getOrgId(), EventType.BORDEREAU_ACTIVATED, "bordereau_version", versionId,
+                projectId, DomainEventService.payload("versionId", versionId));
         return getVersionResponse(versionId, me.getOrgId());
     }
 

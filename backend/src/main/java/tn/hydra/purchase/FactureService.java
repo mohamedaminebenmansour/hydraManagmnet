@@ -1,5 +1,7 @@
 package tn.hydra.purchase;
 
+import tn.hydra.event.DomainEventService;
+import tn.hydra.event.EventType;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.GrantedAuthority;
@@ -65,10 +67,14 @@ public class FactureService {
     private final BonLivraisonRepository bls;
     private final StockItemRepository items;
 
+    private final DomainEventService domainEvents;
+
     public FactureService(JdbcTemplate jdbc, AppUserRepository users, EventLogService audit,
                           FactureRepository factures, FactureLineRepository facLines,
                           PurchaseOrderRepository pos, BonLivraisonRepository bls,
-                          StockItemRepository items) {
+                          StockItemRepository items,
+            DomainEventService domainEvents) {
+        this.domainEvents = domainEvents;
         this.jdbc = jdbc;
         this.users = users;
         this.audit = audit;
@@ -221,6 +227,11 @@ public class FactureService {
                 + ",\"blId\":" + (f.getBlId() == null ? "null" : "\"" + f.getBlId() + "\"")
                 + ",\"lineCount\":" + lineResps.size()
                 + "}");
+
+        domainEvents.publish(f.getOrgId(), EventType.INVOICE_RECORDED, "facture", f.getId(), f.getProjectId(),
+                DomainEventService.payload("factureId", f.getId(), "purchaseOrderId", f.getBcId(),
+                        "bonLivraisonId", f.getBlId(), "amountHt", f.getAmountHt(),
+                        "amountTva", f.getAmountTva(), "amountTtc", f.getAmountTtc(), "lineCount", lineResps.size()));
 
         return toFactureResponse(f, projectName(f.getProjectId()), bcReference, blReference,
                 supplierName, lineResps, lineResps.size());
