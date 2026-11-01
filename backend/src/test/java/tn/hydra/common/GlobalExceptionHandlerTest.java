@@ -49,16 +49,19 @@ class GlobalExceptionHandlerTest {
         assertThat(res.getBody().code()).isEqualTo("BAD_REQUEST");
     }
 
+    // Replaces anythingElseReturns500WithClassNameInMessage (fix/visible-load-errors):
+    // the class name is no longer sent to the client, only a support reference.
     @Test
-    void anythingElseReturns500WithClassNameInMessage() {
+    void anythingElseReturns500WithReferenceAndNoClassName() {
         ResponseEntity<GlobalExceptionHandler.ApiError> res =
                 handler.generic(new IllegalStateException("boom"), null);
 
         assertThat(res.getStatusCode()).isEqualTo(HttpStatus.INTERNAL_SERVER_ERROR);
-        assertThat(res.getBody().code()).isEqualTo("INTERNAL");
-        // Message format shipped for actionable Network-tab 500s:
-        // "ExceptionSimpleName — message | root: RootSimpleName — rootMessage"
-        assertThat(res.getBody().message()).startsWith("IllegalStateException");
+        assertThat(res.getBody().code()).isEqualTo("INTERNAL_ERROR");
+        assertThat(res.getBody().message()).contains("Référence");
+        assertThat(res.getBody().message()).doesNotContain("IllegalStateException");
+        assertThat(res.getBody().reference()).matches("[A-Z0-9]{6}");
+        assertThat(res.getBody().message()).endsWith(res.getBody().reference());
     }
 
     @Test
