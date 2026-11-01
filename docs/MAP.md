@@ -59,6 +59,7 @@ Tests: `backend/src/test/java/tn/hydra/<package>/`. Test DB: `hydra_test` on
 - `AI-RULES.md` — rules for every change
 - `MAP.md` — this file (update it when a module or big file is added)
 - `BORDEREAU-ANALYSIS.md` — bordereau structure and import rules
+- `SECURITY.md` — what is protected and the owner's security checklist
 
 ## Never read
 `frontend/node_modules`, `frontend/dist`, `frontend/.angular`, `backend/target`,

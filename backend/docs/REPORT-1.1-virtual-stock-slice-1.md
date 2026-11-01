@@ -314,7 +314,7 @@ cd /tmp/my-project/backend
 ./mvnw flyway:migrate \
   -Dflyway.url=jdbc:postgresql://127.0.0.1:5432/hydra \
   -Dflyway.user=postgres \
-  -Dflyway.password=hydra \
+  -Dflyway.password=$TEST_DB_PASSWORD \
   -Dflyway.locations=filesystem:src/main/resources/db/migration
 ```
 

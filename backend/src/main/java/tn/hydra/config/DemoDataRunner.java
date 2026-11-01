@@ -1,5 +1,6 @@
 package tn.hydra.config;
 
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.CommandLineRunner;
 import org.springframework.core.annotation.Order;
 import org.springframework.core.Ordered;
@@ -28,7 +29,7 @@ import java.util.UUID;
  *  Idempotent: checks if any demo user (id prefix 'aaaaaa00-') exists.
  *  If yes, skips entirely. Otherwise, executes the full demo seed:
  *
- *    - 15 demo users across 8 system roles (password: HydraDemo2026!)
+ *    - 15 demo users across 8 system roles (password: env HYDRA_DEMO_PASSWORD)
  *    - 9 realistic projects across 9 Tunisian governorates
  *    - 28 project members (chef de projet, ingénieurs, conducteurs)
  *    - 63 doc folders (9 projects × 7 standard folders)
@@ -54,10 +55,15 @@ public class DemoDataRunner implements CommandLineRunner {
     private final PasswordEncoder encoder;
     private final EventLogService audit;
 
-    // Demo password hash is precomputed (BCrypt rounds=10) so we don't block
-    // startup re-hashing 15 users. Verified for password "HydraDemo2026!".
-    private static final String DEMO_PW_HASH =
-            "$2b$10$69b2.rdAJdoBUijqrQuYAuYm0FqJKV7HmlP9GK1AyLixpRveBxZ6G";
+    // Demo password comes from HYDRA_DEMO_PASSWORD (never in the code), hashed once.
+    @Value("${HYDRA_DEMO_PASSWORD:}")
+    private String demoPassword;
+    private String demoPwHash;
+
+    private String demoPwHash() {
+        if (demoPwHash == null) demoPwHash = encoder.encode(demoPassword);
+        return demoPwHash;
+    }
 
     private static final UUID FIXED_DEMO_USER_PREFIX = UUID.fromString("aaaaaa00-0000-0000-0000-000000000001");
 
@@ -69,6 +75,11 @@ public class DemoDataRunner implements CommandLineRunner {
 
     @Override
     public void run(String... args) {
+        if (demoPassword == null || demoPassword.isBlank()) {
+            org.slf4j.LoggerFactory.getLogger(DemoDataRunner.class)
+                    .warn("Demo data skipped: HYDRA_DEMO_PASSWORD is not set.");
+            return;
+        }
         // ─────────────────────────────────────────────────────────────
         // 0. ALWAYS reset demo user passwords to the documented value
         // (HydraDemo2026!). This runs BEFORE the early-return check below
@@ -84,7 +95,7 @@ public class DemoDataRunner implements CommandLineRunner {
                 update app_user
                 set password_hash = ?, must_change_password = false
                 where id::text like 'aaaaaa00-%'
-                """, DEMO_PW_HASH);
+                """, demoPwHash());
 
         // 1. Check if demo data FULLY seeded — process_instance is the LAST entity
         // we insert (we expect 5 with IDs 33333333-0000-0000-0000-00000000000{1..5}).
@@ -196,7 +207,7 @@ public class DemoDataRunner implements CommandLineRunner {
                     insert into app_user (id, org_id, email, password_hash, full_name, is_owner, is_active, must_change_password)
                     values (?, ?, ?, ?, ?, false, true, false)
                     on conflict (email) do nothing
-                    """, UUID.fromString((String) u[0]), orgId, u[1], DEMO_PW_HASH, u[2]);
+                    """, UUID.fromString((String) u[0]), orgId, u[1], demoPwHash(), u[2]);
         }
     }
 
