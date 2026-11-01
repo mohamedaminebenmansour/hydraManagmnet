@@ -225,7 +225,7 @@
           <div class="member-grid">
             @for (m of members(); track m.userId) {
               <div class="member-card">
-                <span class="m-avatar" [class]="'role-' + (m.projectRole ?? 'VIEWER').toLowerCase()">
+                <span class="m-avatar" [class]="'role-' + (m.projectRole || 'VIEWER').toLowerCase()">
                   <i class="pi" [class]="m.projectRole === 'ADMIN' ? 'pi-shield'
                                       : m.projectRole === 'MANAGER' ? 'pi-briefcase'
                                       : m.projectRole === 'ENGINEER' ? 'pi-cog' : 'pi-eye'"></i>
@@ -234,7 +234,7 @@
                   <div class="member-name">{{ m.fullName }}</div>
                   <div class="member-email">{{ m.email }}</div>
                   <div class="member-tags">
-                    <span class="mrole" [class]="'r-' + (m.projectRole ?? 'VIEWER').toLowerCase()">
+                    <span class="mrole" [class]="'r-' + (m.projectRole || 'VIEWER').toLowerCase()">
                       {{ roleLabel(m.projectRole) }}
                     </span>
                     @if (m.canUpload) {

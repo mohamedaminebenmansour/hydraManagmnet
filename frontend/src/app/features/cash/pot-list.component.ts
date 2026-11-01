@@ -54,7 +54,7 @@ import { CashPot, formatAmount, potTypeVisual } from '@app/core/models/cash.mode
                     <span class="pc-type-chip">{{ pv(p.type).label }}</span>
                     @if (p.currency) { <span class="pc-cur">{{ p.currency }}</span> }
                   </div>
-                  <div class="pc-balance" [class.neg]="(balances()[p.id] ?? 0) < 0">
+                  <div class="pc-balance" [class.neg]="(balances()[p.id] || 0) < 0">
                     {{ fmt(balances()[p.id]) }}
                   </div>
                 </div>
