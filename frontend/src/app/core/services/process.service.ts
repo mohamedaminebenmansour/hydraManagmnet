@@ -44,8 +44,7 @@ export class ProcessService {
       map(raw => {
         const list = Array.isArray(raw) ? raw : [];
         return list.map((r: any) => this.normalizeTemplateDetail(r));
-      }),
-      catchError(() => of([]))
+      })
     );
   }
 
@@ -240,8 +239,7 @@ export class ProcessService {
       map(raw => {
         const list = Array.isArray(raw) ? raw : (raw?.['tasks'] ?? []);
         return (Array.isArray(list) ? list : []).map(mapMyTask);
-      }),
-      catchError(() => of([]))
+      })
     );
   }
 
@@ -273,8 +271,7 @@ export class ProcessService {
       map(raw => {
         const list = Array.isArray(raw) ? raw : (raw?.['processes'] ?? []);
         return (Array.isArray(list) ? list : []).map(mapMyTask);
-      }),
-      catchError(() => of([]))
+      })
     );
   }
 
@@ -309,8 +306,7 @@ export class ProcessService {
   /** GET /api/projects/{projectId}/process-templates — per-chantier config (enabled + threshold). */
   listProjectTemplateConfigs(projectId: string): Observable<ProjectTemplateConfig[]> {
     return this.http.get<AnyRaw[]>(`/api/projects/${projectId}/process-templates`).pipe(
-      map(list => (Array.isArray(list) ? list : []).map(r => this.normalizeProjectTemplateConfig(r))),
-      catchError(() => of([]))
+      map(list => (Array.isArray(list) ? list : []).map(r => this.normalizeProjectTemplateConfig(r)))
     );
   }
 
@@ -326,8 +322,7 @@ export class ProcessService {
   /** GET /api/projects/{projectId}/pending-approvals — pending steps with who + days + late. */
   listPendingApprovals(projectId: string): Observable<PendingApproval[]> {
     return this.http.get<AnyRaw[]>(`/api/projects/${projectId}/pending-approvals`).pipe(
-      map(list => (Array.isArray(list) ? list : []).map(r => this.normalizePendingApproval(r))),
-      catchError(() => of([]))
+      map(list => (Array.isArray(list) ? list : []).map(r => this.normalizePendingApproval(r)))
     );
   }
 

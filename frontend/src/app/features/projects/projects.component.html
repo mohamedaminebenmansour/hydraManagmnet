@@ -359,6 +359,9 @@
       @if (mode === 'create' && canWrite()) {
         <div class="field">
           <label><i class="pi pi-users"></i> Membres (optionnel)</label>
+          @if (memberOptionsError()) {
+            <app-load-error message="Impossible de charger la liste des utilisateurs." (retry)="loadMemberOptions()" />
+          }
           <p-multiSelect [options]="memberOpts()" [(ngModel)]="formMembers"
                          placeholder="Ajouter des membres" optionLabel="label"
                          optionValue="value" [showClear]="true" [filter]="true"

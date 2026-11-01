@@ -20,13 +20,14 @@ import { FolderAccessService } from '@app/core/services/folder-access.service';
 import { COMPANY_ROLE_OPTS, COMPANY_ROLE_LABELS, FolderAccess, FolderAccessGrant } from '@app/core/models/folder.model';
 import { ProjectFolder } from '@app/core/models/project.model';
 import { roleVisual, avatarGradient, initials } from '@app/shared/hydra-design';
+import { LoadErrorComponent } from '@app/shared/load-error.component';
 
 const D = [true, false, false, false, false];
 
 @Component({
   selector: 'app-folder-access-dialog',
   standalone: true,
-  imports: [CommonModule, FormsModule, DialogModule, InputTextModule, ButtonModule, TagModule, TooltipModule, ChipModule, BadgeModule],
+  imports: [CommonModule, FormsModule, DialogModule, InputTextModule, ButtonModule, TagModule, TooltipModule, ChipModule, BadgeModule, LoadErrorComponent],
   templateUrl: './folder-access-dialog.component.html',
   styleUrl: './folder-access-dialog.component.scss'
 })
@@ -41,6 +42,9 @@ export class FolderAccessDialogComponent implements OnChanges {
   @Input() projectId = '';
   @Input() folder: ProjectFolder | null = null;
   readonly loading = signal(false);
+  /** Rules failed to load: shown with retry, and saving is blocked (it would overwrite them). */
+  readonly accessError = signal(false);
+  readonly usersError = signal(false);
   readonly saveError = signal<string | null>(null);
   readonly access = signal<FolderAccess[]>([]);
   readonly users = signal<UserDto[]>([]);
@@ -70,24 +74,26 @@ export class FolderAccessDialogComponent implements OnChanges {
     this.fetchUsers();
   }
 
-  private loadAccess(): void {
+  loadAccess(): void {
     if (!this.folder) { return; }
     this.loading.set(true);
+    this.accessError.set(false);
     this.fa.list(this.projectId, this.folder.id).pipe(first()).subscribe({
       next: g => { this.access.set(g ?? []); this.hydrate(); this.loading.set(false); },
-      error: () => { this.access.set([]); this.loading.set(false); }
+      error: () => { this.access.set([]); this.accessError.set(true); this.loading.set(false); }
     });
   }
 
   /** Fetch FULL user list (with roleCodes) — needed to display business roles. */
-  private fetchUsers(): void {
+  fetchUsers(): void {
+    this.usersError.set(false);
     this.us.list().pipe(first()).subscribe({
       next: l => {
         const list = l ?? [];
         this.users.set(list);
         this.userResults.set(list);
       },
-      error: () => { this.users.set([]); this.userResults.set([]); }
+      error: () => { this.users.set([]); this.userResults.set([]); this.usersError.set(true); }
     });
   }
 

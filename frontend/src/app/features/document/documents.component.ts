@@ -27,6 +27,7 @@ import { OpenOutcome, isPreviewable } from '@app/core/services/document.service'
 import { Ticket } from '@app/core/models/ticket.model';
 import { Folder, childFolders, folderTotalCount, folderTreeOptions } from '@app/core/models/folder.model';
 import { EmptyStateComponent } from '@app/shared/empty-state.component';
+import { LoadErrorComponent } from '@app/shared/load-error.component';
 import { DocumentFileActionsComponent } from '@app/shared/document-file-actions.component'; // PHASE-B-DOC-ACTIONS
 import { docTypeVisual, docStatusVisual } from '@app/shared/chantier-visual';
 
@@ -37,7 +38,7 @@ import { docTypeVisual, docStatusVisual } from '@app/shared/chantier-visual';
     FormsModule, ButtonModule, InputTextModule, TextareaModule, DropdownModule,
     DialogModule, TagModule, ChipModule, MultiSelectModule, FileUploadModule,
     TooltipModule,
-    ProgressBarModule, EmptyStateComponent,
+    ProgressBarModule, EmptyStateComponent, LoadErrorComponent,
     DocumentFileActionsComponent // PHASE-B-DOC-ACTIONS
   ],
   templateUrl: './documents.component.html',
@@ -70,6 +71,8 @@ export class DocumentsComponent implements OnInit {
   documents = signal<Document[]>([]);
   loading = signal(true);
   notFound = signal(false);
+  foldersError = signal(false);
+  documentsError = signal(false);
 
   showUploadDialog = false;
   uploadTitle = '';
@@ -127,8 +130,9 @@ export class DocumentsComponent implements OnInit {
     });
   }
 
-  private loadFolders(): void {
+  loadFolders(): void {
     if (!this.projectId) { return; }
+    this.foldersError.set(false);
     this.folderService.listByProject(this.projectId).subscribe({
       next: list => {
         this.allFolders.set(list ?? []);
@@ -137,10 +141,9 @@ export class DocumentsComponent implements OnInit {
         if (!found) { this.notFound.set(true); }
       },
       error: (err) => {
-        this.notFound.set(true);
-        if (err.status !== 403 && err.status !== 404) {
-          this.msgs.add({ severity: 'error', summary: 'Erreur', detail: 'Chargement impossible' });
-        }
+        // 403 / 404: really not visible. Anything else: a load error, with retry.
+        if (err.status === 403 || err.status === 404) { this.notFound.set(true); }
+        else { this.foldersError.set(true); }
       }
     });
   }
@@ -153,18 +156,17 @@ export class DocumentsComponent implements OnInit {
     return folderTotalCount(this.allFolders(), f);
   }
 
-  private loadDocuments(): void {
+  loadDocuments(): void {
     if (!this.projectId) { return; }
     this.loading.set(true);
+    this.documentsError.set(false);
     this.documentService.search(this.projectId, { folderId: this.folderId, size: 200 }).subscribe({
       next: page => { this.documents.set(page.items ?? []); this.loading.set(false); },
       error: err => {
-        // List failure (incl. 500): keep an empty list (never crash) but show
-        // the API's message when the body carries one.
+        // List failure (incl. 500): shown as an error with retry, never as "no document".
         this.documents.set([]);
+        this.documentsError.set(true);
         this.loading.set(false);
-        this.msgs.add({ severity: 'error', summary: 'Erreur',
-          detail: this.apiErrMsg(err, 'Impossible de charger les documents') });
       }
     });
   }

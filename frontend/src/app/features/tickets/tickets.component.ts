@@ -23,6 +23,7 @@ import {
   TICKET_STATUS_FLOW, TICKET_PRIORITY_OPTS, TICKET_PRIORITY_LABELS, TicketStatus
 } from '@app/core/models/ticket.model';
 import { EmptyStateComponent } from '@app/shared/empty-state.component';
+import { LoadErrorComponent } from '@app/shared/load-error.component';
 
 @Component({
   selector: 'app-tickets',
@@ -30,7 +31,7 @@ import { EmptyStateComponent } from '@app/shared/empty-state.component';
   imports: [
     FormsModule, ButtonModule, InputTextModule, TextareaModule, SelectModule,
     DatePickerModule, DialogModule, TagModule, ChipModule, ToggleSwitchModule,
-    EmptyStateComponent
+    EmptyStateComponent, LoadErrorComponent
   ],
   templateUrl: './tickets.component.html',
   styleUrl: './tickets.component.scss'
@@ -47,6 +48,9 @@ export class TicketsComponent implements OnInit {
   projects = signal<Project[]>([]);
   userOptions = signal<SelectOption[]>([]);
   loaded = signal(false);
+  loadError = signal(false);
+  /** Filter / assignee lists (chantiers, utilisateurs) failed to load. */
+  optionsError = signal(false);
   showDialog = signal(false);
 
   readonly statusOpts = [{ label: 'Tous', value: '' }, ...TICKET_STATUS_OPTS];
@@ -79,18 +83,25 @@ export class TicketsComponent implements OnInit {
   assigneeOpts = computed(() => this.userOptions());
 
   ngOnInit(): void {
+    this.loadOptions(true);
+  }
+
+  /** Chantiers + users for the filters and the form; the ticket list loads either way. */
+  loadOptions(thenApply = false): void {
+    this.optionsError.set(false);
     this.projectService.list().subscribe({
-      next: list => { this.projects.set(list ?? []); this.apply(); },
-      error: () => { this.projects.set([]); this.apply(); }
+      next: list => { this.projects.set(list ?? []); if (thenApply) this.apply(); },
+      error: () => { this.projects.set([]); this.optionsError.set(true); if (thenApply) this.apply(); }
     });
     this.userService.options().subscribe({
       next: users => this.userOptions.set((users ?? []).map(u => ({ label: u.fullName, value: u.id }))),
-      error: () => this.userOptions.set([])
+      error: () => { this.userOptions.set([]); this.optionsError.set(true); }
     });
   }
 
   apply(): void {
     this.loaded.set(false);
+    this.loadError.set(false);
     this.ticketService.list({
       projectId: this.fProject,
       status: this.fStatus || null,
@@ -98,7 +109,7 @@ export class TicketsComponent implements OnInit {
       mine: this.fMine || undefined
     }).subscribe({
       next: list => { this.tickets.set(list ?? []); this.loaded.set(true); },
-      error: () => { this.tickets.set([]); this.loaded.set(true); }
+      error: () => { this.tickets.set([]); this.loadError.set(true); this.loaded.set(true); }
     });
   }
 

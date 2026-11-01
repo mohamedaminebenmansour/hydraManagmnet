@@ -62,7 +62,9 @@
 
     <div class="panel">
       <div class="panel-title">Historique des révisions</div>
-      @if (revisions().length) {
+      @if (revisionsError()) {
+        <app-load-error message="Impossible de charger les révisions." (retry)="loadRevisions()" />
+      } @else if (revisions().length) {
         <div class="rtable">
           <div class="rthead rrow">
             <span>Révision</span><span>Fichier</span><span>Taille</span><span>Note</span><span>Date</span><span></span>
@@ -90,7 +92,7 @@
             </div>
           }
         </div>
-      } @else {
+      } @else if (!revisionsLoading()) {
         <app-empty-state icon="pi pi-history" message="Aucune révision."></app-empty-state>
       }
     </div>
@@ -129,7 +131,9 @@
 <p-dialog [(visible)]="showLinkDialog" [modal]="true" [style]="{ width: '480px' }"
           header="Lier à un ticket" [draggable]="false">
   <div class="dlg-form">
-    @if (ticketOptions().length) {
+    @if (ticketsError()) {
+      <app-load-error message="Impossible de charger les tickets du chantier." (retry)="loadTicketOptions()" />
+    } @else if (ticketOptions().length) {
       <div class="field">
         <label>Ticket</label>
         <p-select [options]="ticketOptions()" [(ngModel)]="selectedTicketId"
@@ -141,7 +145,7 @@
           </ng-template>
         </p-select>
       </div>
-    } @else {
+    } @else if (!ticketsLoading()) {
       <div class="field">
         <div class="muted">Aucun ticket disponible pour ce chantier.</div>
       </div>

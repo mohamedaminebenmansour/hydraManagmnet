@@ -14,11 +14,12 @@ import {
   TICKET_PRIORITY_LABELS
 } from '@app/core/models/ticket.model';
 import { EmptyStateComponent } from '@app/shared/empty-state.component';
+import { LoadErrorComponent } from '@app/shared/load-error.component';
 
 @Component({
   selector: 'app-ticket-detail',
   standalone: true,
-  imports: [ButtonModule, TagModule, ChipModule, EmptyStateComponent],
+  imports: [ButtonModule, TagModule, ChipModule, EmptyStateComponent, LoadErrorComponent],
   templateUrl: './ticket-detail.component.html',
   styleUrl: './ticket-detail.component.scss'
 })
@@ -32,6 +33,8 @@ export class TicketDetailComponent implements OnInit {
 
   ticket = signal<Ticket | null>(null);
   docs = signal<TicketDocument[]>([]);
+  docsLoading = signal(true);
+  docsError = signal(false);
   transitions = signal<string[]>([]);
   loading = signal(true);
   notFound = signal(false);
@@ -64,11 +67,13 @@ export class TicketDetailComponent implements OnInit {
     });
   }
 
-  private loadDocs(): void {
+  loadDocs(): void {
     if (!this.ticketId) { return; }
+    this.docsLoading.set(true);
+    this.docsError.set(false);
     this.ticketService.documents(this.ticketId).subscribe({
-      next: list => this.docs.set(list ?? []),
-      error: () => this.docs.set([])
+      next: list => { this.docs.set(list ?? []); this.docsLoading.set(false); },
+      error: () => { this.docs.set([]); this.docsError.set(true); this.docsLoading.set(false); }
     });
   }
 

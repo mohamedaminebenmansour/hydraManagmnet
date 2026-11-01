@@ -17,13 +17,14 @@ import { ProjectService } from '@app/core/services/project.service';
 import { DocumentService } from '@app/core/services/document.service';
 import { Ouvrage } from '@app/core/models/ouvrage.model';
 import { EmptyStateComponent } from '@app/shared/empty-state.component';
+import { LoadErrorComponent } from '@app/shared/load-error.component';
 
 @Component({
   selector: 'app-bordereau-tab',
   standalone: true,
   imports: [
     CommonModule, FormsModule, ButtonModule, SelectModule, DialogModule, TooltipModule, TagModule,
-    EmptyStateComponent,
+    EmptyStateComponent, LoadErrorComponent,
   ],
   templateUrl: './bordereau-tab.component.html',
   styleUrl: './bordereau-tab.component.scss'
@@ -44,6 +45,9 @@ export class BordereauTabComponent implements OnInit, OnChanges {
   selectedVersionId = signal<string | null>(null);
   lines = signal<BordereauLine[]>([]);
   loading = signal(false);
+  versionsError = signal(false);
+  linesLoading = signal(false);
+  linesError = signal(false);
   canWrite = computed(() => this.auth.can(PERM.PROJECT_WRITE));
 
   // Inline editing state.
@@ -62,6 +66,7 @@ export class BordereauTabComponent implements OnInit, OnChanges {
   compareNewId: string | null = null;
   diffs = signal<BordereauDiff[]>([]);
   compareLoading = signal(false);
+  compareError = signal(false);
 
   // New version.
   showNewVersionDialog = false;
@@ -142,6 +147,7 @@ export class BordereauTabComponent implements OnInit, OnChanges {
 
   loadVersions(): void {
     this.loading.set(true);
+    this.versionsError.set(false);
     this.bordereauService.listVersions(this.projectId).subscribe({
       next: list => {
         this.versions.set(list ?? []);
@@ -151,7 +157,7 @@ export class BordereauTabComponent implements OnInit, OnChanges {
         if (id) this.selectVersion(id);
         this.loading.set(false);
       },
-      error: () => { this.versions.set([]); this.loading.set(false); }
+      error: () => { this.versions.set([]); this.versionsError.set(true); this.loading.set(false); }
     });
   }
 
@@ -159,10 +165,18 @@ export class BordereauTabComponent implements OnInit, OnChanges {
     this.selectedVersionId.set(versionId);
     this.cancelEdit();
     this.selectedIds.set(new Set());
+    this.linesLoading.set(true);
+    this.linesError.set(false);
     this.bordereauService.listLines(this.projectId, versionId).subscribe({
-      next: list => this.lines.set(list ?? []),
-      error: () => this.lines.set([])
+      next: list => { this.lines.set(list ?? []); this.linesLoading.set(false); },
+      error: () => { this.lines.set([]); this.linesError.set(true); this.linesLoading.set(false); }
     });
+  }
+
+  /** Retry of a failed lines load (same version). */
+  reloadLines(): void {
+    const id = this.selectedVersionId();
+    if (id) this.selectVersion(id);
   }
 
   /** Same rule as the import: designation only, no unit, no quantity, no price. */
@@ -437,9 +451,10 @@ export class BordereauTabComponent implements OnInit, OnChanges {
   runCompare(): void {
     if (!this.compareOldId || !this.compareNewId) return;
     this.compareLoading.set(true);
+    this.compareError.set(false);
     this.bordereauService.compareVersions(this.projectId, this.compareOldId, this.compareNewId).subscribe({
       next: list => { this.diffs.set(list ?? []); this.compareLoading.set(false); },
-      error: () => { this.diffs.set([]); this.compareLoading.set(false); }
+      error: () => { this.diffs.set([]); this.compareError.set(true); this.compareLoading.set(false); }
     });
   }
 

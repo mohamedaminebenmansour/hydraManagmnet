@@ -33,6 +33,7 @@ import {
 import { folderTotalCount } from '@app/core/models/folder.model';
 import { UserOptionDto, UserDto } from '@app/core/models/user.model';
 import { EmptyStateComponent } from '@app/shared/empty-state.component';
+import { LoadErrorComponent } from '@app/shared/load-error.component';
 import { OuvragesTabComponent } from './ouvrages-tab.component'; // PHASE-OUVRAGE-EXTRACT
 import { ProjectRulesTabComponent } from './project-rules-tab.component';
 import { BordereauTabComponent } from './bordereau-tab.component';
@@ -63,6 +64,7 @@ import { ProjectRoleAssigneesComponent } from './project-role-assignees.componen
     RouterLink,
     DatePipe,
     EmptyStateComponent,
+    LoadErrorComponent,
     OuvragesTabComponent,
     ProjectRulesTabComponent,
     BordereauTabComponent,
@@ -87,6 +89,12 @@ export class ProjectDetailComponent implements OnInit, OnDestroy {
   /** Bumped on every ouvrage change so the Bordereau tab reloads its ouvrage list. */
   ouvragesVersion = signal(0);
   members = signal<ProjectMember[]>([]);
+  membersLoading = signal(true);
+  membersError = signal(false);
+  foldersLoading = signal(true);
+  foldersError = signal(false);
+  usersError = signal(false);
+  processesError = signal(false);
   folders = signal<ProjectFolder[]>([]);
   /** Dossiers tab: main folders only (sub-folders are listed when a main folder is opened). */
   mainFolders = computed(() => this.folders().filter(f => !f.parentId));
@@ -195,18 +203,8 @@ export class ProjectDetailComponent implements OnInit, OnDestroy {
       }
     });
 
-    this.projectService.listMembers(id).subscribe({
-      next: list => this.members.set(list ?? []),
-      error: () => this.members.set([])
-    });
-
-    this.projectService.listFolders(id).subscribe({
-      next: list => {
-        this.folders.set(list ?? []);
-        this.loadFolderAccessCounts();
-      },
-      error: () => this.folders.set([])
-    });
+    this.loadMembers();
+    this.loadFolders();
 
     this.loading.set(false);
 
@@ -216,12 +214,37 @@ export class ProjectDetailComponent implements OnInit, OnDestroy {
     this.loadProjectCash();
   }
 
-  private loadMemberOptions(): void {
+  loadMembers(): void {
+    if (!this.projectId) { return; }
+    this.membersLoading.set(true);
+    this.membersError.set(false);
+    this.projectService.listMembers(this.projectId).subscribe({
+      next: list => { this.members.set(list ?? []); this.membersLoading.set(false); },
+      error: () => { this.members.set([]); this.membersError.set(true); this.membersLoading.set(false); }
+    });
+  }
+
+  loadFolders(): void {
+    if (!this.projectId) { return; }
+    this.foldersLoading.set(true);
+    this.foldersError.set(false);
+    this.projectService.listFolders(this.projectId).subscribe({
+      next: list => {
+        this.folders.set(list ?? []);
+        this.foldersLoading.set(false);
+        this.loadFolderAccessCounts();
+      },
+      error: () => { this.folders.set([]); this.foldersError.set(true); this.foldersLoading.set(false); }
+    });
+  }
+
+  loadMemberOptions(): void {
     // Use list() (full UserDto with roleCodes) instead of options() (lightweight)
     // so we can display the person's business role when adding them to the team.
+    this.usersError.set(false);
     this.userService.list().subscribe({
       next: list => this.users.set(list ?? []),
-      error: () => this.users.set([])
+      error: () => { this.users.set([]); this.usersError.set(true); }
     });
   }
 
@@ -411,10 +434,10 @@ export class ProjectDetailComponent implements OnInit, OnDestroy {
   loadProcesses(): void {
     if (!this.projectId) { return; }
     this.processesLoading.set(true);
+    this.processesError.set(false);
     this.processService.listByProject(this.projectId).subscribe({
-      next: (list) => this.processes.set(list ?? []),
-      error: () => this.processes.set([]),
-      complete: () => this.processesLoading.set(false),
+      next: (list) => { this.processes.set(list ?? []); this.processesLoading.set(false); },
+      error: () => { this.processes.set([]); this.processesError.set(true); this.processesLoading.set(false); },
     });
   }
 

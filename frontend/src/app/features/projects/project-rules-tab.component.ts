@@ -9,6 +9,7 @@ import { MessageService } from 'primeng/api';
 import { ProcessService } from '@app/core/services/process.service';
 import { UserService } from '@app/core/services/user.service';
 import { AuthService } from '@app/core/auth.service';
+import { LoadErrorComponent } from '@app/shared/load-error.component';
 import {
   RoleNeeded, ProjectTemplateConfig, PendingApproval, roleLabel,
 } from '@app/core/models/process.model';
@@ -21,7 +22,7 @@ import {
 @Component({
   selector: 'app-project-rules-tab',
   standalone: true,
-  imports: [FormsModule, ButtonModule, InputTextModule, SelectModule, ToggleSwitchModule, DatePickerModule],
+  imports: [FormsModule, ButtonModule, InputTextModule, SelectModule, ToggleSwitchModule, DatePickerModule, LoadErrorComponent],
   template: `
     <section class="rules-tab">
       <!-- ═══ 1. Rôles du chantier ═══ -->
@@ -93,7 +94,11 @@ import {
         <p class="hint">Activez les règles d'approbation pour ce chantier. Le seuil (TND) remplace
           le montant minimum de la règle pour ce chantier.</p>
         <p class="hint-extra">Une règle désactivée ne s'applique plus à ce chantier.</p>
-        @if (ruleConfigs.length === 0) {
+        @if (rulesError()) {
+          <app-load-error message="Impossible de charger les règles du chantier." (retry)="loadRules()" />
+        } @else if (loadingRules()) {
+          <div class="loading"><i class="pi pi-spin pi-spinner"></i> Chargement…</div>
+        } @else if (ruleConfigs.length === 0) {
           <p class="empty">Aucune règle d'entreprise disponible.</p>
         } @else {
           @for (cfg of ruleConfigs; track cfg.templateId) {
@@ -123,6 +128,8 @@ import {
         <h3><i class="pi pi-clock"></i> En attente</h3>
         @if (loadingPending()) {
           <div class="loading"><i class="pi pi-spin pi-spinner"></i> Chargement…</div>
+        } @else if (pendingError()) {
+          <app-load-error message="Impossible de charger les approbations en attente." (retry)="loadPending()" />
         } @else if (pending().length === 0) {
           <p class="empty">Aucune approbation en attente pour ce chantier.</p>
         } @else {
@@ -228,9 +235,12 @@ export class ProjectRulesTabComponent implements OnInit {
   // Block 2 — active rules
   ruleConfigs: ProjectTemplateConfig[] = [];
   ruleErrors: Record<string, string> = {};
+  loadingRules = signal(true);
+  rulesError = signal(false);
 
   // Block 3 — pending approvals
   loadingPending = signal(true);
+  pendingError = signal(false);
   pending = signal<PendingApproval[]>([]);
 
   // Absence picker
@@ -359,10 +369,16 @@ export class ProjectRulesTabComponent implements OnInit {
   }
 
   // ── Block 2 ──
-  private loadRules(): void {
-    this.processService.listProjectTemplateConfigs(this.projectId).subscribe(cfgs => {
-      this.ruleConfigs = cfgs;
-      this.ruleErrors = {};
+  loadRules(): void {
+    this.loadingRules.set(true);
+    this.rulesError.set(false);
+    this.processService.listProjectTemplateConfigs(this.projectId).subscribe({
+      next: cfgs => {
+        this.ruleConfigs = cfgs;
+        this.ruleErrors = {};
+        this.loadingRules.set(false);
+      },
+      error: () => { this.ruleConfigs = []; this.rulesError.set(true); this.loadingRules.set(false); }
     });
   }
 
@@ -404,11 +420,12 @@ export class ProjectRulesTabComponent implements OnInit {
   }
 
   // ── Block 3 ──
-  private loadPending(): void {
+  loadPending(): void {
     this.loadingPending.set(true);
-    this.processService.listPendingApprovals(this.projectId).subscribe(list => {
-      this.pending.set(list);
-      this.loadingPending.set(false);
+    this.pendingError.set(false);
+    this.processService.listPendingApprovals(this.projectId).subscribe({
+      next: list => { this.pending.set(list); this.loadingPending.set(false); },
+      error: () => { this.pending.set([]); this.pendingError.set(true); this.loadingPending.set(false); }
     });
   }
 }

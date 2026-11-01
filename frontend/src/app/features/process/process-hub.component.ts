@@ -6,11 +6,12 @@ import { ProcessService } from '@app/core/services/process.service';
 import { AuthService } from '@app/core/auth.service';
 import { TemplateDetail } from '@app/core/models/process.model';
 import { processTypeVisual, roleVisual } from '@app/shared/process-visual';
+import { LoadErrorComponent } from '@app/shared/load-error.component';
 
 @Component({
   selector: 'app-process-hub',
   standalone: true,
-  imports: [ButtonModule, RouterLink],
+  imports: [ButtonModule, RouterLink, LoadErrorComponent],
   styleUrl: './process-hub.component.scss',
   template: `
     <section class="process-hub">
@@ -91,6 +92,8 @@ import { processTypeVisual, roleVisual } from '@app/shared/process-visual';
 
         @if (loading()) {
           <div class="loading-state"><i class="pi pi-spin pi-spinner"></i> Chargement…</div>
+        } @else if (loadError()) {
+          <app-load-error message="Impossible de charger les processus." (retry)="loadTemplates()" />
         } @else if (templates().length === 0) {
           <div class="empty-state">
             <i class="pi pi-sitemap"></i>
@@ -186,6 +189,7 @@ export class ProcessHubComponent implements OnInit {
 
   templates = signal<TemplateDetail[]>([]);
   loading = signal(true);
+  loadError = signal(false);
   copyingId = signal<string | null>(null);
 
   // System templates (org_id null) with subjectType CASH_PAYMENT — the
@@ -213,7 +217,9 @@ export class ProcessHubComponent implements OnInit {
     });
   }
 
-  private loadTemplates(): void {
+  loadTemplates(): void {
+    this.loading.set(true);
+    this.loadError.set(false);
     this.processService.listTemplatesAdmin().subscribe({
       next: (list) => {
         this.templates.set(list ?? []);
@@ -221,6 +227,7 @@ export class ProcessHubComponent implements OnInit {
       },
       error: () => {
         this.templates.set([]);
+        this.loadError.set(true);
         this.loading.set(false);
       },
     });

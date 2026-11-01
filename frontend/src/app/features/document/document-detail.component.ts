@@ -19,6 +19,7 @@ import {
 } from '@app/core/models/document.model';
 import { Ticket, TICKET_STATUS_LABELS, TICKET_STATUS_SEVERITY } from '@app/core/models/ticket.model';
 import { EmptyStateComponent } from '@app/shared/empty-state.component';
+import { LoadErrorComponent } from '@app/shared/load-error.component';
 import { DocumentFileActionsComponent } from '@app/shared/document-file-actions.component'; // PHASE-B-DOC-ACTIONS
 
 @Component({
@@ -26,7 +27,7 @@ import { DocumentFileActionsComponent } from '@app/shared/document-file-actions.
   standalone: true,
   imports: [
     CommonModule, FormsModule, ButtonModule, DialogModule, SelectModule, TagModule, ChipModule,
-    FileUploadModule, ProgressBarModule, EmptyStateComponent,
+    FileUploadModule, ProgressBarModule, EmptyStateComponent, LoadErrorComponent,
     DocumentFileActionsComponent // PHASE-B-DOC-ACTIONS
   ],
   templateUrl: './document-detail.component.html',
@@ -42,6 +43,8 @@ export class DocumentDetailComponent implements OnInit {
 
   doc = signal<Document | null>(null);
   revisions = signal<Revision[]>([]);
+  revisionsLoading = signal(true);
+  revisionsError = signal(false);
   loading = signal(true);
   notFound = signal(false);
 
@@ -60,6 +63,8 @@ export class DocumentDetailComponent implements OnInit {
   showLinkDialog = false;
   linking = signal(false);
   ticketOptions = signal<Ticket[]>([]);
+  ticketsLoading = signal(false);
+  ticketsError = signal(false);
   selectedTicketId: string | null = null;
 
   ngOnInit(): void {
@@ -81,11 +86,13 @@ export class DocumentDetailComponent implements OnInit {
     });
   }
 
-  private loadRevisions(): void {
+  loadRevisions(): void {
     if (!this.docId) { return; }
+    this.revisionsLoading.set(true);
+    this.revisionsError.set(false);
     this.documentService.revisions(this.docId).subscribe({
-      next: list => this.revisions.set(list ?? []),
-      error: () => this.revisions.set([])
+      next: list => { this.revisions.set(list ?? []); this.revisionsLoading.set(false); },
+      error: () => { this.revisions.set([]); this.revisionsError.set(true); this.revisionsLoading.set(false); }
     });
   }
 
@@ -177,11 +184,18 @@ export class DocumentDetailComponent implements OnInit {
     const d = this.doc();
     this.selectedTicketId = d?.ticketId ?? null;
     this.showLinkDialog = true;
-    // Load candidate tickets for this document's project.
+    this.loadTicketOptions();
+  }
+
+  /** Candidate tickets for this document's project (link dialog). */
+  loadTicketOptions(): void {
+    const d = this.doc();
+    this.ticketsError.set(false);
     if (d?.projectId) {
+      this.ticketsLoading.set(true);
       this.ticketService.list({ projectId: d.projectId }).subscribe({
-        next: list => this.ticketOptions.set(list ?? []),
-        error: () => this.ticketOptions.set([])
+        next: list => { this.ticketOptions.set(list ?? []); this.ticketsLoading.set(false); },
+        error: () => { this.ticketOptions.set([]); this.ticketsError.set(true); this.ticketsLoading.set(false); }
       });
     } else {
       this.ticketOptions.set([]);

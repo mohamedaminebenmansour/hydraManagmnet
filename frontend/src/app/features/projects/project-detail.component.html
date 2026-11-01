@@ -156,6 +156,9 @@
               Cliquez sur le badge d'accès pour les régler.
             </p>
           }
+          @if (foldersError()) {
+            <app-load-error message="Impossible de charger les dossiers du chantier." (retry)="loadFolders()" />
+          }
           <div class="folder-grid">
             @for (f of mainFolders(); track f.id) {
               <div class="fcard" (click)="openFolder(f)" role="button" tabindex="0"
@@ -180,7 +183,9 @@
                 </div>
               </div>
             } @empty {
-              <app-empty-state icon="pi pi-folder" message="Aucun dossier pour le moment."></app-empty-state>
+              @if (!foldersError() && !foldersLoading()) {
+                <app-empty-state icon="pi pi-folder" message="Aucun dossier pour le moment."></app-empty-state>
+              }
             }
           </div>
           @if (canConfigureProject()) {
@@ -214,6 +219,9 @@
             <i class="pi pi-info-circle"></i>
             Seules ces personnes voient ce chantier (sauf propriétaire).
           </p>
+          @if (membersError()) {
+            <app-load-error message="Impossible de charger l'équipe du chantier." (retry)="loadMembers()" />
+          }
           <div class="member-grid">
             @for (m of members(); track m.userId) {
               <div class="member-card">
@@ -242,7 +250,9 @@
                 </div>
               </div>
             } @empty {
-              <div class="empty-state">Aucun membre</div>
+              @if (!membersError() && !membersLoading()) {
+                <div class="empty-state">Aucun membre</div>
+              }
             }
           </div>
           @if (canManage()) {
@@ -278,6 +288,8 @@
 
           @if (processesLoading()) {
             <div class="proc-loading"><i class="pi pi-spin pi-spinner"></i> Chargement…</div>
+          } @else if (processesError()) {
+            <app-load-error message="Impossible de charger les processus du chantier." (retry)="loadProcesses()" />
           } @else if (processes().length === 0) {
             <div class="proc-empty">
               <i class="pi pi-sitemap"></i>
@@ -378,6 +390,9 @@
         <i class="pi pi-info-circle"></i>
         Le rôle métier de chaque personne est visible — pour savoir à QUI vous donnez accès.
       </p>
+      @if (usersError()) {
+        <app-load-error message="Impossible de charger la liste des utilisateurs." (retry)="loadMemberOptions()" />
+      }
       <div class="field">
         <label>Utilisateur</label>
         <div class="user-search">

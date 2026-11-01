@@ -45,6 +45,12 @@
 
   @if (loading()) {
     <div class="bt-loading"><i class="pi pi-spin pi-spinner"></i> Chargement…</div>
+  } @else if (versionsError()) {
+    <app-load-error message="Impossible de charger les versions du bordereau." (retry)="loadVersions()" />
+  } @else if (linesError()) {
+    <app-load-error message="Impossible de charger les lignes du bordereau." (retry)="reloadLines()" />
+  } @else if (linesLoading()) {
+    <div class="bt-loading"><i class="pi pi-spin pi-spinner"></i> Chargement…</div>
   } @else if (!lines().length) {
     <app-empty-state icon="pi pi-file-excel"
                      message="Aucune ligne de bordereau. Importez un fichier Excel ou créez une version." />
@@ -316,6 +322,8 @@
           </div>
         }
       </div>
+    } @else if (compareError()) {
+      <app-load-error message="Impossible de comparer les versions." (retry)="runCompare()" />
     } @else if (!compareLoading()) {
       <p class="muted">Aucune différence ou comparaison non lancée.</p>
     }
