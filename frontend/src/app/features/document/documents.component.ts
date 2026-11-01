@@ -340,6 +340,7 @@ export class DocumentsComponent implements OnInit {
           this.showUploadDialog = false;
           this.loadDocuments();
           this.loadFolders(); // counts
+        }
       },
       error: err => {
         this.uploading.set(false);

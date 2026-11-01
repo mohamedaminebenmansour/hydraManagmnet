@@ -39,7 +39,10 @@ import static org.assertj.core.api.Assertions.assertThat;
 class FolderTreeDbTest {
 
     private static final List<String> MAIN_CODES = List.of(
-            "01_ADMIN", "02_TECH", "03_EXEC", "04_QUAL", "05_ACHAT", "06_FIN", "07_INT", "08_SST");
+            "01_ADMIN", "02_TECH", "03_EXEC", "04_QUAL", "05_ACHAT", "06_FIN", "07_HSE", "08_SST");
+
+    /** Global sub-folder templates of V46: 01:5, 02:4, 03:4, 04:3, 05:3, 06:5, 08:2. */
+    private static final int SUB_FOLDER_COUNT = 26;
 
     @Autowired private ProjectService projects;
     @Autowired private FolderFilingService filing;
@@ -99,7 +102,7 @@ class FolderTreeDbTest {
 
         List<Map<String, Object>> expectedSubs = jdbc.queryForList(
                 "select code, parent_code from doc_folder_template where org_id is null and parent_code is not null");
-        assertThat(expectedSubs).hasSize(27);
+        assertThat(expectedSubs).hasSize(SUB_FOLDER_COUNT);
         List<Map<String, Object>> subs = jdbc.queryForList(
                 "select code, parent_id from doc_folder where project_id = ? and parent_id is not null", projectId);
         assertThat(subs).hasSize(expectedSubs.size());
@@ -115,8 +118,14 @@ class FolderTreeDbTest {
         UUID projectId = insertProject();
 
         assertThat(backfill()).isPositive();
+        // Exact list, so a failure names the missing / extra folder.
+        List<String> templateCodes = jdbc.queryForList(
+                "select code from doc_folder_template where org_id is null", String.class);
+        List<String> createdCodes = jdbc.queryForList(
+                "select code from doc_folder where project_id = ?", String.class, projectId);
+        assertThat(createdCodes).containsExactlyInAnyOrderElementsOf(templateCodes);
         Integer folders = jdbc.queryForObject("select count(*) from doc_folder where project_id = ?", Integer.class, projectId);
-        assertThat(folders).isEqualTo(8 + 27);
+        assertThat(folders).isEqualTo(8 + SUB_FOLDER_COUNT);
 
         assertThat(backfill()).isZero();
         assertThat(jdbc.queryForObject("select count(*) from doc_folder where project_id = ?", Integer.class, projectId))
