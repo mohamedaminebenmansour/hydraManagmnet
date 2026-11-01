@@ -51,7 +51,12 @@ export class LoginComponent {
     this.error = '';
     this.auth.login(this.email, this.password).subscribe({
       next: () => this.router.navigate(['/']),
-      error: () => { this.error = 'Email ou mot de passe incorrect'; this.loading = false; }
+      error: (err) => {
+        // 429 = too many attempts: show the server's French message.
+        this.error = err?.status === 429 && err?.error?.message
+          ? err.error.message : 'Email ou mot de passe incorrect';
+        this.loading = false;
+      }
     });
   }
 }

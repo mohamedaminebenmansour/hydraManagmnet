@@ -35,15 +35,17 @@ public class AuthController {
     private final PermissionService permissions;
     private final EventLogService audit;
     private final tn.hydra.user.UserService userService;
+    private final LoginRateLimiter rateLimiter;
 
     public AuthController(AuthenticationManager authManager, AppUserRepository users,
                           PermissionService permissions, EventLogService audit,
-                          tn.hydra.user.UserService userService) {
+                          tn.hydra.user.UserService userService, LoginRateLimiter rateLimiter) {
         this.authManager = authManager;
         this.users = users;
         this.permissions = permissions;
         this.audit = audit;
         this.userService = userService;
+        this.rateLimiter = rateLimiter;
     }
 
     public record LoginRequest(String email, String password) {}
@@ -52,15 +54,24 @@ public class AuthController {
     @PostMapping("/login")
     public ResponseEntity<?> login(@RequestBody LoginRequest body,
                                    HttpServletRequest request, HttpServletResponse response) {
+        // Brute-force guard: 5 failures per email / 20 per IP in 15 minutes → 429.
+        String ip = request.getRemoteAddr(); // client IP (server.forward-headers-strategy=framework)
+        if (rateLimiter.isBlocked(body.email(), ip)) {
+            return ResponseEntity.status(HttpStatus.TOO_MANY_REQUESTS)
+                    .body(Map.of("code", "TOO_MANY_ATTEMPTS",
+                            "message", "Trop de tentatives. Réessayez dans 15 minutes."));
+        }
         Authentication auth;
         try {
             auth = authManager.authenticate(
                     new UsernamePasswordAuthenticationToken(body.email(), body.password()));
         } catch (AuthenticationException e) {
+            rateLimiter.recordFailure(body.email(), ip);
             audit.log("LOGIN_FAILURE", null, null, "{\"attemptedEmail\":\"" + body.email() + "\"}");
             return ResponseEntity.status(HttpStatus.UNAUTHORIZED)
                     .body(Map.of("code", "LOGIN_FAILED", "message", "Email ou mot de passe incorrect"));
         }
+        rateLimiter.recordSuccess(body.email());
         SecurityContext context = SecurityContextHolder.createEmptyContext();
         context.setAuthentication(auth);
         SecurityContextHolder.setContext(context);
