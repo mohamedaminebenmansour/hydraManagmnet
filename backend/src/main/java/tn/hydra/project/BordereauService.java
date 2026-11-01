@@ -252,7 +252,7 @@ public class BordereauService {
                     ouvrage_id = coalesce(?, ouvrage_id),
                     work_nature = coalesce(?, work_nature),
                     paired_line_id = coalesce(?, paired_line_id),
-                    specs = ?::jsonb,
+                    specs = coalesce(?::jsonb, specs),
                     import_warnings = coalesce(?, import_warnings)
                 where id = ? and org_id = ?
                 """,

@@ -112,6 +112,21 @@ class BordereauEditAndBulkDbTest {
     }
 
     @Test
+    void editingOnlyTheQuantity_keepsTheExistingSpecs() {
+        // Designation without extractable specs, so only the stored specs are in play.
+        UUID a = insertLine(orgId, versionId, "1", "Béton de propreté");
+        jdbc.update("update bordereau_line set specs = '{\"capacite_m3\": 250}'::jsonb where id = ?", a);
+
+        bordereau.updateLine(auth, projectId, versionId, a, new BordereauService.UpdateLineRequest(
+                null, null, null, null, new java.math.BigDecimal("20"), null, null, null, null, null, null));
+
+        assertThat(jdbc.queryForObject("select quantity from bordereau_line where id = ?",
+                java.math.BigDecimal.class, a)).isEqualByComparingTo("20");
+        assertThat(jdbc.queryForObject("select specs = '{\"capacite_m3\": 250}'::jsonb from bordereau_line where id = ?",
+                Boolean.class, a)).isTrue();
+    }
+
+    @Test
     void assignOuvrage_setsTheOuvrageOnAllSelectedLines() {
         UUID a = insertLine(orgId, versionId, "1", "Conduite PEHD PN10 DE 110");
         UUID b = insertLine(orgId, versionId, "2", "Conduite PEHD PN10 DE 160");
