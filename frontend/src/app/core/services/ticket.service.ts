@@ -8,6 +8,21 @@ import {
 } from '@app/core/models/ticket.model';
 import { cacheSignalementLabels } from '@app/features/tickets/signalement-visual';
 
+export interface PhotoResponse {
+  id: string; documentId: string; phase: string; title: string;
+  createdBy: string | null; createdAt: string; downloadUrl: string | null;
+}
+export interface TimelineEntry {
+  id: string; kind: string; body: string | null;
+  authorId: string; authorName: string | null; authorRole: string | null;
+  fromStatus: string | null; toStatus: string | null;
+  fromStatusLabel: string | null; toStatusLabel: string | null;
+  createdAt: string;
+}
+export interface CommentResponse {
+  id: string; body: string; authorId: string; authorName: string | null; createdAt: string;
+}
+
 @Injectable({ providedIn: 'root' })
 export class TicketService {
   private http = inject(HttpClient);
@@ -103,6 +118,66 @@ export class TicketService {
     fd.append('ticket', new Blob([JSON.stringify(ticket)], { type: 'application/json' }), 'ticket.json');
     for (const p of photos) { fd.append('photos', p, p.name); }
     return this.http.post<any>('/api/tickets/with-photos', fd, { reportProgress: true, observe: 'events' });
+  }
+
+  // ── T3 actions + timeline + comments + photos ──────────────────────────
+
+  /** GET /api/tickets/{id}/actions — action codes the current user may do. */
+  actions(id: string): Observable<string[]> {
+    return this.http.get<string[]>(`/api/tickets/${id}/actions`);
+  }
+
+  /** GET /api/tickets/{id}/timeline — comments + status changes, oldest first. */
+  timeline(id: string): Observable<TimelineEntry[]> {
+    return this.http.get<TimelineEntry[]>(`/api/tickets/${id}/timeline`);
+  }
+
+  /** POST /api/tickets/{id}/comments {body} — add a comment. */
+  comment(id: string, body: string): Observable<CommentResponse> {
+    return this.http.post<CommentResponse>(`/api/tickets/${id}/comments`, { body });
+  }
+
+  /** POST /api/tickets/{id}/start — OPEN → IN_PROGRESS. */
+  start(id: string): Observable<Ticket> {
+    return this.http.post<any>(`/api/tickets/${id}/start`, null).pipe(map(mapTicket));
+  }
+
+  /** POST /api/tickets/{id}/resolve {note} — → RESOLVED. */
+  resolve(id: string, note: string): Observable<Ticket> {
+    return this.http.post<any>(`/api/tickets/${id}/resolve`, { note }).pipe(map(mapTicket));
+  }
+
+  /** POST /api/tickets/{id}/verify — RESOLVED → CLOSED. */
+  verify(id: string): Observable<Ticket> {
+    return this.http.post<any>(`/api/tickets/${id}/verify`, null).pipe(map(mapTicket));
+  }
+
+  /** POST /api/tickets/{id}/reopen {comment} — RESOLVED → IN_PROGRESS. */
+  reopen(id: string, comment: string): Observable<Ticket> {
+    return this.http.post<any>(`/api/tickets/${id}/reopen`, { comment }).pipe(map(mapTicket));
+  }
+
+  /** POST /api/tickets/{id}/cancel {reason} — → CANCELLED. */
+  cancel(id: string, reason: string): Observable<Ticket> {
+    return this.http.post<any>(`/api/tickets/${id}/cancel`, { reason }).pipe(map(mapTicket));
+  }
+
+  /** GET /api/tickets/{id}/photos — list photos. */
+  photos(id: string): Observable<PhotoResponse[]> {
+    return this.http.get<PhotoResponse[]>(`/api/tickets/${id}/photos`);
+  }
+
+  /** POST /api/tickets/{id}/photos (multipart: file, phase) — add one photo. */
+  addPhoto(id: string, file: File, phase: string): Observable<PhotoResponse> {
+    const fd = new FormData();
+    fd.append('file', file, file.name);
+    fd.append('phase', phase);
+    return this.http.post<PhotoResponse>(`/api/tickets/${id}/photos`, fd);
+  }
+
+  /** DELETE /api/tickets/{id}/photos/{attachmentId} — remove a photo. */
+  deletePhoto(id: string, attachmentId: string): Observable<void> {
+    return this.http.delete<void>(`/api/tickets/${id}/photos/${attachmentId}`);
   }
 
   /** Backend expects yyyy-MM-dd date strings, not full ISO datetimes. */
