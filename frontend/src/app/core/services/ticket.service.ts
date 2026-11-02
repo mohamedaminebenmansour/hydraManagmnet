@@ -1,5 +1,5 @@
 import { Injectable, inject } from '@angular/core';
-import { HttpClient, HttpParams } from '@angular/common/http';
+import { HttpClient, HttpEvent, HttpParams } from '@angular/common/http';
 import { Observable, map, shareReplay } from 'rxjs';
 import {
   Ticket, TicketDocument, TicketFilter, TicketUpsert, TicketSearchParams,
@@ -95,6 +95,14 @@ export class TicketService {
     let p = new HttpParams();
     if (projectId) { p = p.set('projectId', projectId); }
     return this.http.get<any>('/api/tickets/summary', { params: p }).pipe(map(mapTicketSummary));
+  }
+
+  /** POST /api/tickets/with-photos (multipart: ticket JSON + photos). Reports progress. */
+  createWithPhotos(ticket: Record<string, any>, photos: File[]): Observable<HttpEvent<any>> {
+    const fd = new FormData();
+    fd.append('ticket', new Blob([JSON.stringify(ticket)], { type: 'application/json' }), 'ticket.json');
+    for (const p of photos) { fd.append('photos', p, p.name); }
+    return this.http.post<any>('/api/tickets/with-photos', fd, { reportProgress: true, observe: 'events' });
   }
 
   /** Backend expects yyyy-MM-dd date strings, not full ISO datetimes. */

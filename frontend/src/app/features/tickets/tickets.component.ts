@@ -4,12 +4,7 @@ import { Router } from '@angular/router';
 import { Subject, debounceTime, distinctUntilChanged } from 'rxjs';
 import { ButtonModule } from 'primeng/button';
 import { InputTextModule } from 'primeng/inputtext';
-import { TextareaModule } from 'primeng/textarea';
 import { SelectModule } from 'primeng/select';
-import { DatePickerModule } from 'primeng/datepicker';
-import { DialogModule } from 'primeng/dialog';
-import { TagModule } from 'primeng/tag';
-import { ChipModule } from 'primeng/chip';
 import { PaginatorModule } from 'primeng/paginator';
 import { MessageService } from 'primeng/api';
 import { AuthService } from '@app/core/auth.service';
@@ -19,10 +14,7 @@ import { UserService } from '@app/core/services/user.service';
 import { TicketService } from '@app/core/services/ticket.service';
 import { SelectOption } from '@app/core/models/select-option';
 import { Project } from '@app/core/models/project.model';
-import {
-  Ticket, TicketUpsert, TicketCatalogType, TicketSummary,
-  TICKET_PRIORITY_OPTS, TICKET_PRIORITY_LABELS
-} from '@app/core/models/ticket.model';
+import { Ticket, TicketCatalogType, TicketSummary } from '@app/core/models/ticket.model';
 import { EmptyStateComponent } from '@app/shared/empty-state.component';
 import { LoadErrorComponent } from '@app/shared/load-error.component';
 import { typeVisual, statusVisual } from './signalement-visual';
@@ -33,8 +25,7 @@ type Tab = 'mine' | 'all' | 'overdue';
   selector: 'app-tickets',
   standalone: true,
   imports: [
-    FormsModule, ButtonModule, InputTextModule, TextareaModule, SelectModule,
-    DatePickerModule, DialogModule, TagModule, ChipModule, PaginatorModule,
+    FormsModule, ButtonModule, InputTextModule, SelectModule, PaginatorModule,
     EmptyStateComponent, LoadErrorComponent
   ],
   templateUrl: './tickets.component.html',
@@ -70,29 +61,10 @@ export class TicketsComponent implements OnInit {
   searchQuery = signal('');
   isMobile = signal(false);
 
-  // ── create / edit form (kept; T5 replaces it) ─────────────────────────
-  showDialog = signal(false);
-  mode: 'create' | 'edit' = 'create';
-  editTarget: Ticket | null = null;
-  formTitle = '';
-  formDescription = '';
-  formProject: string | null = null;
-  formAssignee: string | null = null;
-  formPriority = 'MEDIUM';
-  formStart: Date | null = null;
-  formDue: Date | null = null;
-  formDocumentId = '';
-
-  readonly priorityOpts = TICKET_PRIORITY_OPTS;
-
   canWrite = computed(() => this.auth.can(PERM.TICKET_WRITE));
 
   projectOpts = computed(() =>
     this.projects().map(p => ({ label: p.code ? `${p.code} — ${p.name}` : p.name, value: p.id })));
-  activeProjectOpts = computed(() =>
-    this.projects().filter(p => p.status === 'ACTIF')
-      .map(p => ({ label: p.code ? `${p.code} — ${p.name}` : p.name, value: p.id })));
-  assigneeOpts = computed(() => this.userOptions());
 
   /** Status dropdown options built from the catalog (all statuses, deduped). */
   statusOpts = computed(() => {
@@ -269,35 +241,6 @@ export class TicketsComponent implements OnInit {
     return { name: 'Non assigné', externe: false };
   }
 
-  priorityLabel(p: string | null | undefined): string {
-    return p ? (TICKET_PRIORITY_LABELS[p] ?? p) : '—';
-  }
-
-  // ── create / edit (existing inline form, kept for T5) ─────────────────
-
-  openCreate(): void {
-    this.mode = 'create'; this.editTarget = null;
-    this.formTitle = ''; this.formDescription = ''; this.formProject = this.fProject() ?? null;
-    this.formAssignee = null; this.formPriority = 'MEDIUM';
-    this.formStart = null; this.formDue = null; this.formDocumentId = '';
-    this.showDialog.set(true);
-  }
-
-  openEdit(t: Ticket): void {
-    this.mode = 'edit'; this.editTarget = t;
-    this.formTitle = t.title; this.formDescription = t.description ?? '';
-    this.formProject = t.projectId; this.formAssignee = t.assignedToId;
-    this.formPriority = t.priority ?? 'MEDIUM';
-    this.formStart = this.parseDateOnly(t.startAt); this.formDue = this.parseDateOnly(t.dueAt);
-    this.formDocumentId = t.documentId ?? '';
-    this.showDialog.set(true);
-  }
-
-  submit(): void {
-    if (!this.formTitle.trim()) { return; }
-    if (this.mode === 'edit') { this.saveEdit(); } else { this.create(); }
-  }
-
   private parseDateOnly(s: string | null | undefined): Date | null {
     if (!s) { return null; }
     const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(s);
@@ -306,39 +249,8 @@ export class TicketsComponent implements OnInit {
     return isNaN(d.getTime()) ? null : d;
   }
 
-  private body(): TicketUpsert {
-    return {
-      title: this.formTitle.trim(),
-      description: this.formDescription.trim() || null,
-      projectId: this.formProject,
-      assignedToId: this.formAssignee,
-      priority: this.formPriority,
-      startAt: this.formStart,
-      dueAt: this.formDue,
-      documentId: this.formDocumentId.trim() || null
-    };
-  }
-
-  create(): void {
-    this.ticketService.create(this.body()).subscribe({
-      next: () => {
-        this.msgs.add({ severity: 'success', summary: 'Signalement créé' });
-        this.showDialog.set(false); this.runSearch('reset'); this.loadSummary();
-      },
-      error: (err) => this.msgs.add({ severity: 'error', summary: 'Erreur',
-        detail: err.error?.message ?? 'Création impossible' })
-    });
-  }
-
-  saveEdit(): void {
-    if (!this.editTarget) { return; }
-    this.ticketService.update(this.editTarget.id, this.body()).subscribe({
-      next: () => {
-        this.msgs.add({ severity: 'success', summary: 'Signalement modifié' });
-        this.showDialog.set(false); this.runSearch('reset');
-      },
-      error: (err) => this.msgs.add({ severity: 'error', summary: 'Erreur',
-        detail: err.error?.message ?? 'Modification impossible' })
-    });
+  /** T5: the + Nouveau button navigates to the dedicated create page. */
+  openCreate(): void {
+    this.router.navigate(['/tickets/new'], { queryParams: { projectId: this.fProject() ?? '' } });
   }
 }

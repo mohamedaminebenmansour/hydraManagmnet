@@ -1,0 +1,97 @@
+.create-page { max-width: 640px; margin: 0 auto; padding: 0 0 80px; }
+.create-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px;
+  h2 { margin: 0; font-size: 22px; display: flex; gap: 8px; align-items: center; } }
+.step-label { font-size: 14px; font-weight: 700; color: #475569; text-transform: uppercase;
+  letter-spacing: 0.03em; margin: 18px 0 10px; }
+
+// ── type tiles (2x2 grid) ────────────────────────────────────────────────
+.type-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.type-tile {
+  display: flex; flex-direction: column; align-items: center; gap: 4px; text-align: center;
+  padding: 18px 10px; border-radius: 14px; border: 2px solid #e2e8f0; background: #fff;
+  cursor: pointer; transition: all .15s; min-height: 44px;
+  i { font-size: 28px; color: var(--tc-color, #64748b); }
+  .tt-label { font-size: 15px; font-weight: 700; color: #0f172a; }
+  .tt-help { font-size: 12px; color: #64748b; line-height: 1.3; }
+  &:hover { border-color: var(--tc-color, #cbd5e1); }
+  &.selected { border-color: var(--tc-color); background: color-mix(in srgb, var(--tc-color) 8%, transparent);
+    i { transform: scale(1.1); } }
+}
+
+// ── form fields ─────────────────────────────────────────────────────────
+.step2 { display: flex; flex-direction: column; gap: 14px; }
+.field { display: flex; flex-direction: column; gap: 6px;
+  label { font-size: 13px; font-weight: 700; color: #475569; }
+  input, textarea { width: 100%; box-sizing: border-box; font-size: 15px; padding: 10px 12px; }
+  textarea { resize: vertical; }
+}
+.field-err { color: #b91c1c; font-size: 12px; font-weight: 600; }
+.w100 { width: 100%; }
+
+// ── category chips ───────────────────────────────────────────────────────
+.cat-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.cat-chip {
+  padding: 6px 12px; border-radius: 999px; border: 1px solid #e2e8f0; background: #fff;
+  cursor: pointer; font-size: 13px; font-weight: 600; color: #475569; transition: all .15s; min-height: 36px;
+  &:hover { border-color: #0ea5e9; }
+  &.selected { border-color: #0ea5e9; background: #e0f2fe; color: #075985; }
+}
+
+// ── origin toggles (RESERVE) ─────────────────────────────────────────────
+.origin-toggles { display: flex; gap: 6px;
+  button { flex: 1; padding: 10px; border-radius: 8px; border: 1px solid #e2e8f0; background: #fff;
+    cursor: pointer; font-size: 14px; font-weight: 600; color: #475569; min-height: 44px;
+    &.active { border-color: #0ea5e9; background: #e0f2fe; color: #075985; } }
+}
+
+// ── photos ───────────────────────────────────────────────────────────────
+.photo-actions { display: flex; gap: 8px; }
+.photo-btn {
+  flex: 1; display: flex; align-items: center; justify-content: center; gap: 6px;
+  padding: 12px; border-radius: 10px; border: 2px dashed #cbd5e1; background: #f8fafc;
+  cursor: pointer; font-size: 14px; font-weight: 600; color: #475569; transition: all .15s; min-height: 48px;
+  &:hover { border-color: #0ea5e9; color: #075985; }
+  i { font-size: 18px; }
+}
+.compressing { font-size: 13px; color: #64748b; font-style: italic; }
+.thumbs { display: flex; flex-wrap: wrap; gap: 8px; }
+.thumb { position: relative; width: 80px; height: 80px; border-radius: 8px; overflow: hidden;
+  border: 1px solid #e2e8f0;
+  img { width: 100%; height: 100%; object-fit: cover; }
+  .thumb-remove { position: absolute; top: 2px; right: 2px; width: 22px; height: 22px; border-radius: 50%;
+    border: none; background: rgba(0,0,0,0.6); color: #fff; font-size: 16px; line-height: 1; cursor: pointer;
+    display: flex; align-items: center; justify-content: center; }
+}
+
+// ── Plus de détails toggle (mobile) ──────────────────────────────────────
+.details-toggle {
+  display: none; align-items: center; gap: 6px; padding: 10px; border: none; background: none;
+  cursor: pointer; font-size: 14px; font-weight: 600; color: #0ea5e9; min-height: 44px;
+}
+.due-in { font-size: 12px; color: #64748b; font-weight: 600; }
+
+// ── save bar ─────────────────────────────────────────────────────────────
+.save-bar { display: flex; gap: 10px; align-items: center; margin-top: 20px;
+  ::ng-deep .save-btn { flex: 1; min-height: 48px; } }
+.progress { text-align: center; font-size: 14px; font-weight: 600; color: #475569; margin-top: 8px;
+  i { margin-right: 4px; } }
+.save-error { display: flex; align-items: center; gap: 8px; padding: 12px 14px; border-radius: 10px;
+  background: #fef2f2; border: 1px solid #fecaca; color: #b91c1c; font-weight: 600; margin-top: 14px;
+  i { font-size: 18px; } }
+
+// ── responsive: mobile ───────────────────────────────────────────────────
+@media (max-width: 480px) {
+  .type-grid { grid-template-columns: 1fr; }
+  .details-toggle { display: flex; }
+  .details:not(.expanded) { display: none; }
+  .photo-actions { flex-direction: column; }
+  .create-page { padding: 0 12px 80px; }
+}
+@media (max-width: 360px) {
+  .type-tile { flex-direction: row; text-align: left; gap: 10px; }
+}
+
+// ── accessibility ────────────────────────────────────────────────────────
+button:focus-visible, input:focus-visible, textarea:focus-visible {
+  outline: 2px solid #0ea5e9; outline-offset: 2px;
+}

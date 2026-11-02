@@ -1,0 +1,148 @@
+<div class="create-page">
+  <div class="create-head">
+    <h2><i class="pi pi-plus"></i> Nouveau signalement</h2>
+    <p-button icon="pi pi-times" [text]="true" (onClick)="cancel()" aria-label="Annuler" />
+  </div>
+
+  <!-- Step 1: type tiles -->
+  <div class="step-label">1. Quel type de signalement ?</div>
+  <div class="type-grid">
+    @for (t of catalog(); track t.code) {
+      <button class="type-tile" [class.selected]="selectedType() === t.code"
+              [style.--tc-color]="t.colour"
+              (click)="onSelectType(t.code)"
+              [attr.aria-pressed]="selectedType() === t.code">
+        <i class="pi {{ t.icon }}"></i>
+        <span class="tt-label">{{ t.label }}</span>
+        <span class="tt-help">{{ typeHelp[t.code] }}</span>
+      </button>
+    }
+  </div>
+
+  @if (selectedType()) {
+    <div class="step2">
+      <div class="step-label">2. Détails du signalement</div>
+
+      <div class="field">
+        <label for="f-title">Titre*</label>
+        <input id="f-title" pInputText [ngModel]="title()" (ngModelChange)="title.set($event)"
+               [placeholder]="titlePlaceholder()" maxlength="120" />
+        @if (attemptedSave() && title().trim().length < 5) {
+          <span class="field-err">Le titre doit faire au moins 5 caractères.</span>
+        }
+      </div>
+
+      @if (selectedType() !== 'VISA_DOCUMENT') {
+        <div class="field">
+          <label>Catégorie*</label>
+          <div class="cat-chips">
+            @for (c of categoryChips(); track c.code) {
+              <button class="cat-chip" [class.selected]="category() === c.code"
+                      (click)="onCategoryClick(c.code)" [attr.aria-pressed]="category() === c.code">{{ c.label }}</button>
+            }
+          </div>
+          @if (attemptedSave() && !category()) {
+            <span class="field-err">Choisissez une catégorie.</span>
+          }
+        </div>
+      }
+
+      @if (selectedType() === 'RESERVE') {
+        <div class="field">
+          <label>Origine</label>
+          <div class="origin-toggles">
+            <button type="button" [class.active]="origin() === 'CLIENT'" (click)="origin.set('CLIENT')">Visite client</button>
+            <button type="button" [class.active]="origin() === 'INTERNE'" (click)="origin.set('INTERNE')">Contrôle interne</button>
+          </div>
+        </div>
+      }
+
+      <div class="field">
+        <label>Photos « avant » ({{ photoCount }}/{{ maxPhotos }})</label>
+        <div class="photo-actions">
+          <label class="photo-btn">
+            <input type="file" accept="image/*" capture="environment" (change)="onPickPhoto($event)" hidden />
+            <i class="pi pi-camera"></i> Prendre une photo
+          </label>
+          <label class="photo-btn">
+            <input type="file" accept="image/*" multiple (change)="onPickPhoto($event)" hidden />
+            <i class="pi pi-images"></i> Choisir dans la galerie
+          </label>
+        </div>
+        @if (compressing()) { <span class="compressing">Préparation…</span> }
+        <div class="thumbs">
+          @for (p of photos(); track p.url; let i = $index) {
+            <div class="thumb">
+              <img [src]="p.url" alt="Photo avant" />
+              <button class="thumb-remove" (click)="removePhoto(i)" aria-label="Supprimer la photo">×</button>
+            </div>
+          }
+        </div>
+      </div>
+
+      <div class="field">
+        <label>Chantier*</label>
+        <p-select [options]="projectOpts()" [ngModel]="selectedProject()" (ngModelChange)="onProjectChange($event)"
+                  placeholder="Choisir un chantier" optionLabel="label" optionValue="value" styleClass="w100" />
+        @if (attemptedSave() && !selectedProject()) {
+          <span class="field-err">Choisissez un chantier.</span>
+        }
+      </div>
+
+      <button type="button" class="details-toggle" (click)="showDetails.set(!showDetails())">
+        <i class="pi" [class.pi-angle-down]="!showDetails()" [class.pi-angle-up]="showDetails()"></i>
+        {{ showDetails() ? 'Moins de détails' : 'Plus de détails' }}
+      </button>
+      <div class="details" [class.expanded]="showDetails()">
+        <div class="field">
+          <label>Ouvrage (optionnel)</label>
+          <p-select [options]="ouvrageOpts()" [ngModel]="selectedOuvrage()" (ngModelChange)="selectedOuvrage.set($event)"
+                    placeholder="Aucun" [showClear]="true" optionLabel="label" optionValue="value" styleClass="w100" />
+        </div>
+        <div class="field">
+          <label>Lieu / PK</label>
+          <input pInputText [ngModel]="locationText()" (ngModelChange)="locationText.set($event)" placeholder="Ex. : PK 2+300" />
+        </div>
+        <div class="field">
+          <label>Assigné à</label>
+          <p-select [options]="assigneeOpts()" [ngModel]="assignee()" (ngModelChange)="assignee.set($event)"
+                    placeholder="Non assigné" [showClear]="true" optionLabel="label" optionValue="value" styleClass="w100" />
+        </div>
+        <div class="field">
+          <label>Responsable externe (optionnel)</label>
+          <p-select [options]="partyOpts()" [ngModel]="responsibleParty()" (ngModelChange)="responsibleParty.set($event)"
+                    placeholder="Aucun" [showClear]="true" optionLabel="label" optionValue="value" styleClass="w100" />
+        </div>
+        <div class="field">
+          <label>Description (optionnel)</label>
+          <textarea pTextarea rows="4" [ngModel]="description()" (ngModelChange)="description.set($event)"></textarea>
+        </div>
+      </div>
+
+      <div class="field">
+        <label>Échéance</label>
+        <p-datepicker [ngModel]="dueAt()" (ngModelChange)="dueAt.set($event)" dateFormat="dd/mm/yy" [showIcon]="true"
+                      styleClass="w100" placeholder="jj/mm/aa" />
+        @if (dueInLabel()) { <span class="due-in">{{ dueInLabel() }}</span> }
+      </div>
+    </div>
+
+    @if (error()) {
+      <div class="save-error" role="alert">
+        <i class="pi pi-exclamation-triangle"></i> {{ error() }}
+      </div>
+    }
+    @if (networkLost()) {
+      <p-button label="Réessayer" icon="pi pi-refresh" [outlined]="true" (onClick)="retry()" styleClass="w100" />
+    }
+
+    <div class="save-bar">
+      <p-button label="Annuler" [text]="true" (onClick)="cancel()" />
+      <p-button label="Enregistrer le signalement" icon="pi pi-check" severity="success" size="large"
+                (onClick)="save()" [disabled]="sending() || !canWrite()" styleClass="save-btn" />
+    </div>
+    @if (sending()) {
+      <div class="progress"><i class="pi pi-spin pi-spinner"></i> Envoi… {{ progress() }} %</div>
+    }
+  }
+</div>

@@ -13,6 +13,8 @@ export const routes: Routes = [
       { path: '', loadComponent: () => import('./features/home/home.component').then(m => m.HomeComponent) },
       { path: 'tickets', canActivate: [permGuard(PERM.TICKET_READ)],
         loadComponent: () => import('./features/tickets/tickets.component').then(m => m.TicketsComponent) },
+      { path: 'tickets/new', canActivate: [permGuard(PERM.TICKET_READ)],
+        loadComponent: () => import('./features/tickets/ticket-create.component').then(m => m.TicketCreateComponent) },
       { path: 'tickets/:id', canActivate: [permGuard(PERM.TICKET_READ)],
         loadComponent: () => import('./features/tickets/ticket-detail.component').then(m => m.TicketDetailComponent) },
       { path: 'projects', canActivate: [permGuard(PERM.PROJECT_READ)],
