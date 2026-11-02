@@ -14,6 +14,7 @@
   - PROBLEME / RESERVE / DEMANDE → `OPEN | IN_PROGRESS | RESOLVED | CLOSED | CANCELLED`
 - Indexes (V48): `(org_id, project_id, type, status)`, `(org_id, assigned_to, status)`, `(org_id, due_at)`.
 - `ticket_attachment` table (V49): id, org_id, ticket_id (→ ticket, on delete cascade), document_id (→ document), phase ∈ `BEFORE | AFTER | OTHER`, created_by, created_at, unique(ticket_id, document_id). Index `(org_id, ticket_id)`. Photos are stored as documents (via `DocumentService.upload`) and linked to the ticket here.
+- `ticket_comment` table (V50): id, org_id, ticket_id (→ ticket, on delete cascade), author_id (→ app_user), kind ∈ `COMMENT | STATUS_CHANGE | SYSTEM`, body, from_status, to_status, created_at. Index `(org_id, ticket_id, created_at)`. One SYSTEM row on create (« Signalement créé »), one STATUS_CHANGE per action / VISA status move, COMMENT rows for free-form comments.
 - Process instance can link to a ticket via `subjectType=TICKET, subjectId=ticketId`
 
 ## Types and lifecycle (V48)
@@ -34,7 +35,7 @@ Each type owns an ordered list of **categories** (code → French label); see `T
 OPEN → IN_PROGRESS → RESOLVED → CLOSED        (VISA: DRAFT → IN_REVIEW → APPROVED → IFC → AS_BUILT)
   ↘ CANCELLED           ↘ IN_PROGRESS (reopen)
 ```
-Rules (T1 owns the graph; role/note/photo rules come in T3):
+Rules (T1 owns the graph; T3 owns the role/note/photo rules):
 - A create call with no type defaults to `VISA_DOCUMENT` + `DRAFT`, so old clients and old tests work unchanged.
 - Category is required for PROBLEME/RESERVE/DEMANDE (and must belong to the type); forbidden for VISA_DOCUMENT.
 - `ouvrageId` must belong to the same chantier (project + org); `responsiblePartyId` to the same org.
@@ -47,7 +48,7 @@ Rules (T1 owns the graph; role/note/photo rules come in T3):
 - `GET /api/tickets/{id}` — detail (response now also carries type, typeLabel, category, categoryLabel, origin, locationText, ouvrageId/ouvrageName, responsiblePartyId/responsiblePartyName, statusLabel, overdue)
 - `POST /api/tickets` — create `{ title, description, projectId, assignedToId, priority, startAt, dueAt, documentId, type, category, origin, locationText, ouvrageId, responsiblePartyId }`
 - `PUT /api/tickets/{id}` — update
-- `POST /api/tickets/{id}/status` — change status (validated through `TicketWorkflow` for the ticket's type)
+- `POST /api/tickets/{id}/status` — VISA_DOCUMENT only (validated through `TicketWorkflow`); for PROBLEME/RESERVE/DEMANDE returns 400 « Utilisez les actions du signalement ». Also writes a STATUS_CHANGE row.
 - `POST /api/tickets/{id}/close` — close (VISA_DOCUMENT → AS_BUILT, as before)
 - `GET /api/tickets/{id}/documents` — linked documents
 - `GET /api/tickets/{id}/transitions` — allowed status transitions for this ticket's type
@@ -57,6 +58,14 @@ Rules (T1 owns the graph; role/note/photo rules come in T3):
 - `DELETE /api/tickets/{id}/photos/{attachmentId}` — only the uploader, only while not CLOSED/CANCELLED
 - `GET /api/tickets/search?projectId&type&status&mine&overdue&q&page&size` — paginated `{items, total, page, size}`, items = TicketResponse + photoCount. Order: overdue first, then dueAt asc, then createdAt desc.
 - `GET /api/tickets/summary?projectId` — `{mine, overdue, toVerify, open, inProgress, byType}` (not-closed/not-cancelled only)
+- `POST /api/tickets/{id}/start` — OPEN → IN_PROGRESS (assignee, or creator if no assignee)
+- `POST /api/tickets/{id}/resolve` `{note}` — OPEN|IN_PROGRESS → RESOLVED (assignee/creator; note ≥ 5 chars saved in `resolution_note`; RESERVE needs ≥ 1 AFTER photo)
+- `POST /api/tickets/{id}/verify` — RESOLVED → CLOSED (creator, owner, or project manager ADMIN/MANAGER; RESERVE: verifier ≠ resolver)
+- `POST /api/tickets/{id}/reopen` `{comment}` — RESOLVED → IN_PROGRESS (creator/owner/manager; comment ≥ 5 chars)
+- `POST /api/tickets/{id}/cancel` `{reason}` — OPEN|IN_PROGRESS → CANCELLED (creator/owner/manager; reason ≥ 5 chars)
+- `GET /api/tickets/{id}/actions` — action codes the current user may do now (START, RESOLVE, VERIFY, REOPEN, CANCEL, COMMENT, ADD_PHOTO; VISA returns the allowed status codes)
+- `POST /api/tickets/{id}/comments` `{body}` — add a comment (1..2000 chars, by anyone who can read the ticket)
+- `GET /api/tickets/{id}/timeline` — comments + status changes, oldest first (authorName, authorRole, fromStatusLabel, toStatusLabel)
 
 ## Photos (V49)
 

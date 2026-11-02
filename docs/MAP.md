@@ -17,13 +17,13 @@ section (grep the method, then read around it).
 | `security` | `PermissionService`, `FolderAccessService`, `ToxicPairService`, `HydraUserDetailsService`, `SessionRevoker` | Permissions, folder ACL (a folder without rows inherits its parent's), segregation of duties |
 | `audit` | `EventLogService`, `AuditService`, `AuditController` | Append-only event log |
 | `event` | `DomainEventService`, `EventType`, `DomainEventController` | Domain events (table domain_event, V47): one row per business action, written in the action's transaction by `DomainEventService.publish` (payment submitted, cash posted, step completed, BC created, BL received, facture recorded, bordereau imported / activated, document uploaded). Nothing consumes them yet. `GET /api/events` (owner) feeds the "Journal des événements" page. Not the audit log |
-| `ticket` | `TicketService`, `TicketController`, `TicketPhotoService`, `TicketType`, `TicketWorkflow` | Signalements: 4 types with categories/origine/ouvrage+party links; universal lifecycle OPEN→IN_PROGRESS→RESOLVED→CLOSED (+CANCELLED) for PROBLEME/RESERVE/DEMANDE, VISA keeps DRAFT→…→AS_BUILT. Photos (V49) via `DocumentService.upload` filed by type (04_QUAL.RESERVES / 03_EXEC.PHOTOS / 02_TECH.PLANS); `with-photos` create-in-one-transaction + rollback cleanup. `GET /api/tickets/catalog` (labels), `/search` (paginated + photoCount), `/summary` (counts). `TICKET_CREATED` domain event on create |
+| `ticket` | `TicketService`, `TicketController`, `TicketPhotoService`, `TicketType`, `TicketWorkflow` | Signalements: 4 types, categories, origine (RESERVE), ouvrage/party links; universal lifecycle OPEN→IN_PROGRESS→RESOLVED→CLOSED (+CANCELLED) driven by named actions (start/resolve/verify/reopen/cancel) with role rules (assignee-or-creator for start/resolve; creator/owner/manager for verify/reopen/cancel; RESERVE resolve needs an AFTER photo, verify ≠ resolver). VISA keeps DRAFT→…→AS_BUILT via POST /{id}/status. Photos (V49) via `DocumentService.upload` filed by type. Timeline + comments (V50, ticket_comment). `GET /api/tickets/catalog` / `/search` / `/summary` / `/{id}/actions` / `/{id}/timeline`. `TICKET_CREATED` + `TICKET_STATUS_CHANGED` domain events |
 | `user`, `role`, `auth` | `UserService`, `RoleService`, `AuthController` | Users (incl. absence `absent_until`), roles, login |
 | `config` | `SecurityConfig`, `CorsConfig`, `BootstrapRunner`, `DemoDataRunner`, `DevDataSeedRunner` | Security, CORS, seeding |
 | `common`, `exception` | `GlobalExceptionHandler`, `BusinessRuleException` | Errors → HTTP |
 
-Migrations: `backend/src/main/resources/db/migration/`, last on main = **V49__ticket_attachment.sql**.
-Never edit an existing migration; the next one is V50.
+Migrations: `backend/src/main/resources/db/migration/`, last on main = **V50__ticket_comment.sql**.
+Never edit an existing migration; the next one is V51.
 Recent ones: V38 rule columns · V39 FINANCE_ONLY rule · V40 step approvals (ALL mode) ·
 V41 project_member default · V42 role substitute · V43 opt-out seed · V44 absences ·
 V45 bordereau_version.source_document_id / source_revision · V46 two-level folder tree
@@ -33,7 +33,9 @@ V48 ticket types (type/category/origin/location_text/ouvrage_id/responsible_part
 resolution_note/closed_at/closed_by/cancel_reason; type-conditional status check;
 indexes on org+project+type+status, org+assignee+status, org+due_at) ·
 V49 ticket_attachment (photos: ticket_id/document_id/phase BEFORE|AFTER|OTHER,
-unique(ticket_id, document_id), on delete cascade, index org+ticket).
+unique(ticket_id, document_id), on delete cascade, index org+ticket) ·
+V50 ticket_comment (timeline: author_id/kind COMMENT|STATUS_CHANGE|SYSTEM/body/from_status/to_status;
+index org+ticket+created_at).
 
 Key behaviours to remember:
 - A rule is enabled on a chantier unless `project_process_template.enabled = false` (opt-out).

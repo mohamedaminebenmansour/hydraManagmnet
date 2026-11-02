@@ -108,6 +108,7 @@ public class TicketController {
     public ResponseEntity<?> setStatus(@PathVariable UUID id,
                                        @RequestParam String status,
                                        Authentication auth) {
+        service.assertVisaForSetStatus(auth, id);
         return ResponseEntity.ok(service.setStatus(auth, id, status));
     }
 
@@ -198,5 +199,61 @@ public class TicketController {
     public TicketService.TicketSummary summary(Authentication auth,
                                                @RequestParam(required = false) UUID projectId) {
         return service.summary(auth, projectId);
+    }
+
+    // ── signalement actions (PROBLEME / RESERVE / DEMANDE) + timeline ──
+
+    public record ResolveBody(String note) {}
+    public record ReopenBody(String comment) {}
+    public record CancelBody(String reason) {}
+    public record CommentBody(String body) {}
+
+    @PostMapping("/{id}/start")
+    @PreAuthorize("hasAuthority('PERM_TICKET_WRITE')")
+    public TicketResponse start(@PathVariable UUID id, Authentication auth) {
+        return service.start(auth, id);
+    }
+
+    @PostMapping("/{id}/resolve")
+    @PreAuthorize("hasAuthority('PERM_TICKET_WRITE')")
+    public TicketResponse resolve(@PathVariable UUID id, @RequestBody ResolveBody body, Authentication auth) {
+        return service.resolve(auth, id, body == null ? null : body.note());
+    }
+
+    @PostMapping("/{id}/verify")
+    @PreAuthorize("hasAuthority('PERM_TICKET_WRITE')")
+    public TicketResponse verify(@PathVariable UUID id, Authentication auth) {
+        return service.verify(auth, id);
+    }
+
+    @PostMapping("/{id}/reopen")
+    @PreAuthorize("hasAuthority('PERM_TICKET_WRITE')")
+    public TicketResponse reopen(@PathVariable UUID id, @RequestBody ReopenBody body, Authentication auth) {
+        return service.reopen(auth, id, body == null ? null : body.comment());
+    }
+
+    @PostMapping("/{id}/cancel")
+    @PreAuthorize("hasAuthority('PERM_TICKET_WRITE')")
+    public TicketResponse cancel(@PathVariable UUID id, @RequestBody CancelBody body, Authentication auth) {
+        return service.cancel(auth, id, body == null ? null : body.reason());
+    }
+
+    /** Action codes the current user may do now (buttons the frontend shows). */
+    @GetMapping("/{id}/actions")
+    @PreAuthorize("hasAuthority('PERM_TICKET_READ')")
+    public List<String> actions(@PathVariable UUID id, Authentication auth) {
+        return service.actions(auth, id);
+    }
+
+    @PostMapping("/{id}/comments")
+    @PreAuthorize("hasAuthority('PERM_TICKET_READ')")
+    public TicketService.CommentResponse addComment(@PathVariable UUID id, @RequestBody CommentBody body, Authentication auth) {
+        return service.addComment(auth, id, body == null ? null : body.body());
+    }
+
+    @GetMapping("/{id}/timeline")
+    @PreAuthorize("hasAuthority('PERM_TICKET_READ')")
+    public List<TicketService.TimelineEntry> timeline(@PathVariable UUID id, Authentication auth) {
+        return service.timeline(auth, id);
     }
 }

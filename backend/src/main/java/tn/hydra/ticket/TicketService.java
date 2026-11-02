@@ -2,6 +2,7 @@ package tn.hydra.ticket;
 
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.security.access.AccessDeniedException;
 import org.springframework.security.core.Authentication;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -166,6 +167,7 @@ public class TicketService {
 
         audit.log("TICKET_CREATED", "ticket", id,
                 "{\"title\":\"" + jsonEscape(title.trim()) + "\"}");
+        insertComment(me.getOrgId(), id, me.getId(), "SYSTEM", "Signalement créé", null, null);
         return reload(id, me.getOrgId());
     }
 
@@ -251,6 +253,7 @@ public class TicketService {
         if (domainEvents != null)
             domainEvents.publish(me.getOrgId(), EventType.TICKET_CREATED, "TICKET", id, projectId,
                     DomainEventService.payload("type", t.name(), "projectId", projectId));
+        insertComment(me.getOrgId(), id, me.getId(), "SYSTEM", "Signalement créé", null, null);
         return reload(id, me.getOrgId());
     }
 
@@ -342,7 +345,20 @@ public class TicketService {
         }
         audit.log("TICKET_STATUS_CHANGED", "ticket", id,
                 "{\"from\":\"" + current + "\",\"to\":\"" + target.name() + "\"}");
+        insertComment(me.getOrgId(), id, me.getId(), "STATUS_CHANGE", null, current.name(), target.name());
+        if (domainEvents != null)
+            domainEvents.publish(me.getOrgId(), EventType.TICKET_STATUS_CHANGED, "TICKET", id,
+                    (UUID) t.get("project_id"),
+                    DomainEventService.payload("from", current.name(), "to", target.name()));
         return reload(id, me.getOrgId());
+    }
+
+    /** VISA-only guard for POST /{id}/status: signalements must use the named actions. */
+    public void assertVisaForSetStatus(Authentication auth, UUID id) {
+        AppUser me = users.findByEmail(auth.getName()).orElseThrow();
+        Map<String, Object> t = requireTicket(me, id);
+        if (TicketType.from((String) t.get("type")) != TicketType.VISA_DOCUMENT)
+            throw new BusinessRuleException("USE_ACTIONS", "Utilisez les actions du signalement");
     }
 
     /** Possible next statuses for the UI (empty when terminal). */
@@ -565,12 +581,277 @@ public class TicketService {
     public record TicketSummary(long mine, long overdue, long toVerify, long open, long inProgress,
                                 Map<String, Long> byType) {}
 
+    // ══════════════════ 10. ACTIONS (start / resolve / verify / reopen / cancel) ══════════════════
+
+    /**
+     * Named actions for PROBLEME / RESERVE / DEMANDE. Each is one transaction:
+     * status change + one STATUS_CHANGE row in ticket_comment (body = note/comment/reason)
+     * + a TICKET_STATUS_CHANGED domain event. Role rules:
+     * <ul>
+     *   <li>start, resolve — assignee, or creator if no assignee.</li>
+     *   <li>verify, reopen, cancel — creator, owner, or project manager (ADMIN/MANAGER).</li>
+     * </ul>
+     * resolve requires a note ≥ 5 chars (saved in resolution_note) and, for RESERVE, ≥ 1 AFTER photo.
+     * reopen and cancel require a comment/reason ≥ 5 chars. verify for a RESERVE requires the
+     * verifier to differ from the resolver.
+     */
+    @Transactional
+    public TicketResponse start(Authentication auth, UUID id) {
+        AppUser me = users.findByEmail(auth.getName()).orElseThrow();
+        Map<String, Object> t = requireTicket(me, id);
+        TicketType type = TicketType.from((String) t.get("type"));
+        requireSignalement(type);
+        TicketStatus current = TicketStatus.from((String) t.get("status"));
+        TicketStatus target = TicketWorkflow.targetForAction("START", type, current);
+        if (target == null) throw new BusinessRuleException("INVALID_ACTION", "Action impossible depuis cet état");
+        requireAssigneeOrCreator(me, t);
+        return applyTransition(me, id, (UUID) t.get("project_id"), current, target, null);
+    }
+
+    @Transactional
+    public TicketResponse resolve(Authentication auth, UUID id, String note) {
+        AppUser me = users.findByEmail(auth.getName()).orElseThrow();
+        Map<String, Object> t = requireTicket(me, id);
+        TicketType type = TicketType.from((String) t.get("type"));
+        requireSignalement(type);
+        TicketStatus current = TicketStatus.from((String) t.get("status"));
+        TicketStatus target = TicketWorkflow.targetForAction("RESOLVE", type, current);
+        if (target == null) throw new BusinessRuleException("INVALID_ACTION", "Action impossible depuis cet état");
+        requireAssigneeOrCreator(me, t);
+        String norm = requireBody(note, 5, "La note de résolution doit faire au moins 5 caractères");
+        if (type == TicketType.RESERVE) requireAfterPhoto(me, id);
+        return applyTransition(me, id, (UUID) t.get("project_id"), current, target, norm);
+    }
+
+    @Transactional
+    public TicketResponse verify(Authentication auth, UUID id) {
+        AppUser me = users.findByEmail(auth.getName()).orElseThrow();
+        Map<String, Object> t = requireTicket(me, id);
+        TicketType type = TicketType.from((String) t.get("type"));
+        requireSignalement(type);
+        TicketStatus current = TicketStatus.from((String) t.get("status"));
+        TicketStatus target = TicketWorkflow.targetForAction("VERIFY", type, current);
+        if (target == null) throw new BusinessRuleException("INVALID_ACTION", "Action impossible depuis cet état");
+        requireCreatorOwnerOrManager(me, t);
+        if (type == TicketType.RESERVE && me.getId().equals(t.get("resolved_by")))
+            throw new AccessDeniedException("La personne qui a résolu ne peut pas vérifier cette réserve");
+        return applyTransition(me, id, (UUID) t.get("project_id"), current, target, null);
+    }
+
+    @Transactional
+    public TicketResponse reopen(Authentication auth, UUID id, String comment) {
+        AppUser me = users.findByEmail(auth.getName()).orElseThrow();
+        Map<String, Object> t = requireTicket(me, id);
+        TicketType type = TicketType.from((String) t.get("type"));
+        requireSignalement(type);
+        TicketStatus current = TicketStatus.from((String) t.get("status"));
+        TicketStatus target = TicketWorkflow.targetForAction("REOPEN", type, current);
+        if (target == null) throw new BusinessRuleException("INVALID_ACTION", "Action impossible depuis cet état");
+        requireCreatorOwnerOrManager(me, t);
+        String norm = requireBody(comment, 5, "Le commentaire de réouverture doit faire au moins 5 caractères");
+        return applyTransition(me, id, (UUID) t.get("project_id"), current, target, norm);
+    }
+
+    @Transactional
+    public TicketResponse cancel(Authentication auth, UUID id, String reason) {
+        AppUser me = users.findByEmail(auth.getName()).orElseThrow();
+        Map<String, Object> t = requireTicket(me, id);
+        TicketType type = TicketType.from((String) t.get("type"));
+        requireSignalement(type);
+        TicketStatus current = TicketStatus.from((String) t.get("status"));
+        TicketStatus target = TicketWorkflow.targetForAction("CANCEL", type, current);
+        if (target == null) throw new BusinessRuleException("INVALID_ACTION", "Action impossible depuis cet état");
+        requireCreatorOwnerOrManager(me, t);
+        String norm = requireBody(reason, 5, "Le motif d'annulation doit faire au moins 5 caractères");
+        return applyTransition(me, id, (UUID) t.get("project_id"), current, target, norm);
+    }
+
+    /**
+     * Action codes the current user may do now. For PROBLEME/RESERVE/DEMANDE:
+     * START, RESOLVE, VERIFY, REOPEN, CANCEL (filtered by status + role) + COMMENT + ADD_PHOTO.
+     * For VISA_DOCUMENT: the allowed next status codes (as today's /transitions).
+     */
+    public List<String> actions(Authentication auth, UUID id) {
+        AppUser me = users.findByEmail(auth.getName()).orElseThrow();
+        Map<String, Object> t = requireTicket(me, id);
+        TicketType type = TicketType.from((String) t.get("type"));
+        TicketStatus current = TicketStatus.from((String) t.get("status"));
+        if (type == TicketType.VISA_DOCUMENT)
+            return TicketWorkflow.next(type, current).stream().map(Enum::name).sorted().toList();
+        List<String> out = new ArrayList<>();
+        if (TicketWorkflow.targetForAction("START", type, current) != null && canAssigneeOrCreator(me, t)) out.add("START");
+        if (TicketWorkflow.targetForAction("RESOLVE", type, current) != null && canAssigneeOrCreator(me, t)) out.add("RESOLVE");
+        if (TicketWorkflow.targetForAction("VERIFY", type, current) != null && canCreatorOwnerOrManager(me, t)
+                && !(type == TicketType.RESERVE && me.getId().equals(t.get("resolved_by")))) out.add("VERIFY");
+        if (TicketWorkflow.targetForAction("REOPEN", type, current) != null && canCreatorOwnerOrManager(me, t)) out.add("REOPEN");
+        if (TicketWorkflow.targetForAction("CANCEL", type, current) != null && canCreatorOwnerOrManager(me, t)) out.add("CANCEL");
+        out.add("COMMENT");
+        if (!Set.of(TicketStatus.CLOSED, TicketStatus.CANCELLED, TicketStatus.AS_BUILT).contains(current)) out.add("ADD_PHOTO");
+        return out;
+    }
+
+    // ══════════════════ 11. COMMENTS + TIMELINE ══════════════════
+
+    public record CommentResponse(UUID id, String body, UUID authorId, String authorName, Instant createdAt) {}
+
+    public record TimelineEntry(UUID id, String kind, String body, UUID authorId, String authorName,
+                                String authorRole, String fromStatus, String toStatus,
+                                String fromStatusLabel, String toStatusLabel, Instant createdAt) {}
+
+    @Transactional
+    public CommentResponse addComment(Authentication auth, UUID id, String body) {
+        AppUser me = users.findByEmail(auth.getName()).orElseThrow();
+        Map<String, Object> t = requireTicket(me, id);
+        requireReadAccess(me, t);
+        if (body == null || body.isBlank() || body.length() > 2000)
+            throw new BusinessRuleException("INVALID_COMMENT", "Le commentaire doit faire entre 1 et 2000 caractères");
+        String norm = body.trim();
+        Map<String, Object> row = jdbc.queryForMap("""
+                insert into ticket_comment (org_id, ticket_id, author_id, kind, body, created_at)
+                values (?, ?, ?, 'COMMENT', ?, clock_timestamp()) returning id, created_at
+                """, me.getOrgId(), id, me.getId(), norm);
+        return new CommentResponse((UUID) row.get("id"), norm, me.getId(), me.getFullName(),
+                toInstant(row.get("created_at")));
+    }
+
+    public List<TimelineEntry> timeline(Authentication auth, UUID id) {
+        AppUser me = users.findByEmail(auth.getName()).orElseThrow();
+        Map<String, Object> t = requireTicket(me, id);
+        requireReadAccess(me, t);
+        return jdbc.queryForList("""
+                select tc.id, tc.kind, tc.body, tc.author_id, u.full_name as author_name,
+                       (select r.code from user_role ur join role r on r.id = ur.role_id
+                         where ur.user_id = tc.author_id order by r.code limit 1) as author_role,
+                       tc.from_status, tc.to_status, tc.created_at
+                from ticket_comment tc
+                left join app_user u on u.id = tc.author_id
+                where tc.ticket_id = ? and tc.org_id = ?
+                order by tc.created_at, tc.id
+                """, id, me.getOrgId()).stream().map(TicketService::toTimelineEntry).toList();
+    }
+
+    // ── action helpers ───────────────────────────────────────────────────
+
+    private TicketResponse applyTransition(AppUser me, UUID id, UUID projectId,
+                                           TicketStatus current, TicketStatus target, String body) {
+        if (target == TicketStatus.RESOLVED) {
+            jdbc.update("""
+                    update ticket set status = ?, resolved_at = now(), resolved_by = ?,
+                                      resolution_note = ?, updated_at = now()
+                    where id = ? and org_id = ?
+                    """, target.name(), me.getId(), body, id, me.getOrgId());
+        } else if (target == TicketStatus.CLOSED) {
+            jdbc.update("""
+                    update ticket set status = ?, closed_at = now(), closed_by = ?, updated_at = now()
+                    where id = ? and org_id = ?
+                    """, target.name(), me.getId(), id, me.getOrgId());
+        } else {
+            jdbc.update("""
+                    update ticket set status = ?, updated_at = now()
+                    where id = ? and org_id = ?
+                    """, target.name(), id, me.getOrgId());
+        }
+        insertComment(me.getOrgId(), id, me.getId(), "STATUS_CHANGE", body, current.name(), target.name());
+        audit.log("TICKET_STATUS_CHANGED", "ticket", id, null);
+        if (domainEvents != null)
+            domainEvents.publish(me.getOrgId(), EventType.TICKET_STATUS_CHANGED, "TICKET", id, projectId,
+                    DomainEventService.payload("from", current.name(), "to", target.name()));
+        return reload(id, me.getOrgId());
+    }
+
+    private void insertComment(UUID orgId, UUID ticketId, UUID authorId, String kind,
+                               String body, String fromStatus, String toStatus) {
+        jdbc.update("""
+                insert into ticket_comment (org_id, ticket_id, author_id, kind, body, from_status, to_status, created_at)
+                values (?, ?, ?, ?, ?, ?, ?, clock_timestamp())
+                """, orgId, ticketId, authorId, kind, body, fromStatus, toStatus);
+    }
+
+    private void requireSignalement(TicketType type) {
+        if (type == TicketType.VISA_DOCUMENT)
+            throw new BusinessRuleException("USE_ACTIONS", "Utilisez les actions du signalement");
+    }
+
+    private String requireBody(String body, int minLen, String message) {
+        if (body == null || body.trim().length() < minLen)
+            throw new BusinessRuleException("REQUIRED_FIELDS", message);
+        return body.trim();
+    }
+
+    private void requireAfterPhoto(AppUser me, UUID id) {
+        Integer cnt = jdbc.queryForObject(
+                "select count(*) from ticket_attachment where ticket_id = ? and org_id = ? and phase = 'AFTER'",
+                Integer.class, id, me.getOrgId());
+        if (cnt == null || cnt == 0)
+            throw new BusinessRuleException("AFTER_PHOTO_REQUIRED", "Ajoutez au moins une photo après travaux");
+    }
+
+    private void requireAssigneeOrCreator(AppUser me, Map<String, Object> t) {
+        UUID assignedTo = (UUID) t.get("assigned_to");
+        if (assignedTo != null) {
+            if (!me.getId().equals(assignedTo))
+                throw new AccessDeniedException("Seul le responsable peut effectuer cette action");
+        } else if (!me.getId().equals(t.get("created_by"))) {
+            throw new AccessDeniedException("Seul le créateur peut effectuer cette action");
+        }
+    }
+
+    private boolean canAssigneeOrCreator(AppUser me, Map<String, Object> t) {
+        UUID assignedTo = (UUID) t.get("assigned_to");
+        if (assignedTo != null) return me.getId().equals(assignedTo);
+        return me.getId().equals(t.get("created_by"));
+    }
+
+    private void requireCreatorOwnerOrManager(AppUser me, Map<String, Object> t) {
+        if (!canCreatorOwnerOrManager(me, t))
+            throw new AccessDeniedException("Action non autorisée");
+    }
+
+    private boolean canCreatorOwnerOrManager(AppUser me, Map<String, Object> t) {
+        if (Boolean.TRUE.equals(me.getIsOwner())) return true;
+        if (me.getId().equals(t.get("created_by"))) return true;
+        UUID projectId = (UUID) t.get("project_id");
+        if (projectId == null) return false;
+        Integer cnt = jdbc.queryForObject(
+                "select count(*) from project_member where project_id = ? and user_id = ? and project_role in ('ADMIN','MANAGER')",
+                Integer.class, projectId, me.getId());
+        return cnt != null && cnt > 0;
+    }
+
+    private void requireReadAccess(AppUser me, Map<String, Object> t) {
+        if (Boolean.TRUE.equals(me.getIsOwner())) return;
+        UUID projectId = (UUID) t.get("project_id");
+        if (projectId == null) return;
+        Integer cnt = jdbc.queryForObject(
+                "select count(*) from project_member where project_id = ? and user_id = ?",
+                Integer.class, projectId, me.getId());
+        if (cnt == null || cnt == 0)
+            throw new AccessDeniedException("Accès non autorisé à ce signalement");
+    }
+
+    private static TimelineEntry toTimelineEntry(Map<String, Object> r) {
+        String from = (String) r.get("from_status");
+        String to = (String) r.get("to_status");
+        return new TimelineEntry(
+                (UUID) r.get("id"),
+                (String) r.get("kind"),
+                (String) r.get("body"),
+                (UUID) r.get("author_id"),
+                (String) r.get("author_name"),
+                (String) r.get("author_role"),
+                from,
+                to,
+                from == null ? null : TicketStatus.from(from).label(),
+                to == null ? null : TicketStatus.from(to).label(),
+                toInstant(r.get("created_at")));
+    }
+
     // ══════════════════ VALIDATION HELPERS ══════════════════
 
     /** Same-org ticket row or ResourceNotFoundException(TICKET_NOT_FOUND → 404 JSON). */
     private Map<String, Object> requireTicket(AppUser me, UUID id) {
         List<Map<String, Object>> rows = jdbc.queryForList(
-                "select id, title, status, type, project_id, assigned_to from ticket where id = ? and org_id = ?",
+                "select id, title, status, type, project_id, assigned_to, created_by, resolved_by from ticket where id = ? and org_id = ?",
                 id, me.getOrgId());
         if (rows.isEmpty())
             throw new ResourceNotFoundException("TICKET_NOT_FOUND", "Ticket introuvable");
