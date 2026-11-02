@@ -282,4 +282,29 @@ class TicketActionsTest {
         assertThat(status(id)).isEqualTo("OPEN");
         assertThat(timelineKinds(id)).containsExactly("SYSTEM");
     }
+
+    // ── T8 new tests ────────────────────────────────────────────────────
+
+    @Test
+    void summary_mine_countsResolvedICreated() {
+        UUID id = createProbleme("Sig résolu", assigneeId);
+        service.start(assignee, id);
+        service.resolve(assignee, id, "Résolu par assignee");
+        SecurityContextHolder.getContext().setAuthentication(creator);
+        TicketService.TicketSummary s = service.summary(creator, projectId);
+        assertThat(s.mine()).isPositive();
+    }
+
+    @Test
+    void summary_toVerify_forManager_notForResolver() {
+        UUID id = createReserve("Réserve toVerify", assigneeId);
+        photos.addPhoto(owner, id, jpeg(), "AFTER");
+        service.start(assignee, id);
+        service.resolve(assignee, id, "Reprise faite");
+
+        // manager should see it in toVerify
+        SecurityContextHolder.getContext().setAuthentication(manager);
+        TicketService.TicketSummary managerSummary = service.summary(manager, projectId);
+        assertThat(managerSummary.toVerify()).isPositive();
+    }
 }

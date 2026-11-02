@@ -547,11 +547,22 @@ public class TicketService {
             }
         }
 
-        long mineCount = count(scope + " and t.assigned_to = ?", append(scopeArgs, me.getId()));
+        long mineCount = count(scope + " and (t.assigned_to = ? or (t.status = 'RESOLVED' and t.created_by = ?))", append(append(scopeArgs, me.getId()), me.getId()));
         long overdueCount = count(scope + " and t.due_at is not null and t.due_at < current_date and t.status <> 'AS_BUILT'", scopeArgs);
-        long toVerify = Boolean.TRUE.equals(me.getIsOwner())
-                ? count(scope + " and t.status = 'RESOLVED'", scopeArgs)
-                : count(scope + " and t.status = 'RESOLVED' and t.created_by = ?", append(scopeArgs, me.getId()));
+        // toVerify = RESOLVED tickets I may close (creator, owner, or project manager),
+        // excluding a RESERVE I resolved myself (maker-checker).
+        String toVerifyBase = scope + " and t.status = 'RESOLVED'"
+                + " and (t.type <> 'RESERVE' or t.resolved_by is null or t.resolved_by <> ?)";
+        long toVerify;
+        if (Boolean.TRUE.equals(me.getIsOwner())) {
+            toVerify = count(toVerifyBase, append(scopeArgs, me.getId()));
+        } else {
+            toVerify = count(toVerifyBase
+                    + " and (t.created_by = ? or exists (select 1 from project_member pm"
+                    + " where pm.project_id = t.project_id and pm.user_id = ?"
+                    + " and pm.project_role in ('ADMIN','MANAGER')))",
+                    append(append(append(scopeArgs, me.getId()), me.getId()), me.getId()));
+        }
         long openCount = count(scope + " and t.status = 'OPEN'", scopeArgs);
         long inProgressCount = count(scope + " and t.status = 'IN_PROGRESS'", scopeArgs);
         Map<String, Long> byType = new LinkedHashMap<>();
@@ -818,15 +829,20 @@ public class TicketService {
         return cnt != null && cnt > 0;
     }
 
-    private void requireReadAccess(AppUser me, Map<String, Object> t) {
+    /** Reusable project-access check: owner or project_member. Package-private so TicketPhotoService can call it. */
+    void requireProjectAccess(AppUser me, UUID projectId) {
         if (Boolean.TRUE.equals(me.getIsOwner())) return;
-        UUID projectId = (UUID) t.get("project_id");
         if (projectId == null) return;
         Integer cnt = jdbc.queryForObject(
                 "select count(*) from project_member where project_id = ? and user_id = ?",
                 Integer.class, projectId, me.getId());
         if (cnt == null || cnt == 0)
-            throw new AccessDeniedException("Accès non autorisé à ce signalement");
+            throw new AccessDeniedException("Accès non autorisé à ce projet");
+    }
+
+    /** Reusable read-access check: owner or project_member of the ticket's project. */
+    void requireReadAccess(AppUser me, Map<String, Object> t) {
+        requireProjectAccess(me, (UUID) t.get("project_id"));
     }
 
     private static TimelineEntry toTimelineEntry(Map<String, Object> r) {

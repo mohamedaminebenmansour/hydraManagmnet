@@ -49,6 +49,8 @@ OPEN → IN_PROGRESS → RESOLVED → CLOSED
 
 Title format: « <type label> — <ticket title> — avant|après|autre ».
 
+**Access (T8 fix)**: photos are stored via `DocumentService.uploadSystemFiled` (skips folder ACL — the right to attach comes from the ticket, not the folder). Photo endpoints (`addPhoto`, `listPhotos`, `deletePhoto`) check project membership (owner or project_member). `addPhoto` refuses on CLOSED/CANCELLED/AS_BUILT. `createWithPhotos` checks project access for the target project.
+
 ## Endpoints
 
 ### Catalog

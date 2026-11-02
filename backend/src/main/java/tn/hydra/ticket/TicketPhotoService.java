@@ -86,6 +86,10 @@ public class TicketPhotoService {
             for (MultipartFile f : photos) validatePhoto(f);
         }
 
+        // check project access before creating
+        AppUser me = users.findByEmail(auth.getName()).orElseThrow();
+        tickets.requireProjectAccess(me, projectId);
+
         // create the ticket (also publishes the TICKET_CREATED domain event)
         TicketService.TicketResponse t = tickets.create(auth, title, description, projectId,
                 assignedToId, priority, startAt, dueAt, documentId,
@@ -107,7 +111,12 @@ public class TicketPhotoService {
         AppUser me = users.findByEmail(auth.getName()).orElseThrow();
         validatePhoto(file);
         String phaseNorm = normalizePhase(phase);
-        requireTicketExists(me, ticketId);
+        Map<String, Object> t = requireTicketRow(me, ticketId);
+        tickets.requireReadAccess(me, t);
+        String status = (String) t.get("status");
+        if ("CLOSED".equals(status) || "CANCELLED".equals(status) || "AS_BUILT".equals(status))
+            throw new BusinessRuleException("TICKET_CLOSED",
+                    "Impossible d'ajouter une photo à un signalement clos ou annulé");
 
         Integer existing = jdbc.queryForObject(
                 "select count(*) from ticket_attachment where ticket_id = ? and org_id = ?",
@@ -116,9 +125,6 @@ public class TicketPhotoService {
         if (existing + 1 > MAX_PHOTOS)
             throw new BusinessRuleException("TOO_MANY_PHOTOS", "10 photos maximum par signalement");
 
-        Map<String, Object> t = jdbc.queryForList(
-                "select project_id, type, title from ticket where id = ? and org_id = ?",
-                ticketId, me.getOrgId()).stream().findFirst().orElseThrow();
         UUID projectId = (UUID) t.get("project_id");
         String typeCode = (String) t.get("type");
         String ticketTitle = (String) t.get("title");
@@ -129,7 +135,8 @@ public class TicketPhotoService {
 
     public List<PhotoResponse> listPhotos(Authentication auth, UUID ticketId) {
         AppUser me = users.findByEmail(auth.getName()).orElseThrow();
-        requireTicketExists(me, ticketId);
+        Map<String, Object> t = requireTicketRow(me, ticketId);
+        tickets.requireReadAccess(me, t);
         return jdbc.queryForList("""
                 select ta.id, ta.document_id, ta.phase, d.title, ta.created_by, ta.created_at,
                        dr.id as revision_id
@@ -148,6 +155,8 @@ public class TicketPhotoService {
     @Transactional
     public void deletePhoto(Authentication auth, UUID ticketId, UUID attachmentId) {
         AppUser me = users.findByEmail(auth.getName()).orElseThrow();
+        Map<String, Object> t = requireTicketRow(me, ticketId);
+        tickets.requireReadAccess(me, t);
         Map<String, Object> att = requireAttachment(me, ticketId, attachmentId);
         if (!me.getId().equals(att.get("created_by")))
             throw new AccessDeniedException("Seul l'auteur de la photo peut la supprimer");
@@ -168,8 +177,8 @@ public class TicketPhotoService {
         TicketType t = TicketType.from(typeCode);
         UUID folderId = folderFiling.folderFor(projectId, folderCodeFor(t));
         String title = t.label() + " — " + (ticketTitle == null ? "" : ticketTitle) + " — " + phaseLabel(phase);
-        DocumentResponse doc = documents.upload(auth, folderId, title, DocType.PHOTO,
-                null, ticketId, null, null, file);
+        DocumentResponse doc = documents.uploadSystemFiled(auth, folderId, title, DocType.PHOTO,
+                ticketId, file);
         em.flush(); // make the revision row visible to the JDBC read below
 
         List<Map<String, Object>> revs = jdbc.queryForList(
@@ -242,11 +251,13 @@ public class TicketPhotoService {
         });
     }
 
-    private void requireTicketExists(AppUser me, UUID ticketId) {
-        Integer c = jdbc.queryForObject(
-                "select count(*) from ticket where id = ? and org_id = ?", Integer.class, ticketId, me.getOrgId());
-        if (c == null || c == 0)
+    private Map<String, Object> requireTicketRow(AppUser me, UUID ticketId) {
+        List<Map<String, Object>> rows = jdbc.queryForList(
+                "select project_id, type, title, status from ticket where id = ? and org_id = ?",
+                ticketId, me.getOrgId());
+        if (rows.isEmpty())
             throw new ResourceNotFoundException("TICKET_NOT_FOUND", "Ticket introuvable");
+        return rows.get(0);
     }
 
     private Map<String, Object> requireAttachment(AppUser me, UUID ticketId, UUID attachmentId) {

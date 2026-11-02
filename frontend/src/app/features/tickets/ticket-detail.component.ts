@@ -157,10 +157,13 @@ export class TicketDetailComponent implements OnInit {
   async confirmResolve(): Promise<void> {
     if (!this.ticketId || this.resolveNote().trim().length < 5) { return; }
     this.sending.set(true);
-    // upload after photos first
-    for (const p of this.resolveAfterPhotos()) {
+    // upload after photos first, removing each from the list after success (so retry doesn't re-upload)
+    const toUpload = [...this.resolveAfterPhotos()];
+    for (const p of toUpload) {
       try {
         await this.ticketService.addPhoto(this.ticketId, p.file, 'AFTER').toPromise();
+        this.resolveAfterPhotos.update(arr => arr.filter(x => x.url !== p.url));
+        this.ticketService.photos(this.ticketId!).subscribe({ next: p2 => this.photos.set(p2 ?? []), error: () => {} });
       } catch {
         this.sending.set(false);
         this.msgs.add({ severity: 'error', summary: 'Erreur', detail: 'Upload de la photo échoué' });

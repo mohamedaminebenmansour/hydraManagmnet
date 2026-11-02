@@ -284,4 +284,60 @@ class TicketPhotoTest {
         return tickets.create(auth, title, "Desc", projectId, null, null, null, null, null,
                 type, category, null, null, null, null).id();
     }
+
+    // ── T8 new tests ────────────────────────────────────────────────────
+
+    @Test
+    void chefChantier_createsReserveWithPhoto_andResolvesWithAfterPhoto() {
+        UUID chefId = UUID.randomUUID();
+        String chefEmail = "photo.chef." + chefId + "@hydra.test";
+        jdbc.update("insert into app_user (id, org_id, email, password_hash, full_name, is_owner, is_active) values (?, ?, ?, ?, ?, false, true)",
+                chefId, orgId, chefEmail, "hash", "Chef Chantier");
+        jdbc.update("insert into project_member (project_id, user_id, project_role) values (?, ?, 'ENGINEER')", projectId, chefId);
+        Authentication chefAuth = new UsernamePasswordAuthenticationToken(chefEmail, null, List.of(
+                new SimpleGrantedAuthority("PERM_TICKET_READ"), new SimpleGrantedAuthority("PERM_TICKET_WRITE"),
+                new SimpleGrantedAuthority("PERM_DOCUMENT_UPLOAD")));
+        SecurityContextHolder.getContext().setAuthentication(chefAuth);
+
+        TicketService.TicketResponse t = photoService.createWithPhotos(chefAuth,
+                "Réserve garde-corps", "Desc", projectId, chefId, null, null, null, null,
+                "RESERVE", "MALFACON", null, null, null, null,
+                List.of(jpeg("before.jpg")));
+        assertThat(t.id()).isNotNull();
+        assertThat(t.type()).isEqualTo("RESERVE");
+
+        tickets.start(chefAuth, t.id());
+        photoService.addPhoto(chefAuth, t.id(), jpeg("after.jpg"), "AFTER");
+        tickets.resolve(chefAuth, t.id(), "Reprise faite et contrôlée");
+        assertThat(jdbc.queryForObject("select status from ticket where id = ?", String.class, t.id())).isEqualTo("RESOLVED");
+        SecurityContextHolder.clearContext();
+    }
+
+    @Test
+    void nonMember_addPhotoAndListPhotos_forbidden() {
+        UUID nmId = UUID.randomUUID();
+        String nmEmail = "photo.nm." + nmId + "@hydra.test";
+        jdbc.update("insert into app_user (id, org_id, email, password_hash, full_name, is_owner, is_active) values (?, ?, ?, ?, ?, false, true)",
+                nmId, orgId, nmEmail, "hash", "Non Member");
+        Authentication nmAuth = new UsernamePasswordAuthenticationToken(nmEmail, null, List.of(
+                new SimpleGrantedAuthority("PERM_TICKET_READ"), new SimpleGrantedAuthority("PERM_TICKET_WRITE")));
+
+        UUID id = createTicket("Test", LocalDate.now().plusDays(2), null);
+        assertThatThrownBy(() -> photoService.addPhoto(nmAuth, id, jpeg("p.jpg"), "BEFORE"))
+                .isInstanceOf(AccessDeniedException.class);
+        assertThatThrownBy(() -> photoService.listPhotos(nmAuth, id))
+                .isInstanceOf(AccessDeniedException.class);
+    }
+
+    @Test
+    void addPhoto_onClosedTicket_rejected() {
+        UUID id = createTicketWithType("Sig closed", "PROBLEME", "METEO");
+        tickets.start(auth, id);
+        tickets.resolve(auth, id, "Résolu");
+        tickets.verify(auth, id);
+        assertThat(jdbc.queryForObject("select status from ticket where id = ?", String.class, id)).isEqualTo("CLOSED");
+        assertThatThrownBy(() -> photoService.addPhoto(auth, id, jpeg("p.jpg"), "BEFORE"))
+                .isInstanceOf(BusinessRuleException.class)
+                .hasMessageContaining("clos ou annulé");
+    }
 }
