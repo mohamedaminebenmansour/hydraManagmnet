@@ -5,20 +5,51 @@
 - **Process** = multi-step approval when required.
 - They are separate concepts. A ticket CAN have a linked process instance, but doesn't have to.
 
-## Schema (existing, no new migration)
-- `ticket` table (V1 + V6 + V7 + V13): id, title, description, status, project_id, assigned_to, priority, start_at, due_at, document_id
-- Status values: `DRAFT | IN_REVIEW | APPROVED | IFC | AS_BUILT` (V13 engineering transmittal workflow)
+## Schema
+- `ticket` table (V1 + V6 + V7 + V13 + **V48**): id, title, description, status, project_id, assigned_to, priority, start_at, due_at, document_id, plus the V48 signalement columns: `type`, `category`, `origin`, `location_text`, `ouvrage_id` (→ ouvrage), `responsible_party_id` (→ party), `resolution_note`, `closed_at`, `closed_by`, `cancel_reason`.
+- `type` ∈ `PROBLEME | RESERVE | DEMANDE | VISA_DOCUMENT` (not null, default `VISA_DOCUMENT`).
+- `origin` ∈ `CLIENT | INTERNE`, only meaningful for RESERVE (default `INTERNE`); null for the other types.
+- Status check is **type-conditional** (V48 replaces the old `ticket_status_check`):
+  - VISA_DOCUMENT → `DRAFT | IN_REVIEW | APPROVED | IFC | AS_BUILT`
+  - PROBLEME / RESERVE / DEMANDE → `OPEN | IN_PROGRESS | RESOLVED | CLOSED | CANCELLED`
+- Indexes (V48): `(org_id, project_id, type, status)`, `(org_id, assigned_to, status)`, `(org_id, due_at)`.
 - Process instance can link to a ticket via `subjectType=TICKET, subjectId=ticketId`
 
-## APIs (existing)
-- `GET /api/tickets?projectId=&assignedToId=&status=` — list
-- `GET /api/tickets/{id}` — detail
-- `POST /api/tickets` — create { title, description, projectId, assignedToId, priority, startAt, dueAt, documentId }
+## Types and lifecycle (V48)
+
+A ticket has a **type** (default `VISA_DOCUMENT`):
+
+| Type | Label (FR) | Icon | Colour | Default delay | « après » photo to resolve |
+|------|-----------|------|--------|---------------|----------------------------|
+| PROBLEME | Problème chantier | pi-exclamation-triangle | #ea580c | 2 days | no |
+| RESERVE | Réserve / non-conformité | pi-flag | #dc2626 | 15 days | yes |
+| DEMANDE | Demande | pi-question-circle | #2563eb | 3 days | no |
+| VISA_DOCUMENT | Visa de document | pi-file-check | #7c3aed | — | no |
+
+Each type owns an ordered list of **categories** (code → French label); see `TicketType` or `GET /api/tickets/catalog` for the full list. A RESERVE also carries an **origine**: `CLIENT` (visite client / maître d'ouvrage) or `INTERNE` (contrôle interne, default).
+
+**Lifecycle** — PROBLEME / RESERVE / DEMANDE share one universal graph; VISA_DOCUMENT keeps the transmittal workflow:
+```
+OPEN → IN_PROGRESS → RESOLVED → CLOSED        (VISA: DRAFT → IN_REVIEW → APPROVED → IFC → AS_BUILT)
+  ↘ CANCELLED           ↘ IN_PROGRESS (reopen)
+```
+Rules (T1 owns the graph; role/note/photo rules come in T3):
+- A create call with no type defaults to `VISA_DOCUMENT` + `DRAFT`, so old clients and old tests work unchanged.
+- Category is required for PROBLEME/RESERVE/DEMANDE (and must belong to the type); forbidden for VISA_DOCUMENT.
+- `ouvrageId` must belong to the same chantier (project + org); `responsiblePartyId` to the same org.
+- `dueAt` missing + the type has a default delay → today + default days (VISA_DOCUMENT has none).
+- **Overdue** = `due_at` before today and status not in `CLOSED | CANCELLED | AS_BUILT` (shown as a red « En retard » badge beside the status, never as a status).
+
+## APIs
+- `GET /api/tickets?projectId=&assignedTo=&status=&priority=&type=&mine=` — list (`type` filters by signalement type)
+- `GET /api/tickets/catalog` — reference catalogue: the 4 types with French label, icon, colour, default delay, requiresAfterPhoto, ordered categories, and the statuses valid per type. The frontend reads labels only from here.
+- `GET /api/tickets/{id}` — detail (response now also carries type, typeLabel, category, categoryLabel, origin, locationText, ouvrageId/ouvrageName, responsiblePartyId/responsiblePartyName, statusLabel, overdue)
+- `POST /api/tickets` — create `{ title, description, projectId, assignedToId, priority, startAt, dueAt, documentId, type, category, origin, locationText, ouvrageId, responsiblePartyId }`
 - `PUT /api/tickets/{id}` — update
-- `POST /api/tickets/{id}/status` — change status
-- `POST /api/tickets/{id}/close` — close
+- `POST /api/tickets/{id}/status` — change status (validated through `TicketWorkflow` for the ticket's type)
+- `POST /api/tickets/{id}/close` — close (VISA_DOCUMENT → AS_BUILT, as before)
 - `GET /api/tickets/{id}/documents` — linked documents
-- `GET /api/tickets/{id}/transitions` — allowed status transitions
+- `GET /api/tickets/{id}/transitions` — allowed status transitions for this ticket's type
 
 ## Process hook for TICKET (TASK 4)
 When a process instance with `subjectType=TICKET` reaches COMPLETED:

@@ -28,6 +28,17 @@ public class Ticket {
     @Column(name = "updated_at") private Instant updatedAt;
     @Column(name = "resolved_at") private Instant resolvedAt;
     @Column(name = "resolved_by") private UUID resolvedBy;
+    // Signalement fields (V48)
+    @Column(name = "type") private String type;
+    @Column(name = "category") private String category;
+    @Column(name = "origin") private String origin;
+    @Column(name = "location_text") private String locationText;
+    @Column(name = "ouvrage_id") private UUID ouvrageId;
+    @Column(name = "responsible_party_id") private UUID responsiblePartyId;
+    @Column(name = "resolution_note") private String resolutionNote;
+    @Column(name = "closed_at") private Instant closedAt;
+    @Column(name = "closed_by") private UUID closedBy;
+    @Column(name = "cancel_reason") private String cancelReason;
 
     public UUID getId() { return id; }
     public UUID getOrgId() { return orgId; }           public void setOrgId(UUID v) { orgId = v; }
@@ -47,4 +58,14 @@ public class Ticket {
     public Instant getUpdatedAt() { return updatedAt; } public void setUpdatedAt(Instant v) { updatedAt = v; }
     public Instant getResolvedAt() { return resolvedAt; } public void setResolvedAt(Instant v) { resolvedAt = v; }
     public UUID getResolvedBy() { return resolvedBy; } public void setResolvedBy(UUID v) { resolvedBy = v; }
+    public String getType() { return type; }             public void setType(String v) { type = v; }
+    public String getCategory() { return category; }     public void setCategory(String v) { category = v; }
+    public String getOrigin() { return origin; }         public void setOrigin(String v) { origin = v; }
+    public String getLocationText() { return locationText; } public void setLocationText(String v) { locationText = v; }
+    public UUID getOuvrageId() { return ouvrageId; }     public void setOuvrageId(UUID v) { ouvrageId = v; }
+    public UUID getResponsiblePartyId() { return responsiblePartyId; } public void setResponsiblePartyId(UUID v) { responsiblePartyId = v; }
+    public String getResolutionNote() { return resolutionNote; } public void setResolutionNote(String v) { resolutionNote = v; }
+    public Instant getClosedAt() { return closedAt; }    public void setClosedAt(Instant v) { closedAt = v; }
+    public UUID getClosedBy() { return closedBy; }       public void setClosedBy(UUID v) { closedBy = v; }
+    public String getCancelReason() { return cancelReason; } public void setCancelReason(String v) { cancelReason = v; }
 }

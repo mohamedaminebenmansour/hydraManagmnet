@@ -37,7 +37,9 @@ public class TicketController {
     public record CreateTicketRequest(String title, String description, UUID projectId,
                                       UUID assignedToId, String priority,
                                       LocalDate startAt, LocalDate dueAt,
-                                      UUID documentId) {}
+                                      UUID documentId,
+                                      String type, String category, String origin,
+                                      String locationText, UUID ouvrageId, UUID responsiblePartyId) {}
 
     public record UpdateTicketRequest(String title, String description, UUID projectId,
                                       UUID assignedToId, String priority,
@@ -51,8 +53,20 @@ public class TicketController {
                                      @RequestParam(required = false) UUID assignedTo,
                                      @RequestParam(required = false) String status,
                                      @RequestParam(required = false) String priority,
+                                     @RequestParam(required = false) String type,
                                      @RequestParam(required = false) Boolean mine) {
-        return service.list(auth, projectId, assignedTo, status, priority, mine);
+        return service.list(auth, projectId, assignedTo, status, priority, mine, type);
+    }
+
+    /**
+     * Reference catalogue: the four signalement types with French labels, icons,
+     * colours, default delays, après-photo requirement, ordered categories and
+     * the statuses valid per type. The frontend reads labels only from here.
+     */
+    @GetMapping("/catalog")
+    @PreAuthorize("isAuthenticated()")
+    public List<TicketService.CatalogType> catalog() {
+        return service.catalog();
     }
 
     @GetMapping("/{id}")
@@ -67,7 +81,9 @@ public class TicketController {
     @PreAuthorize("hasAuthority('PERM_TICKET_WRITE')")
     public TicketResponse create(@RequestBody CreateTicketRequest body, Authentication auth) {
         return service.create(auth, body.title(), body.description(), body.projectId(),
-                body.assignedToId(), body.priority(), body.startAt(), body.dueAt(), body.documentId());
+                body.assignedToId(), body.priority(), body.startAt(), body.dueAt(), body.documentId(),
+                body.type(), body.category(), body.origin(),
+                body.locationText(), body.ouvrageId(), body.responsiblePartyId());
     }
 
     @PutMapping("/{id}")

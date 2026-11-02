@@ -17,18 +17,21 @@ section (grep the method, then read around it).
 | `security` | `PermissionService`, `FolderAccessService`, `ToxicPairService`, `HydraUserDetailsService`, `SessionRevoker` | Permissions, folder ACL (a folder without rows inherits its parent's), segregation of duties |
 | `audit` | `EventLogService`, `AuditService`, `AuditController` | Append-only event log |
 | `event` | `DomainEventService`, `EventType`, `DomainEventController` | Domain events (table domain_event, V47): one row per business action, written in the action's transaction by `DomainEventService.publish` (payment submitted, cash posted, step completed, BC created, BL received, facture recorded, bordereau imported / activated, document uploaded). Nothing consumes them yet. `GET /api/events` (owner) feeds the "Journal des événements" page. Not the audit log |
-| `ticket` | `TicketService`, `TicketController` | Issue tracking |
+| `ticket` | `TicketService`, `TicketController`, `TicketType`, `TicketWorkflow` | Signalements: 4 types (PROBLEME/RESERVE/DEMANDE/VISA_DOCUMENT) with categories, origine (RESERVE), ouvrage/party links; universal lifecycle OPEN→IN_PROGRESS→RESOLVED→CLOSED (+CANCELLED) for the 3 new types, VISA_DOCUMENT keeps DRAFT→…→AS_BUILT. `GET /api/tickets/catalog` is the single source of labels for the UI |
 | `user`, `role`, `auth` | `UserService`, `RoleService`, `AuthController` | Users (incl. absence `absent_until`), roles, login |
 | `config` | `SecurityConfig`, `CorsConfig`, `BootstrapRunner`, `DemoDataRunner`, `DevDataSeedRunner` | Security, CORS, seeding |
 | `common`, `exception` | `GlobalExceptionHandler`, `BusinessRuleException` | Errors → HTTP |
 
-Migrations: `backend/src/main/resources/db/migration/`, last on main = **V47__domain_event.sql**.
-Never edit an existing migration; the next one is V48.
+Migrations: `backend/src/main/resources/db/migration/`, last on main = **V48__ticket_types.sql**.
+Never edit an existing migration; the next one is V49.
 Recent ones: V38 rule columns · V39 FINANCE_ONLY rule · V40 step approvals (ALL mode) ·
 V41 project_member default · V42 role substitute · V43 opt-out seed · V44 absences ·
 V45 bordereau_version.source_document_id / source_revision · V46 two-level folder tree
 (doc_folder_template.parent_code, sub-folder codes '<main>.<KEY>', 08_SST, backfill function
-`hydra_backfill_folder_tree()`, unique (project_id, code) when no duplicates) · V47 domain_event.
+`hydra_backfill_folder_tree()`, unique (project_id, code) when no duplicates) · V47 domain_event ·
+V48 ticket types (type/category/origin/location_text/ouvrage_id/responsible_party_id/
+resolution_note/closed_at/closed_by/cancel_reason; type-conditional status check;
+indexes on org+project+type+status, org+assignee+status, org+due_at).
 
 Key behaviours to remember:
 - A rule is enabled on a chantier unless `project_process_template.enabled = false` (opt-out).
