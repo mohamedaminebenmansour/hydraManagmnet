@@ -136,6 +136,37 @@ public class DocumentService {
         log.info("[DOC-UPLOAD] assertCanUpload OK isOwner={} projectId={}",
                 Boolean.TRUE.equals(me.getIsOwner()), folder.getProject().getId());
 
+        return doUploadFile(me, folder, title, docType, revision, ticketId, tagNames, description, file);
+    }
+
+    /**
+     * Only for files whose right to attach is checked by the caller (ticket photos).
+     * Runs the same code as {@link #upload} but WITHOUT folderAccess.assertAccess(UPLOAD).
+     */
+    @Transactional
+    public DocumentResponse uploadSystemFiled(Authentication auth, UUID folderId, String title,
+                                               DocType docType, UUID ticketId, MultipartFile file) {
+        AppUser me = currentUser(auth);
+        if (title == null || title.isBlank())
+            throw new BadRequestException("REQUIRED_FIELDS", "Le titre est obligatoire");
+        if (file == null || file.isEmpty())
+            throw new BadRequestException("FILE_REQUIRED", "Un fichier est requis");
+        String ext = FilenameBuilder.extension(file.getOriginalFilename());
+        if (!ALLOWED_EXTENSIONS.contains(ext.toLowerCase()))
+            throw new BadRequestException("FILE_TYPE_NOT_ALLOWED",
+                    "Type de fichier non autorisé. Formats acceptés : PDF, Word, Excel, PowerPoint, "
+                            + "images (dont photos HEIC), DWG/DXF/IFC, ZIP, TXT/CSV, e-mails .msg/.eml");
+        DocFolder folder = folders.findByIdAndProject_OrgId(folderId, me.getOrgId())
+                .orElseThrow(() -> new ResourceNotFoundException("FOLDER_NOT_FOUND", "Dossier introuvable"));
+        // NO folderAccess.assertAccess here — the right to attach comes from the ticket.
+        assertCanUpload(auth, me, folder.getProject().getId());
+        return doUploadFile(me, folder, title, docType, null, ticketId, null, null, file);
+    }
+
+    /** Shared body of upload + uploadSystemFiled: store the file + create the Document + Revision. */
+    private DocumentResponse doUploadFile(AppUser me, DocFolder folder, String title,
+                                          DocType docType, String revision, UUID ticketId,
+                                          List<String> tagNames, String description, MultipartFile file) {
         byte[] bytes;
         try {
             bytes = file.getBytes();
@@ -220,7 +251,7 @@ public class DocumentService {
         return toResponse(doc);
     }
 
-    // ── create (metadata only, no file) ───────────────────────────────────
+    // ── create (metadata only, no file) ────────────────────────────────────────────────────────────────────── ───────────────────────────────────
     @Transactional
     public DocumentResponse create(Authentication auth, UUID folderId, CreateDocumentRequest req) {
         AppUser me = currentUser(auth);

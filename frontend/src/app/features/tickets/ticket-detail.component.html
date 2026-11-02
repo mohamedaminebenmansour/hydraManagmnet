@@ -1,72 +1,219 @@
 @if (notFound()) {
-  <app-empty-state icon="pi pi-exclamation-triangle" message="Ticket introuvable ou accès refusé."></app-empty-state>
+  <app-empty-state icon="pi pi-exclamation-triangle"
+    message="Ce signalement n'existe pas ou vous n'y avez pas accès."></app-empty-state>
 } @else if (loading()) {
   <div class="loading"><i class="pi pi-spin pi-spinner"></i> Chargement…</div>
 } @else {
   @if (ticket(); as t) {
-  <div class="head">
-    <div class="head-left">
-      <p-button icon="pi pi-arrow-left" label="Retour" [text]="true" (onClick)="back()" />
-      <h2 class="title">{{ t.title }}</h2>
-      <p-tag [value]="statusLabel(t.status)" [severity]="statusSeverity(t.status)" />
-      <span class="prio prio-{{ (t.priority ?? 'MEDIUM').toLowerCase() }}">
-        {{ priorityLabel(t.priority) }}
-      </span>
+    <!-- header -->
+    <div class="detail-head">
+      <div class="dh-left">
+        <p-button icon="pi pi-arrow-left" [text]="true" (onClick)="back()" aria-label="Retour" />
+        <span class="type-badge" [style.--tc-color]="typeV(t.type).color" [style.background]="typeV(t.type).soft">
+          <i class="pi {{ typeV(t.type).icon }}"></i>
+        </span>
+        <div class="dh-info">
+          @if (t.categoryLabel || t.category) { <span class="dh-cat">{{ t.categoryLabel ?? t.category }}</span> }
+          <h2 class="dh-title">{{ t.title }}</h2>
+          <div class="dh-meta">
+            <span class="status-pill" [style.color]="statusV(t.status).color" [style.background]="statusV(t.status).soft">
+              <i class="pi {{ statusV(t.status).icon }}"></i> {{ statusV(t.status).label }}
+            </span>
+            @if (isOverdue()) { <span class="retard-badge">En retard</span> }
+            <span class="dh-creator">Créé par {{ creatorName() ?? '—' }}, le {{ fmtDate(t.createdAt) }}</span>
+          </div>
+        </div>
+      </div>
     </div>
-    <div class="head-actions">
-      @for (next of transitions(); track next) {
-        <p-button [label]="statusLabel(next)" icon="pi pi-arrow-right" size="small"
-                  [severity]="next === 'AS_BUILT' ? 'success' : 'info'"
-                  (onClick)="advance(next)" [disabled]="!canWrite()" />
+
+    <!-- action bar -->
+    <div class="action-bar">
+      @if (primaryAction(); as pa) {
+        <p-button [label]="actionLabels[pa]" severity="success" size="large"
+                  (onClick)="doAction(pa)" [disabled]="!canWrite()" styleClass="primary-btn" />
+      }
+      @for (sa of secondaryActions(); track sa) {
+        <p-button [label]="actionLabels[sa]" [outlined]="true"
+                  [severity]="sa === 'CANCEL' ? 'danger' : 'secondary'"
+                  (onClick)="doAction(sa)" [disabled]="!canWrite()" />
+      }
+      @for (vt of visaTransitions(); track vt) {
+        <p-button [label]="statusV(vt).label" icon="pi pi-arrow-right" size="small"
+                  severity="info" (onClick)="doAction(vt)" [disabled]="!canWrite()" />
       }
     </div>
-  </div>
 
-  <div class="grid2">
-    <div class="panel">
-      <div class="panel-title">Détails</div>
-      <div class="meta">
-        <div class="m"><span class="k">Chantier</span><span class="v">{{ t.projectName ?? '—' }}</span></div>
-        <div class="m"><span class="k">Assigné à</span><span class="v">{{ t.assignedToName ?? 'Non assigné' }}</span></div>
-        <div class="m"><span class="k">Début</span><span class="v">{{ fmtDate(t.startAt) }}</span></div>
-        <div class="m"><span class="k">Échéance</span><span class="v">{{ fmtDate(t.dueAt) }}</span></div>
-        <div class="m"><span class="k">Créé le</span><span class="v">{{ fmtDate(t.createdAt) }}</span></div>
-        <div class="m full"><span class="k">Description</span>
-          <span class="v">{{ t.description ?? '—' }}</span></div>
-      </div>
-    </div>
-
-    <div class="panel">
-      <div class="panel-title">
-        Documents liés
-        <span class="badge">{{ docs().length }}</span>
-      </div>
-      @if (docsError()) {
-        <app-load-error message="Impossible de charger les documents liés." (retry)="loadDocs()" />
-      } @else if (docs().length) {
-        <div class="dlist">
-          @for (d of docs(); track d.id) {
-            <div class="drow">
-              <div class="dleft" (click)="openDoc(d)">
-                <div class="dref">{{ d.reference }}</div>
-                <div class="dtitle">{{ d.title }}</div>
-              </div>
-              <div class="dright">
-                @if (d.currentRev) { <span class="ver">{{ d.currentRev }}</span> }
-                @if (d.status) { <p-tag [value]="d.status" severity="secondary" /> }
-                @if (canWrite()) {
-                  <p-button icon="pi pi-unlink" [rounded]="true" [text]="true" severity="danger"
-                            (onClick)="unlink(d)" [loading]="unlinking() === d.id"
-                            [attr.aria-label]="'Dissocier ' + d.reference" />
-                }
-              </div>
+    <!-- two columns: left = photos + timeline, right = facts -->
+    <div class="detail-grid">
+      <div class="dg-left">
+        <!-- photos -->
+        <div class="photos-section">
+          <div class="photo-group">
+            <h3>Avant</h3>
+            <div class="thumbs">
+              @for (p of beforePhotos(); track p.id) {
+                <div class="thumb" (click)="photoPreviewUrl.set(p.downloadUrl)">
+                  <img [src]="p.downloadUrl" alt="Photo avant" />
+                  @if (canWrite()) {
+                    <button class="thumb-rm" (click)="deletePhoto(p.id); $event.stopPropagation()" aria-label="Supprimer la photo">×</button>
+                  }
+                </div>
+              }
+              @if (canAddPhoto() && canWrite()) {
+                <label class="thumb-add" aria-label="Ajouter une photo avant">
+                  <input type="file" accept="image/*" capture="environment" (change)="onAddPhoto($event, 'BEFORE')" hidden />
+                  <i class="pi pi-plus"></i>
+                </label>
+              }
             </div>
+          </div>
+          <div class="photo-group">
+            <h3>Après</h3>
+            <div class="thumbs">
+              @for (p of afterPhotos(); track p.id) {
+                <div class="thumb" (click)="photoPreviewUrl.set(p.downloadUrl)">
+                  <img [src]="p.downloadUrl" alt="Photo après" />
+                  @if (canWrite()) {
+                    <button class="thumb-rm" (click)="deletePhoto(p.id); $event.stopPropagation()" aria-label="Supprimer la photo">×</button>
+                  }
+                </div>
+              }
+              @if (canAddPhoto() && canWrite()) {
+                <label class="thumb-add" aria-label="Ajouter une photo après">
+                  <input type="file" accept="image/*" capture="environment" (change)="onAddPhoto($event, 'AFTER')" hidden />
+                  <i class="pi pi-plus"></i>
+                </label>
+              }
+            </div>
+          </div>
+        </div>
+
+        <!-- timeline -->
+        <div class="timeline-section">
+          <h3>Historique</h3>
+          <div class="timeline">
+            @for (e of timeline(); track e.id) {
+              <div class="tl-row" [class.tl-comment]="e.kind === 'COMMENT'">
+                <span class="tl-dot" [style.background]="e.kind === 'COMMENT' ? '#0ea5e9' : (e.toStatus ? statusV(e.toStatus).color : '#94a3b8')"></span>
+                <div class="tl-content">
+                  <span class="tl-text">{{ timelineText(e) }}</span>
+                  @if (e.body && e.kind !== 'SYSTEM') { <span class="tl-body">{{ e.body }}</span> }
+                  <span class="tl-time" [title]="fmtDate(e.createdAt)">{{ relativeTime(e.createdAt) }}</span>
+                </div>
+              </div>
+            } @empty {
+              <span class="tl-empty">Pas encore d'historique.</span>
+            }
+          </div>
+          <!-- comment box -->
+          <div class="comment-box">
+            <textarea pTextarea rows="2" [ngModel]="commentBody()" (ngModelChange)="commentBody.set($event)"
+                      placeholder="Ajouter un commentaire…" (keydown)="onCommentKeydown($event)"></textarea>
+            <p-button label="Envoyer" icon="pi pi-send" size="small"
+                      (onClick)="sendComment()" [disabled]="!commentBody().trim()" />
+          </div>
+        </div>
+      </div>
+
+      <!-- facts card -->
+      <div class="dg-right">
+        <div class="facts-card">
+          <div class="fact"><span class="fk">Chantier</span><span class="fv">{{ t.projectName ?? '—' }}</span></div>
+          <div class="fact"><span class="fk">Ouvrage</span><span class="fv">{{ t.ouvrageName ?? '—' }}</span></div>
+          <div class="fact"><span class="fk">Lieu / PK</span><span class="fv">{{ t.locationText ?? '—' }}</span></div>
+          <div class="fact"><span class="fk">Assigné à</span><span class="fv">{{ t.assignedToName ?? 'Non assigné' }}</span></div>
+          <div class="fact"><span class="fk">Responsable externe</span><span class="fv">{{ t.responsiblePartyName ?? '—' }}</span></div>
+          <div class="fact">
+            <span class="fk">Échéance</span>
+            <span class="fv" [class.overdue]="isDueOverdue(t.dueAt, t.status)">{{ relativeDue(t.dueAt, t.status) }}</span>
+          </div>
+          @if (t.type === 'RESERVE' && t.origin) {
+            <div class="fact"><span class="fk">Origine</span><span class="fv">{{ t.origin === 'CLIENT' ? 'Visite client' : 'Contrôle interne' }}</span></div>
           }
         </div>
-      } @else if (!docsLoading()) {
-        <app-empty-state icon="pi pi-file" message="Aucun document lié à ce ticket."></app-empty-state>
+      </div>
+    </div>
+
+    <!-- mobile fixed primary -->
+    @if (primaryAction(); as pa) {
+      <div class="mobile-primary">
+        <p-button [label]="actionLabels[pa]" severity="success" size="large"
+                  (onClick)="doAction(pa)" [disabled]="!canWrite()" styleClass="w100" />
+      </div>
+    }
+  }
+}
+
+<!-- resolve dialog -->
+<p-dialog [visible]="showResolve()" (visibleChange)="showResolve.set($event)" header="Marquer résolu" [modal]="true" [style]="{width: '480px'}">
+  <div class="dlg">
+    <label>Qu'est-ce qui a été fait ?*</label>
+    <textarea pTextarea rows="3" [ngModel]="resolveNote()" (ngModelChange)="resolveNote.set($event)"
+              placeholder="Ex. : Fuite réparée, joint remplacé"></textarea>
+    @if (resolveNote().trim().length > 0 && resolveNote().trim().length < 5) {
+      <span class="field-err">Minimum 5 caractères.</span>
+    }
+    <label>Photos après travaux</label>
+    @if (ticket()?.type === 'RESERVE') { <span class="field-hint">Obligatoire pour une réserve</span> }
+    <div class="photo-actions">
+      <label class="photo-btn"><input type="file" accept="image/*" capture="environment" (change)="onPickAfterPhoto($event)" hidden /><i class="pi pi-camera"></i> Prendre une photo</label>
+      <label class="photo-btn"><input type="file" accept="image/*" multiple (change)="onPickAfterPhoto($event)" hidden /><i class="pi pi-images"></i> Galerie</label>
+    </div>
+    @if (resolveCompressing()) { <span class="compressing">Préparation…</span> }
+    <div class="thumbs">
+      @for (p of resolveAfterPhotos(); track p.url; let i = $index) {
+        <div class="thumb"><img [src]="p.url" alt="Photo après" /><button class="thumb-rm" (click)="removeAfterPhoto(i)" aria-label="Supprimer">×</button></div>
       }
     </div>
   </div>
+  <ng-template pTemplate="footer">
+    <p-button label="Annuler" [text]="true" (onClick)="showResolve.set(false)" />
+    <p-button label="Résoudre" icon="pi pi-check" severity="success"
+              (onClick)="confirmResolve()" [disabled]="sending() || resolveNote().trim().length < 5" [loading]="sending()" />
+  </ng-template>
+</p-dialog>
+
+<!-- verify dialog -->
+<p-dialog [visible]="showVerify()" (visibleChange)="showVerify.set($event)" header="Vérifier et clore" [modal]="true" [style]="{width: '480px'}">
+  <p>Vous confirmez que le problème est réglé ?</p>
+  @if (afterPhotos().length) {
+    <div class="thumbs large">
+      @for (p of afterPhotos(); track p.id) { <img [src]="p.downloadUrl" alt="Photo après" class="large-thumb" /> }
+    </div>
   }
+  <ng-template pTemplate="footer">
+    <p-button label="Non, rouvrir" [text]="true" (onClick)="showVerify.set(false); showReopen.set(true)" />
+    <p-button label="Oui, clore" icon="pi pi-check" severity="success" (onClick)="confirmVerify()" [loading]="sending()" />
+  </ng-template>
+</p-dialog>
+
+<!-- reopen dialog -->
+<p-dialog [visible]="showReopen()" (visibleChange)="showReopen.set($event)" header="Rouvrir" [modal]="true" [style]="{width: '400px'}">
+  <label>Commentaire*</label>
+  <textarea pTextarea rows="3" [ngModel]="reopenComment()" (ngModelChange)="reopenComment.set($event)"
+            placeholder="Ex. : Le problème persiste"></textarea>
+  <ng-template pTemplate="footer">
+    <p-button label="Annuler" [text]="true" (onClick)="showReopen.set(false)" />
+    <p-button label="Rouvrir" icon="pi pi-refresh" (onClick)="confirmReopen()"
+              [disabled]="reopenComment().trim().length < 5" [loading]="sending()" />
+  </ng-template>
+</p-dialog>
+
+<!-- cancel dialog -->
+<p-dialog [visible]="showCancel()" (visibleChange)="showCancel.set($event)" header="Annuler le signalement" [modal]="true" [style]="{width: '400px'}">
+  <label>Motif*</label>
+  <textarea pTextarea rows="3" [ngModel]="cancelReason()" (ngModelChange)="cancelReason.set($event)"
+            placeholder="Ex. : Doublon, résolu hors système"></textarea>
+  <ng-template pTemplate="footer">
+    <p-button label="Annuler" [text]="true" (onClick)="showCancel.set(false)" />
+    <p-button label="Annuler le signalement" icon="pi pi-times" severity="danger"
+              (onClick)="confirmCancel()" [disabled]="cancelReason().trim().length < 5" [loading]="sending()" />
+  </ng-template>
+</p-dialog>
+
+<!-- photo preview -->
+@if (photoPreviewUrl(); as url) {
+  <p-dialog [visible]="true" (visibleChange)="photoPreviewUrl.set(null)" [modal]="true" [style]="{width: 'auto'}">
+    <img [src]="url" alt="Photo" style="max-width: 90vw; max-height: 80vh;" />
+  </p-dialog>
 }

@@ -1,139 +1,177 @@
 <div class="head">
   <div class="head-title">
-    <h2><i class="pi pi-ticket"></i> Demandes</h2>
-    <p class="head-sub">Signalements et problèmes terrain (hors stock et hors paiement).</p>
+    <h2><i class="pi pi-exclamation-triangle"></i> Signalements</h2>
+    <p class="head-sub">Problèmes, réserves et demandes du chantier.</p>
   </div>
   @if (canWrite()) {
-    <p-button icon="pi pi-plus" label="Nouveau" (onClick)="openCreate()" />
+    <p-button class="new-desktop" icon="pi pi-plus" label="Nouveau signalement" (onClick)="openCreate()" />
   }
 </div>
 
-<div class="filters">
-  <p-select [options]="projectOpts()" [(ngModel)]="fProject" placeholder="Tous les chantiers"
-            [showClear]="true" optionLabel="label" optionValue="value" styleClass="f-item" />
-  <p-select [options]="statusOpts" [(ngModel)]="fStatus" optionLabel="label" optionValue="value"
-            styleClass="f-item" />
-  <p-select [options]="priorityOpts" [(ngModel)]="fPriority" placeholder="Toutes priorités"
-            [showClear]="true" optionLabel="label" optionValue="value" styleClass="f-item" />
-  <div class="mine" [class.on]="fMine">
-    <p-toggleswitch [(ngModel)]="fMine" inputId="mine-toggle" />
-    <label for="mine-toggle">Mes tickets</label>
-  </div>
-  <div class="f-btns">
-    <p-button label="Appliquer" icon="pi pi-filter" (onClick)="apply()" />
-    <p-button label="Réinitialiser" icon="pi pi-times" [text]="true" (onClick)="reset()" />
-  </div>
+<!-- project selector (kept existing behaviour) -->
+<div class="filters-top">
+  <p-select [options]="projectOpts()" [ngModel]="fProject()" (ngModelChange)="onProjectChange($event)"
+            placeholder="Tous les chantiers" [showClear]="true"
+            optionLabel="label" optionValue="value" styleClass="f-item" />
+  @if (optionsError()) {
+    <app-load-error message="Impossible de charger les chantiers ou les utilisateurs." (retry)="loadOptions()" />
+  }
 </div>
 
-@if (optionsError()) {
-  <app-load-error message="Impossible de charger la liste des chantiers ou des utilisateurs." (retry)="loadOptions()" />
-}
-
-<div class="list">
-  @if (loadError()) {
-    <app-load-error message="Impossible de charger les tickets." (retry)="apply()" />
+<!-- counter row from summary -->
+<div class="counters">
+  @for (c of counters(); track c.key) {
+    <button class="counter" [class.danger]="c.danger" (click)="onCounterClick(c.key)"
+            [attr.aria-label]="c.label + ' : ' + c.value">
+      <span class="c-value">{{ c.value }}</span>
+      <span class="c-label">{{ c.label }}</span>
+    </button>
   }
-  @for (t of tickets(); track t.id) {
-    <div class="card">
-      <div class="status">
-        <p-tag [value]="statusLabel(t.status)" [severity]="statusSeverity(t.status)" />
-      </div>
-      <div class="left">
-        <div class="title" (click)="openTicket(t)">
-          {{ t.title }}
-          @if (isOverdue(t)) { <span class="retard">En retard</span> }
+</div>
+
+<!-- tabs -->
+<div class="tabs">
+  <button class="tab" [class.active]="activeTab() === 'mine'" (click)="onTabChange('mine')">À moi</button>
+  <button class="tab" [class.active]="activeTab() === 'all'" (click)="onTabChange('all')">Tous</button>
+  <button class="tab" [class.active]="activeTab() === 'overdue'" (click)="onTabChange('overdue')">En retard</button>
+</div>
+
+<!-- filter bar: type chips + status dropdown + search box -->
+<div class="filter-bar">
+  <div class="type-chips">
+    @for (tc of typeChips(); track tc.code) {
+      <button class="t-chip" [class.selected]="selectedType() === tc.code"
+              (click)="onTypeChipClick(tc.code)"
+              [style.--tc-color]="tc.colour"
+              [attr.aria-label]="tc.label"
+              [attr.aria-pressed]="selectedType() === tc.code">
+        <i class="pi {{ tc.icon }}"></i> <span>{{ tc.label }}</span>
+      </button>
+    }
+  </div>
+  <p-select [options]="statusOpts()" [ngModel]="fStatus()" (ngModelChange)="onStatusChange($event)"
+            placeholder="Tous les statuts" [showClear]="true"
+            optionLabel="label" optionValue="value" styleClass="f-status" />
+  <span class="search-box">
+    <i class="pi pi-search"></i>
+    <input pInputText type="text" placeholder="Rechercher un titre ou un lieu"
+           [ngModel]="searchQuery()" (ngModelChange)="onSearchInput($event)"
+           aria-label="Rechercher un titre ou un lieu" />
+  </span>
+</div>
+
+<!-- results -->
+@if (loadError()) {
+  <app-load-error message="Impossible de charger les signalements." (retry)="runSearch('reset')" />
+} @else {
+  <!-- desktop table (>= 768 px) -->
+  <div class="table-view">
+    <div class="tbl-wrap">
+      <table class="sig-table">
+        <thead>
+          <tr>
+            <th>Type</th>
+            <th>Signalement</th>
+            <th>Ouvrage / lieu</th>
+            <th>Responsable</th>
+            <th>Échéance</th>
+            <th>Statut</th>
+            <th>Photos</th>
+          </tr>
+        </thead>
+        <tbody>
+          @for (t of displayed(); track t.id) {
+            <tr (click)="openTicket(t)" [style.--tc-color]="typeVisual(t.type).color">
+              <td class="c-type">
+                <span class="type-pill" [style.--tc-color]="typeVisual(t.type).color">
+                  <i class="pi {{ typeVisual(t.type).icon }}"></i>
+                  <span class="visually-hidden">{{ typeVisual(t.type).label }}</span>
+                </span>
+              </td>
+              <td class="c-sig">
+                <div class="sig-title">{{ t.title }}</div>
+                @if (t.categoryLabel || t.category) { <div class="sig-cat">{{ t.categoryLabel ?? t.category }}</div> }
+              </td>
+              <td class="c-place">{{ placeLine(t) }}</td>
+              <td class="c-resp">
+                {{ responsable(t).name }}
+                @if (responsable(t).externe) { <span class="ext-tag">externe</span> }
+              </td>
+              <td class="c-due" [class.overdue]="isOverdue(t)">
+                {{ fmtDate(t.dueAt) }}
+                @if (isOverdue(t)) { <span class="retard-badge">En retard</span> }
+              </td>
+              <td class="c-status">
+                <span class="status-pill" [style.color]="statusVisual(t.status).color"
+                      [style.background]="statusVisual(t.status).soft">
+                  <i class="pi {{ statusVisual(t.status).icon }}"></i> {{ statusVisual(t.status).label }}
+                </span>
+              </td>
+              <td class="c-photos">
+                <i class="pi pi-camera"></i>
+              </td>
+            </tr>
+          } @empty {
+            @if (loaded()) {
+              <tr><td colspan="7">
+                <app-empty-state icon="pi pi-check-circle"
+                  message="Aucun signalement ici. Tout est en ordre sur ce chantier."></app-empty-state>
+              </td></tr>
+            }
+          }
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- mobile cards (< 768 px) -->
+  <div class="card-view">
+    @for (t of displayed(); track t.id) {
+      <div class="sig-card" (click)="openTicket(t)" [style.--tc-color]="typeVisual(t.type).color"
+           [attr.aria-label]="'Signalement ' + t.title">
+        <div class="sc-top">
+          <span class="sc-title">{{ t.title }}</span>
+          <span class="status-pill" [style.color]="statusVisual(t.status).color"
+                [style.background]="statusVisual(t.status).soft">
+            <i class="pi {{ statusVisual(t.status).icon }}"></i> {{ statusVisual(t.status).label }}
+          </span>
         </div>
-        @if (t.description) { <div class="sub">{{ t.description }}</div> }
-        <div class="meta">
-          <span class="prio prio-{{ (t.priority ?? 'MEDIUM').toLowerCase() }}">
-            {{ priorityLabel(t.priority ?? 'MEDIUM') }}
-          </span>
-          @if (t.projectName) { <p-chip [label]="t.projectName" /> }
-          <span class="assignee">
-            <i class="pi pi-user"></i> {{ t.assignedToName ?? 'Non assigné' }}
-          </span>
+        <div class="sc-meta">
+          <span class="sc-place"><i class="pi pi-map-marker"></i> {{ placeLine(t) }}</span>
           @if (t.dueAt) {
-            <span class="due" [class.overdue]="isOverdue(t)">
-              <i class="pi pi-calendar"></i> Échéance : {{ fmtDate(t.dueAt) }}
+            <span class="sc-due" [class.overdue]="isOverdue(t)">
+              <i class="pi pi-calendar"></i> {{ fmtDate(t.dueAt) }}
+              @if (isOverdue(t)) { <span class="retard-badge">En retard</span> }
             </span>
           }
         </div>
       </div>
-      <div class="right">
-        @for (next of nextStatuses(t); track next) {
-          <p-button [label]="statusLabel(next)" icon="pi pi-arrow-right" size="large"
-                    [severity]="next === 'AS_BUILT' ? 'success' : 'info'"
-                    (onClick)="advance(t, next)" [disabled]="!canWrite()" />
-        }
-        <p-button icon="pi pi-eye" [rounded]="true" [text]="true"
-                  (onClick)="openTicket(t)" [attr.aria-label]="'Voir ' + t.title" />
-        @if (canWrite()) {
-          <p-button icon="pi pi-pencil" [rounded]="true" [text]="true"
-                    (onClick)="openEdit(t)" [attr.aria-label]="'Modifier ' + t.title" />
-        }
-      </div>
+    } @empty {
+      @if (loaded()) {
+        <app-empty-state icon="pi pi-check-circle"
+          message="Aucun signalement ici. Tout est en ordre sur ce chantier."></app-empty-state>
+      }
+    }
+  </div>
+
+  <!-- pagination: desktop paginator / mobile "Charger plus" -->
+  @if (total() > 0) {
+    <div class="paginator-desktop">
+      <p-paginator [rows]="pageSize" [totalRecords]="total()" [first]="page() * pageSize"
+                   (onPageChange)="onPageChange($event)" />
     </div>
-  } @empty {
-    @if (loaded() && !loadError()) {
-      <app-empty-state icon="pi pi-inbox" message="Aucun ticket. Tout va bien."></app-empty-state>
+    @if (isMobile() && hasMore) {
+      <div class="load-more-mobile">
+        <p-button label="Charger plus" icon="pi pi-angle-down" [outlined]="true" (onClick)="loadMore()"
+                  styleClass="w100" />
+      </div>
     }
   }
-</div>
+}
 
-<p-dialog [visible]="showDialog()" (visibleChange)="showDialog.set($event)" [modal]="true"
-          [styleClass]="'ticket-dialog'" [style]="{ width: '560px' }"
-          [header]="mode === 'edit' ? 'Modifier le ticket' : 'Nouveau ticket'">
-  <div class="dlg-form">
-    <div class="field">
-      <label>Titre</label>
-      <input pInputText class="inp" placeholder="Titre du problème"
-             [(ngModel)]="formTitle" />
-    </div>
-    <div class="field">
-      <label>Détails (optionnel)</label>
-      <textarea pTextarea rows="3" [(ngModel)]="formDescription"></textarea>
-    </div>
-    <div class="field">
-      <label>Chantier</label>
-      <p-select [options]="activeProjectOpts()" [(ngModel)]="formProject"
-                placeholder="Choisir un chantier" optionLabel="label" optionValue="value"
-                styleClass="w100" />
-    </div>
-    @if (canWrite()) {
-      <div class="field">
-        <label>Assigné à (optionnel)</label>
-        <p-select [options]="assigneeOpts()" [(ngModel)]="formAssignee"
-                  placeholder="Non assigné" [showClear]="true" optionLabel="label"
-                  optionValue="value" styleClass="w100" />
-      </div>
-    }
-    <div class="field">
-      <label>Priorité</label>
-      <p-select [options]="priorityOpts" [(ngModel)]="formPriority" optionLabel="label"
-                optionValue="value" styleClass="w100" />
-    </div>
-    <div class="two">
-      <div class="field">
-        <label>Début</label>
-        <p-datepicker [(ngModel)]="formStart" dateFormat="dd/mm/yy" [showIcon]="true"
-                      styleClass="w100" placeholder="jj/mm/aa" />
-      </div>
-      <div class="field">
-        <label>Échéance</label>
-        <p-datepicker [(ngModel)]="formDue" dateFormat="dd/mm/yy" [showIcon]="true"
-                      styleClass="w100" placeholder="jj/mm/aa" />
-      </div>
-    </div>
-    <div class="field secondary">
-      <label>Document (optionnel)</label>
-      <input pInputText class="doc-inp" placeholder="Identifiant du document"
-             [(ngModel)]="formDocumentId" />
-    </div>
+<!-- mobile fixed « + Nouveau signalement » -->
+@if (canWrite()) {
+  <div class="new-mobile">
+    <p-button icon="pi pi-plus" label="Nouveau signalement" (onClick)="openCreate()" styleClass="w100" />
   </div>
-  <ng-template pTemplate="footer">
-    <p-button label="Annuler" [text]="true" (onClick)="showDialog.set(false)" />
-    <p-button [label]="mode === 'edit' ? 'Enregistrer' : 'Créer'" icon="pi pi-check"
-              size="large" severity="success"
-              (onClick)="submit()" [disabled]="!formTitle.trim()" />
-  </ng-template>
-</p-dialog>
+}

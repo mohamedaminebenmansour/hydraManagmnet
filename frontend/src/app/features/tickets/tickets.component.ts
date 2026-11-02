@@ -1,15 +1,11 @@
 import { Component, OnInit, computed, inject, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
-import { Router } from '@angular/router';
+import { ActivatedRoute, Router } from '@angular/router';
+import { Subject, debounceTime, distinctUntilChanged } from 'rxjs';
 import { ButtonModule } from 'primeng/button';
 import { InputTextModule } from 'primeng/inputtext';
-import { TextareaModule } from 'primeng/textarea';
 import { SelectModule } from 'primeng/select';
-import { DatePickerModule } from 'primeng/datepicker';
-import { DialogModule } from 'primeng/dialog';
-import { TagModule } from 'primeng/tag';
-import { ChipModule } from 'primeng/chip';
-import { ToggleSwitchModule } from 'primeng/toggleswitch';
+import { PaginatorModule } from 'primeng/paginator';
 import { MessageService } from 'primeng/api';
 import { AuthService } from '@app/core/auth.service';
 import { PERM } from '@app/core/permissions';
@@ -18,19 +14,18 @@ import { UserService } from '@app/core/services/user.service';
 import { TicketService } from '@app/core/services/ticket.service';
 import { SelectOption } from '@app/core/models/select-option';
 import { Project } from '@app/core/models/project.model';
-import {
-  Ticket, TICKET_STATUS_OPTS, TICKET_STATUS_LABELS, TICKET_STATUS_SEVERITY,
-  TICKET_STATUS_FLOW, TICKET_PRIORITY_OPTS, TICKET_PRIORITY_LABELS, TicketStatus
-} from '@app/core/models/ticket.model';
+import { Ticket, TicketCatalogType, TicketSummary } from '@app/core/models/ticket.model';
 import { EmptyStateComponent } from '@app/shared/empty-state.component';
 import { LoadErrorComponent } from '@app/shared/load-error.component';
+import { typeVisual, statusVisual } from './signalement-visual';
+
+type Tab = 'mine' | 'all' | 'overdue';
 
 @Component({
   selector: 'app-tickets',
   standalone: true,
   imports: [
-    FormsModule, ButtonModule, InputTextModule, TextareaModule, SelectModule,
-    DatePickerModule, DialogModule, TagModule, ChipModule, ToggleSwitchModule,
+    FormsModule, ButtonModule, InputTextModule, SelectModule, PaginatorModule,
     EmptyStateComponent, LoadErrorComponent
   ],
   templateUrl: './tickets.component.html',
@@ -42,56 +37,103 @@ export class TicketsComponent implements OnInit {
   private userService = inject(UserService);
   private auth = inject(AuthService);
   private router = inject(Router);
+  private route = inject(ActivatedRoute);
   private msgs = inject(MessageService);
 
-  tickets = signal<Ticket[]>([]);
-  projects = signal<Project[]>([]);
-  userOptions = signal<SelectOption[]>([]);
+  // ── data / state ──────────────────────────────────────────────────────
+  catalog = signal<TicketCatalogType[]>([]);
+  summary = signal<TicketSummary | null>(null);
+  displayed = signal<Ticket[]>([]);
+  total = signal(0);
+  page = signal(0);
+  readonly pageSize = 20;
   loaded = signal(false);
   loadError = signal(false);
-  /** Filter / assignee lists (chantiers, utilisateurs) failed to load. */
+
+  projects = signal<Project[]>([]);
+  userOptions = signal<SelectOption[]>([]);
   optionsError = signal(false);
-  showDialog = signal(false);
 
-  readonly statusOpts = [{ label: 'Tous', value: '' }, ...TICKET_STATUS_OPTS];
-  readonly priorityOpts = TICKET_PRIORITY_OPTS;
-
-  fProject: string | null = null;
-  fStatus = '';
-  fPriority: string | null = null;
-  fMine = false;
-
-  mode: 'create' | 'edit' = 'create';
-  editTarget: Ticket | null = null;
-  formTitle = '';
-  formDescription = '';
-  formProject: string | null = null;
-  formAssignee: string | null = null;
-  formPriority = 'MEDIUM';
-  formStart: Date | null = null;
-  formDue: Date | null = null;
-  formDocumentId = '';
+  // ── filters ───────────────────────────────────────────────────────────
+  activeTab = signal<Tab>('mine');
+  selectedType = signal<string | null>(null);
+  fStatus = signal<string | null>(null);
+  fProject = signal<string | null>(null);
+  searchQuery = signal('');
+  isMobile = signal(false);
 
   canWrite = computed(() => this.auth.can(PERM.TICKET_WRITE));
-  canAssign = computed(() => this.auth.can(PERM.TICKET_ASSIGN) || this.auth.can(PERM.TICKET_WRITE));
 
   projectOpts = computed(() =>
     this.projects().map(p => ({ label: p.code ? `${p.code} — ${p.name}` : p.name, value: p.id })));
-  activeProjectOpts = computed(() =>
-    this.projects().filter(p => p.status === 'ACTIF')
-      .map(p => ({ label: p.code ? `${p.code} — ${p.name}` : p.name, value: p.id })));
-  assigneeOpts = computed(() => this.userOptions());
+
+  /** Status dropdown options built from the catalog (all statuses, deduped). */
+  statusOpts = computed(() => {
+    const seen = new Map<string, string>();
+    for (const t of this.catalog() ?? []) {
+      for (const s of t.statuses ?? []) { seen.set(s.code, s.label); }
+    }
+    return [{ label: 'Tous les statuts', value: null },
+      ...Array.from(seen, ([code, label]) => ({ label, value: code }))];
+  });
+
+  /** The 4 type chips (icon + colour + label). */
+  typeChips = computed(() =>
+    (this.catalog() ?? []).map(t => ({ code: t.code, label: t.label, icon: t.icon, colour: t.colour })));
+
+  /** Counter row from the summary. */
+  counters = computed(() => {
+    const s = this.summary();
+    return [
+      { key: 'mine', label: 'À moi', value: s?.mine ?? 0, danger: false },
+      { key: 'toVerify', label: 'À vérifier', value: s?.toVerify ?? 0, danger: false },
+      { key: 'overdue', label: 'En retard', value: s?.overdue ?? 0, danger: (s?.overdue ?? 0) > 0 },
+      { key: 'open', label: 'Ouverts', value: s?.open ?? 0, danger: false }
+    ];
+  });
+
+  private searchSubject = new Subject<string>();
+  private mobileQuery?: MediaQueryList;
 
   ngOnInit(): void {
-    this.loadOptions(true);
+    // debounced search (300 ms)
+    this.searchSubject.pipe(debounceTime(300), distinctUntilChanged()).subscribe(q => {
+      this.searchQuery.set(q);
+      this.runSearch('reset');
+    });
+    // responsive: table vs cards + paginator vs "Charger plus"
+    this.mobileQuery = window.matchMedia('(max-width: 767px)');
+    this.isMobile.set(this.mobileQuery.matches);
+    this.mobileQuery.addEventListener('change', e => this.isMobile.set(e.matches));
+    // load catalog (once, cached) + options, then the first search
+    this.ticketService.catalog().subscribe({
+      next: c => { this.catalog.set(c ?? []); },
+      error: () => { this.catalog.set([]); }
+    });
+    // read query params (?tab= + ?type=) from the home card links
+    const qp = this.route.snapshot.queryParamMap;
+    const tab = qp.get('tab');
+    if (tab === 'mine' || tab === 'all' || tab === 'overdue') { this.activeTab.set(tab); }
+    const type = qp.get('type');
+    if (type) { this.selectedType.set(type); }
+    this.loadOptions();
+    this.loadSummary();
+    this.runSearch('reset');
   }
 
-  /** Chantiers + users for the filters and the form; the ticket list loads either way. */
-  loadOptions(thenApply = false): void {
+  loadSummary(): void {
+    this.ticketService.summary(this.fProject() ?? undefined).subscribe({
+      next: s => this.summary.set(s),
+      error: () => this.summary.set(null)
+    });
+  }
+
+  /** Chantiers + users for the filters and the form. */
+  loadOptions(): void {
     this.optionsError.set(false);
     this.projectService.list().subscribe({
-      next: list => { this.projects.set(list ?? []); if (thenApply) this.apply(); },
-      error: () => { this.projects.set([]); this.optionsError.set(true); if (thenApply) this.apply(); }
+      next: list => { this.projects.set(list ?? []); },
+      error: () => { this.projects.set([]); this.optionsError.set(true); }
     });
     this.userService.options().subscribe({
       next: users => this.userOptions.set((users ?? []).map(u => ({ label: u.fullName, value: u.id }))),
@@ -99,94 +141,111 @@ export class TicketsComponent implements OnInit {
     });
   }
 
-  apply(): void {
+  // ── search ────────────────────────────────────────────────────────────
+
+  /** mode: 'reset' (page 0, replace) | 'page' (replace) | 'more' (append). */
+  runSearch(mode: 'reset' | 'page' | 'more'): void {
+    if (mode === 'reset') { this.page.set(0); }
+    if (mode === 'more') { this.page.update(p => p + 1); }
     this.loaded.set(false);
     this.loadError.set(false);
-    this.ticketService.list({
-      projectId: this.fProject,
-      status: this.fStatus || null,
-      priority: this.fPriority,
-      mine: this.fMine || undefined
+    const tab = this.activeTab();
+    this.ticketService.search({
+      projectId: this.fProject() ?? undefined,
+      type: this.selectedType() ?? undefined,
+      status: this.fStatus() ?? undefined,
+      mine: tab === 'mine',
+      overdue: tab === 'overdue',
+      q: this.searchQuery() || undefined,
+      page: this.page(),
+      size: this.pageSize
     }).subscribe({
-      next: list => { this.tickets.set(list ?? []); this.loaded.set(true); },
-      error: () => { this.tickets.set([]); this.loadError.set(true); this.loaded.set(true); }
+      next: res => {
+        this.total.set(res.total);
+        const rows = res.items.map(i => i.ticket);
+        if (mode === 'more') { this.displayed.update(arr => [...arr, ...rows]); }
+        else { this.displayed.set(rows); }
+        this.loaded.set(true);
+      },
+      error: () => { this.loadError.set(true); this.loaded.set(true); this.displayed.set([]); }
     });
   }
 
-  reset(): void {
-    this.fProject = null; this.fStatus = ''; this.fPriority = null; this.fMine = false;
-    this.apply();
+  onTabChange(tab: Tab): void {
+    this.activeTab.set(tab);
+    this.runSearch('reset');
   }
+
+  /** One type at a time: click again to clear. */
+  onTypeChipClick(code: string): void {
+    this.selectedType.set(this.selectedType() === code ? null : code);
+    this.runSearch('reset');
+  }
+
+  onProjectChange(v: string | null): void {
+    this.fProject.set(v);
+    this.runSearch('reset');
+    this.loadSummary();
+  }
+
+  onStatusChange(v: string | null): void {
+    this.fStatus.set(v);
+    this.runSearch('reset');
+  }
+
+  onSearchInput(value: string): void {
+    this.searchSubject.next(value ?? '');
+  }
+
+  onCounterClick(key: string): void {
+    if (key === 'mine') { this.activeTab.set('mine'); this.fStatus.set(null); }
+    else if (key === 'overdue') { this.activeTab.set('overdue'); this.fStatus.set(null); }
+    else if (key === 'toVerify') { this.activeTab.set('all'); this.fStatus.set('RESOLVED'); }
+    else if (key === 'open') { this.activeTab.set('all'); this.fStatus.set('OPEN'); }
+    this.runSearch('reset');
+  }
+
+  onPageChange(event: any): void {
+    this.page.set(event.page ?? 0);
+    this.runSearch('page');
+  }
+
+  loadMore(): void {
+    this.runSearch('more');
+  }
+
+  get hasMore(): boolean {
+    return this.displayed().length < this.total();
+  }
+
+  // ── row helpers ───────────────────────────────────────────────────────
 
   openTicket(t: Ticket): void { this.router.navigate(['/tickets', t.id]); }
 
-  openCreate(): void {
-    this.mode = 'create'; this.editTarget = null;
-    this.formTitle = ''; this.formDescription = ''; this.formProject = null;
-    this.formAssignee = null; this.formPriority = 'MEDIUM';
-    this.formStart = null; this.formDue = null; this.formDocumentId = '';
-    this.showDialog.set(true);
-  }
-
-  openEdit(t: Ticket): void {
-    this.mode = 'edit'; this.editTarget = t;
-    this.formTitle = t.title; this.formDescription = t.description ?? '';
-    this.formProject = t.projectId; this.formAssignee = t.assignedToId;
-    this.formPriority = t.priority ?? 'MEDIUM';
-    this.formStart = this.parseDateOnly(t.startAt); this.formDue = this.parseDateOnly(t.dueAt);
-    this.formDocumentId = t.documentId ?? '';
-    this.showDialog.set(true);
-  }
-  // ── workflow helpers (transmittal / RFI) ──────────────────────────
-  statusLabel(s: string): string { return TICKET_STATUS_LABELS[s] ?? s; }
-  statusSeverity(s: string): 'success'|'info'|'warn'|'danger'|'secondary'|'contrast' { return TICKET_STATUS_SEVERITY[s] ?? 'secondary'; }
-
-  nextStatuses(t: Ticket): TicketStatus[] {
-    return TICKET_STATUS_FLOW[(t.status as TicketStatus)] ?? [];
-  }
-
-  canAdvance(t: Ticket): boolean {
-    return this.canWrite() && this.nextStatuses(t).length > 0;
-  }
-
-  advance(t: Ticket, next: string): void {
-    this.ticketService.setStatus(t.id, next).subscribe({
-      next: () => {
-        this.msgs.add({ severity: 'success', summary: 'Statut mis à jour',
-          detail: TICKET_STATUS_LABELS[next] ?? next });
-        this.apply();
-      },
-      error: (err) => this.msgs.add({ severity: 'error', summary: 'Erreur',
-        detail: err.error?.message ?? 'Transition impossible' })
-    });
-  }
-
-  priorityLabel(p: string | null | undefined): string { return p ? (TICKET_PRIORITY_LABELS[p] ?? p) : '—'; }
+  typeVisual = typeVisual;
+  statusVisual = statusVisual;
 
   isOverdue(t: Ticket): boolean {
-    if (!t.dueAt || t.status === 'AS_BUILT') { return false; }
-    const due = this.parseDateOnly(t.dueAt);
-    if (!due) { return false; }
-    const today = new Date(); today.setHours(0, 0, 0, 0);
-    return due < today;
+    return t.overdue ?? false;
   }
 
-  fmtDate(s: string | null): string {
+  fmtDate(s: string | null | undefined): string {
     if (!s) { return '—'; }
     const d = this.parseDateOnly(s) ?? new Date(s);
     if (isNaN(d.getTime())) { return s; }
     return d.toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit', year: 'numeric' });
   }
 
-  projectNameOf(t: Ticket): string {
-    if (t.projectName) { return t.projectName; }
-    return this.projects().find(p => p.id === t.projectId)?.name ?? '—';
+  /** Ouvrage / lieu line: ouvrage name, else location text, else project name. */
+  placeLine(t: Ticket): string {
+    return t.ouvrageName ?? t.locationText ?? t.projectName ?? '—';
   }
 
-  // ── create / edit ────────────────────────────────────────────────
-  submit(): void {
-    if (!this.formTitle.trim()) { return; }
-    if (this.mode === 'edit') { this.saveEdit(); } else { this.create(); }
+  /** Responsable: assignee name, or tiers (responsible party) name with « externe ». */
+  responsable(t: Ticket): { name: string; externe: boolean } {
+    if (t.assignedToName) { return { name: t.assignedToName, externe: false }; }
+    if (t.responsiblePartyName) { return { name: t.responsiblePartyName, externe: true }; }
+    return { name: 'Non assigné', externe: false };
   }
 
   private parseDateOnly(s: string | null | undefined): Date | null {
@@ -197,39 +256,8 @@ export class TicketsComponent implements OnInit {
     return isNaN(d.getTime()) ? null : d;
   }
 
-  private body() {
-    return {
-      title: this.formTitle.trim(),
-      description: this.formDescription.trim() || null,
-      projectId: this.formProject,
-      assignedToId: this.formAssignee,
-      priority: this.formPriority,
-      startAt: this.formStart,
-      dueAt: this.formDue,
-      documentId: this.formDocumentId.trim() || null
-    };
-  }
-
-  create(): void {
-    this.ticketService.create(this.body()).subscribe({
-      next: () => {
-        this.msgs.add({ severity: 'success', summary: 'Ticket créé' });
-        this.showDialog.set(false); this.apply();
-      },
-      error: (err) => this.msgs.add({ severity: 'error', summary: 'Erreur',
-        detail: err.error?.message ?? 'Création impossible' })
-    });
-  }
-
-  saveEdit(): void {
-    if (!this.editTarget) { return; }
-    this.ticketService.update(this.editTarget.id, this.body()).subscribe({
-      next: () => {
-        this.msgs.add({ severity: 'success', summary: 'Ticket modifié' });
-        this.showDialog.set(false); this.apply();
-      },
-      error: (err) => this.msgs.add({ severity: 'error', summary: 'Erreur',
-        detail: err.error?.message ?? 'Modification impossible' })
-    });
+  /** T5: the + Nouveau button navigates to the dedicated create page. */
+  openCreate(): void {
+    this.router.navigate(['/tickets/new'], { queryParams: { projectId: this.fProject() ?? '' } });
   }
 }
