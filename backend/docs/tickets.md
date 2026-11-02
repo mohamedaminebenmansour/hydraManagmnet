@@ -13,6 +13,7 @@
   - VISA_DOCUMENT → `DRAFT | IN_REVIEW | APPROVED | IFC | AS_BUILT`
   - PROBLEME / RESERVE / DEMANDE → `OPEN | IN_PROGRESS | RESOLVED | CLOSED | CANCELLED`
 - Indexes (V48): `(org_id, project_id, type, status)`, `(org_id, assigned_to, status)`, `(org_id, due_at)`.
+- `ticket_attachment` table (V49): id, org_id, ticket_id (→ ticket, on delete cascade), document_id (→ document), phase ∈ `BEFORE | AFTER | OTHER`, created_by, created_at, unique(ticket_id, document_id). Index `(org_id, ticket_id)`. Photos are stored as documents (via `DocumentService.upload`) and linked to the ticket here.
 - Process instance can link to a ticket via `subjectType=TICKET, subjectId=ticketId`
 
 ## Types and lifecycle (V48)
@@ -50,6 +51,27 @@ Rules (T1 owns the graph; role/note/photo rules come in T3):
 - `POST /api/tickets/{id}/close` — close (VISA_DOCUMENT → AS_BUILT, as before)
 - `GET /api/tickets/{id}/documents` — linked documents
 - `GET /api/tickets/{id}/transitions` — allowed status transitions for this ticket's type
+- `POST /api/tickets/with-photos` (multipart) — create a ticket + 0..10 BEFORE photos in one transaction; part "ticket" = the same JSON as POST /api/tickets, parts "photos" = image files. If one photo fails, no ticket is created.
+- `POST /api/tickets/{id}/photos` (multipart: file, phase) — attach one photo (phase BEFORE/AFTER/OTHER)
+- `GET /api/tickets/{id}/photos` — `[{id, documentId, phase, title, createdBy, createdAt, downloadUrl}]` (downloadUrl points at the document download endpoint)
+- `DELETE /api/tickets/{id}/photos/{attachmentId}` — only the uploader, only while not CLOSED/CANCELLED
+- `GET /api/tickets/search?projectId&type&status&mine&overdue&q&page&size` — paginated `{items, total, page, size}`, items = TicketResponse + photoCount. Order: overdue first, then dueAt asc, then createdAt desc.
+- `GET /api/tickets/summary?projectId` — `{mine, overdue, toVerify, open, inProgress, byType}` (not-closed/not-cancelled only)
+
+## Photos (V49)
+
+Photos are stored as documents through `DocumentService.upload` (folder rights and local/S3 storage respected), filed by type:
+- RESERVE → `04_QUAL.RESERVES`
+- PROBLEME, DEMANDE → `03_EXEC.PHOTOS`
+- VISA_DOCUMENT → `02_TECH.PLANS`
+
+Title: « <type label> — <ticket title> — avant|après|autre ». Each photo is linked to the ticket by a `ticket_attachment` row with a phase (`BEFORE`, `AFTER`, `OTHER`). A RESERVE needs at least one « après » (AFTER) photo to resolve (enforced in T3).
+
+Limits: `image/jpeg | image/png | image/webp` only; 5 Mo per file; 10 photos per ticket. French errors: « Seules les images JPEG, PNG ou WebP sont acceptées », « Photo trop lourde (max 5 Mo) », « 10 photos maximum par signalement ».
+
+`createWithPhotos` is one transaction (AI-RULES 14): photos are validated up front; if one fails, no ticket is created. If a photo fails while being stored, the transaction rolls back and every file already written is deleted (same pattern as `BordereauImportService.deleteStoredFileOnRollback`).
+
+A `TICKET_CREATED` domain event is published in `create` and `with-photos` (same transaction), `subjectType = "TICKET"`.
 
 ## Process hook for TICKET (TASK 4)
 When a process instance with `subjectType=TICKET` reaches COMPLETED:

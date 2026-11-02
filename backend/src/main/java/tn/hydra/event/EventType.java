@@ -10,7 +10,9 @@ public enum EventType {
     INVOICE_RECORDED("Facture enregistrée"),
     BORDEREAU_IMPORTED("Bordereau importé"),
     BORDEREAU_ACTIVATED("Version de bordereau activée"),
-    DOCUMENT_UPLOADED("Document téléversé");
+    DOCUMENT_UPLOADED("Document téléversé"),
+    TICKET_CREATED("Signalement créé"),
+    TICKET_STATUS_CHANGED("Statut de signalement modifié");
 
     private final String label;
 

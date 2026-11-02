@@ -4,6 +4,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.web.multipart.MultipartFile;
 import tn.hydra.exception.ResourceNotFoundException;
 import tn.hydra.ticket.TicketService.TicketResponse;
 
@@ -29,9 +30,11 @@ import java.util.UUID;
 public class TicketController {
 
     private final TicketService service;
+    private final TicketPhotoService photoService;
 
-    public TicketController(TicketService service) {
+    public TicketController(TicketService service, TicketPhotoService photoService) {
         this.service = service;
+        this.photoService = photoService;
     }
 
     public record CreateTicketRequest(String title, String description, UUID projectId,
@@ -131,5 +134,69 @@ public class TicketController {
     @PreAuthorize("hasAuthority('PERM_TICKET_READ')")
     public List<Map<String, Object>> documents(@PathVariable UUID id, Authentication auth) {
         return service.documentsOf(auth, id);
+    }
+
+    // ── photos: create a signalement with photos, then add / list / delete ──
+
+    /**
+     * Create a ticket and attach 0..10 BEFORE photos in one transaction. The
+     * "ticket" part is the same JSON as POST /api/tickets; the "photos" parts
+     * are image files. If one photo fails, no ticket is created.
+     */
+    @PostMapping("/with-photos")
+    @PreAuthorize("hasAuthority('PERM_TICKET_WRITE')")
+    public TicketResponse createWithPhotos(@RequestPart("ticket") CreateTicketRequest ticket,
+                                           @RequestPart(value = "photos", required = false) List<MultipartFile> photoFiles,
+                                           Authentication auth) {
+        return photoService.createWithPhotos(auth, ticket.title(), ticket.description(), ticket.projectId(),
+                ticket.assignedToId(), ticket.priority(), ticket.startAt(), ticket.dueAt(), ticket.documentId(),
+                ticket.type(), ticket.category(), ticket.origin(),
+                ticket.locationText(), ticket.ouvrageId(), ticket.responsiblePartyId(), photoFiles);
+    }
+
+    @PostMapping("/{id}/photos")
+    @PreAuthorize("hasAuthority('PERM_TICKET_WRITE')")
+    public TicketPhotoService.PhotoResponse addPhoto(@PathVariable UUID id,
+                                                     @RequestParam("file") MultipartFile file,
+                                                     @RequestParam(value = "phase", required = false) String phase,
+                                                     Authentication auth) {
+        return photoService.addPhoto(auth, id, file, phase);
+    }
+
+    @GetMapping("/{id}/photos")
+    @PreAuthorize("hasAuthority('PERM_TICKET_READ')")
+    public List<TicketPhotoService.PhotoResponse> listPhotos(@PathVariable UUID id, Authentication auth) {
+        return photoService.listPhotos(auth, id);
+    }
+
+    @DeleteMapping("/{id}/photos/{attachmentId}")
+    @PreAuthorize("hasAuthority('PERM_TICKET_WRITE')")
+    public ResponseEntity<Void> deletePhoto(@PathVariable UUID id, @PathVariable UUID attachmentId,
+                                            Authentication auth) {
+        photoService.deletePhoto(auth, id, attachmentId);
+        return ResponseEntity.noContent().build();
+    }
+
+    // ── search + summary ──
+
+    @GetMapping("/search")
+    @PreAuthorize("hasAuthority('PERM_TICKET_READ')")
+    public TicketService.TicketSearchPage search(Authentication auth,
+                                                 @RequestParam(required = false) UUID projectId,
+                                                 @RequestParam(required = false) String type,
+                                                 @RequestParam(required = false) String status,
+                                                 @RequestParam(required = false) Boolean mine,
+                                                 @RequestParam(required = false) Boolean overdue,
+                                                 @RequestParam(required = false) String q,
+                                                 @RequestParam(required = false, defaultValue = "0") int page,
+                                                 @RequestParam(required = false, defaultValue = "20") int size) {
+        return service.search(auth, projectId, type, status, mine, overdue, q, page, size);
+    }
+
+    @GetMapping("/summary")
+    @PreAuthorize("hasAuthority('PERM_TICKET_READ')")
+    public TicketService.TicketSummary summary(Authentication auth,
+                                               @RequestParam(required = false) UUID projectId) {
+        return service.summary(auth, projectId);
     }
 }

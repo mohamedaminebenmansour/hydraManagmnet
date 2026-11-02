@@ -1,10 +1,13 @@
 package tn.hydra.ticket;
 
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.security.core.Authentication;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import tn.hydra.audit.EventLogService;
+import tn.hydra.event.DomainEventService;
+import tn.hydra.event.EventType;
 import tn.hydra.common.BusinessRuleException;
 import tn.hydra.exception.ResourceNotFoundException;
 import tn.hydra.user.AppUser;
@@ -27,6 +30,10 @@ public class TicketService {
     public TicketService(JdbcTemplate jdbc, AppUserRepository users, EventLogService audit) {
         this.jdbc = jdbc; this.users = users; this.audit = audit;
     }
+
+    /** Field-injected so the 3-arg constructor (used by the mock TicketServiceTest) stays unchanged. */
+    @Autowired(required = false)
+    private DomainEventService domainEvents;
 
     // ══════════════════ RESPONSE SHAPE ══════════════════
 
@@ -241,6 +248,9 @@ public class TicketService {
 
         audit.log("TICKET_CREATED", "ticket", id,
                 "{\"title\":\"" + jsonEscape(title.trim()) + "\",\"type\":\"" + t.name() + "\"}");
+        if (domainEvents != null)
+            domainEvents.publish(me.getOrgId(), EventType.TICKET_CREATED, "TICKET", id, projectId,
+                    DomainEventService.payload("type", t.name(), "projectId", projectId));
         return reload(id, me.getOrgId());
     }
 
@@ -424,6 +434,136 @@ public class TicketService {
         }
         return out;
     }
+
+    // ══════════════════ 8. SEARCH ══════════════════
+
+    /** Same columns as SELECT_SQL plus a per-ticket photo_count (for the search result items). */
+    private static final String SEARCH_SELECT_SQL = SELECT_SQL.replace(
+            "t.resolution_note, t.closed_at, t.closed_by",
+            "t.resolution_note, t.closed_at, t.closed_by,\n"
+                    + "                   (select count(*) from ticket_attachment ta where ta.ticket_id = t.id) as photo_count");
+
+    /**
+     * Paginated search. {@code mine} = assigned to me, or status RESOLVED and I
+     * am the creator. {@code overdue} = due_at before today and status not in
+     * CLOSED/CANCELLED/AS_BUILT. {@code q} = case-insensitive in title and
+     * location_text. Order: overdue first, then due_at ascending, then created_at
+     * descending. {@code GET /api/tickets} (the old list) is left untouched.
+     */
+    public TicketSearchPage search(Authentication auth, UUID projectId, String type, String status,
+                                   Boolean mine, Boolean overdue, String q, int page, int size) {
+        AppUser me = users.findByEmail(auth.getName()).orElseThrow();
+        int sz = Math.min(Math.max(size <= 0 ? 20 : size, 1), 50);
+        int pg = Math.max(page, 0);
+
+        StringBuilder where = new StringBuilder(" where t.org_id = ?");
+        List<Object> args = new ArrayList<>();
+        args.add(me.getOrgId());
+        if (projectId != null) { where.append(" and t.project_id = ?"); args.add(projectId); }
+        if (type != null && !type.isBlank()) { where.append(" and t.type = ?"); args.add(type.trim()); }
+        if (status != null && !status.isBlank()) { where.append(" and t.status = ?"); args.add(status.trim()); }
+        if (Boolean.TRUE.equals(mine)) {
+            where.append(" and (t.assigned_to = ? or (t.status = 'RESOLVED' and t.created_by = ?))");
+            args.add(me.getId()); args.add(me.getId());
+        }
+        if (Boolean.TRUE.equals(overdue)) {
+            where.append(" and t.due_at is not null and t.due_at < current_date")
+                 .append(" and t.status not in ('CLOSED','CANCELLED','AS_BUILT')");
+        }
+        if (q != null && !q.isBlank()) {
+            where.append(" and (lower(t.title) like lower(?) or lower(coalesce(t.location_text,'')) like lower(?))");
+            String pat = "%" + q.trim() + "%";
+            args.add(pat); args.add(pat);
+        }
+        // IDOR: non-owner sees only tickets on projects they're a member of (or no project)
+        if (!Boolean.TRUE.equals(me.getIsOwner())) {
+            Set<UUID> accessible = new HashSet<>(jdbc.queryForList(
+                    "select project_id from project_member where user_id = ?", UUID.class, me.getId()));
+            if (accessible.isEmpty()) {
+                where.append(" and t.project_id is null");
+            } else {
+                where.append(" and (t.project_id is null or t.project_id in (");
+                StringJoiner sj = new StringJoiner(",");
+                for (UUID pid : accessible) { sj.add("?"); args.add(pid); }
+                where.append(sj).append("))");
+            }
+        }
+
+        Long total = jdbc.queryForObject("select count(*) from ticket t" + where, Long.class, args.toArray());
+        List<Object> pageArgs = new ArrayList<>(args);
+        pageArgs.add(sz);
+        pageArgs.add(pg * sz);
+        List<TicketSearchItem> items = jdbc.queryForList(
+                SEARCH_SELECT_SQL + where
+                  + " order by (t.due_at is not null and t.due_at < current_date"
+                  + " and t.status not in ('CLOSED','CANCELLED','AS_BUILT')) desc,"
+                  + " t.due_at asc nulls last, t.created_at desc limit ? offset ?",
+                pageArgs.toArray()).stream().map(TicketService::toSearchItem).toList();
+        return new TicketSearchPage(items, total == null ? 0 : total, pg, sz);
+    }
+
+    // ══════════════════ 9. SUMMARY ══════════════════
+
+    /**
+     * Counts of not-closed, not-cancelled tickets. {@code projectId} optional =
+     * all my projects (owner = all org projects; otherwise projects I'm a member
+     * of). {@code toVerify} = RESOLVED tickets I may close (creator, or owner —
+     * project-manager rule comes in T3).
+     */
+    public TicketSummary summary(Authentication auth, UUID projectId) {
+        AppUser me = users.findByEmail(auth.getName()).orElseThrow();
+        String scope = " where t.org_id = ? and t.status not in ('CLOSED','CANCELLED')";
+        List<Object> scopeArgs = new ArrayList<>();
+        scopeArgs.add(me.getOrgId());
+        if (projectId != null) {
+            scope += " and t.project_id = ?";
+            scopeArgs.add(projectId);
+        } else if (!Boolean.TRUE.equals(me.getIsOwner())) {
+            Set<UUID> accessible = new HashSet<>(jdbc.queryForList(
+                    "select project_id from project_member where user_id = ?", UUID.class, me.getId()));
+            if (accessible.isEmpty()) {
+                scope += " and t.project_id is null";
+            } else {
+                scope += " and (t.project_id is null or t.project_id in (";
+                StringJoiner sj = new StringJoiner(",");
+                for (UUID pid : accessible) { sj.add("?"); scopeArgs.add(pid); }
+                scope += sj + "))";
+            }
+        }
+
+        long mineCount = count(scope + " and t.assigned_to = ?", append(scopeArgs, me.getId()));
+        long overdueCount = count(scope + " and t.due_at is not null and t.due_at < current_date and t.status <> 'AS_BUILT'", scopeArgs);
+        long toVerify = Boolean.TRUE.equals(me.getIsOwner())
+                ? count(scope + " and t.status = 'RESOLVED'", scopeArgs)
+                : count(scope + " and t.status = 'RESOLVED' and t.created_by = ?", append(scopeArgs, me.getId()));
+        long openCount = count(scope + " and t.status = 'OPEN'", scopeArgs);
+        long inProgressCount = count(scope + " and t.status = 'IN_PROGRESS'", scopeArgs);
+        Map<String, Long> byType = new LinkedHashMap<>();
+        for (TicketType tt : TicketType.values())
+            byType.put(tt.name(), count(scope + " and t.type = ?", append(scopeArgs, tt.name())));
+        return new TicketSummary(mineCount, overdueCount, toVerify, openCount, inProgressCount, byType);
+    }
+
+    private long count(String whereClause, List<Object> args) {
+        Long n = jdbc.queryForObject("select count(*) from ticket t" + whereClause, Long.class, args.toArray());
+        return n == null ? 0 : n;
+    }
+
+    private static List<Object> append(List<Object> base, Object extra) {
+        List<Object> out = new ArrayList<>(base);
+        out.add(extra);
+        return out;
+    }
+
+    private static TicketSearchItem toSearchItem(Map<String, Object> r) {
+        Object pc = r.get("photo_count");
+        return new TicketSearchItem(toResponse(r), pc == null ? 0 : ((Number) pc).longValue());
+    }
+
+    public record TicketSearchItem(TicketResponse ticket, long photoCount) {}
+    public record TicketSearchPage(List<TicketSearchItem> items, long total, int page, int size) {}
+    public record TicketSummary(long mine, long overdue, long toVerify, long open, long inProgress,
+                                Map<String, Long> byType) {}
 
     // ══════════════════ VALIDATION HELPERS ══════════════════
 
