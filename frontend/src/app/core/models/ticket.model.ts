@@ -12,6 +12,20 @@ export interface Ticket {
   dueAt: string | null;
   documentId: string | null;
   createdAt: string;
+  // T1–T3 fields (all optional — old screens that don't use them still compile)
+  type?: string | null;
+  typeLabel?: string | null;
+  category?: string | null;
+  categoryLabel?: string | null;
+  origin?: string | null;
+  locationText?: string | null;
+  ouvrageId?: string | null;
+  ouvrageName?: string | null;
+  responsiblePartyId?: string | null;
+  responsiblePartyName?: string | null;
+  statusLabel?: string | null;
+  overdue?: boolean;
+  processInstanceId?: string | null;
 }
 
 /**
@@ -34,6 +48,54 @@ export interface TicketFilter {
   status?: string | null;
   priority?: string | null;
   mine?: boolean;
+}
+
+/** Search params for GET /api/tickets/search (T2). */
+export interface TicketSearchParams {
+  projectId?: string | null;
+  type?: string | null;
+  status?: string | null;
+  mine?: boolean;
+  overdue?: boolean;
+  q?: string | null;
+  page?: number;
+  size?: number;
+}
+
+/** One row of the reference catalogue (GET /api/tickets/catalog). */
+export interface TicketCatalogType {
+  code: string;
+  label: string;
+  icon: string;
+  colour: string;
+  defaultDays: number | null;
+  requiresAfterPhoto: boolean;
+  categories: { code: string; label: string }[];
+  statuses: { code: string; label: string }[];
+}
+
+/** A search result item = a Ticket + its photo count. */
+export interface TicketSearchItem {
+  ticket: Ticket;
+  photoCount: number;
+}
+
+/** Paginated search response: { items, total, page, size }. */
+export interface TicketSearchPage {
+  items: TicketSearchItem[];
+  total: number;
+  page: number;
+  size: number;
+}
+
+/** GET /api/tickets/summary response. */
+export interface TicketSummary {
+  mine: number;
+  overdue: number;
+  toVerify: number;
+  open: number;
+  inProgress: number;
+  byType: Record<string, number>;
 }
 
 /** Transmittal / RFI workflow: Draft → For Review → Approved → IFC → As-built. */
@@ -77,7 +139,9 @@ export const TICKET_PRIORITY_LABELS: Record<string, string> =
 /**
  * Backend TicketResponse serializes records as camelCase (Jackson default):
  * projectId, projectName, assignedToId, assignedToName, startAt, dueAt,
- * createdAt, documentId… Accept a few legacy aliases defensively.
+ * createdAt, documentId, type, typeLabel, category, categoryLabel, origin,
+ * locationText, ouvrageId, ouvrageName, responsiblePartyId, responsiblePartyName,
+ * statusLabel, overdue, processInstanceId… Accept a few legacy aliases defensively.
  */
 export function mapTicket(raw: any): Ticket {
   return {
@@ -93,7 +157,50 @@ export function mapTicket(raw: any): Ticket {
     startAt: raw?.startAt ?? raw?.start_at ?? null,
     dueAt: raw?.dueAt ?? raw?.due_at ?? null,
     documentId: raw?.documentId ?? raw?.document_id ?? null,
-    createdAt: raw?.createdAt ?? raw?.created_at ?? ''
+    createdAt: raw?.createdAt ?? raw?.created_at ?? '',
+    type: raw?.type ?? null,
+    typeLabel: raw?.typeLabel ?? null,
+    category: raw?.category ?? null,
+    categoryLabel: raw?.categoryLabel ?? null,
+    origin: raw?.origin ?? null,
+    locationText: raw?.locationText ?? raw?.location_text ?? null,
+    ouvrageId: raw?.ouvrageId ?? raw?.ouvrage_id ?? null,
+    ouvrageName: raw?.ouvrageName ?? raw?.ouvrage_name ?? null,
+    responsiblePartyId: raw?.responsiblePartyId ?? raw?.responsible_party_id ?? null,
+    responsiblePartyName: raw?.responsiblePartyName ?? raw?.responsible_party_name ?? null,
+    statusLabel: raw?.statusLabel ?? null,
+    overdue: raw?.overdue ?? false,
+    processInstanceId: raw?.processInstanceId ?? raw?.process_instance_id ?? null
+  };
+}
+
+/** Map a search item: { ticket: {...}, photoCount } (backend wraps the TicketResponse). */
+export function mapTicketSearchItem(raw: any): TicketSearchItem {
+  return {
+    ticket: mapTicket(raw?.ticket ?? raw),
+    photoCount: raw?.photoCount ?? raw?.photo_count ?? 0
+  };
+}
+
+/** Map a search page: { items, total, page, size }. */
+export function mapTicketSearchPage(raw: any): TicketSearchPage {
+  return {
+    items: (raw?.items ?? []).map(mapTicketSearchItem),
+    total: raw?.total ?? 0,
+    page: raw?.page ?? 0,
+    size: raw?.size ?? 20
+  };
+}
+
+/** Map a summary response (byType keys are type codes). */
+export function mapTicketSummary(raw: any): TicketSummary {
+  return {
+    mine: raw?.mine ?? 0,
+    overdue: raw?.overdue ?? 0,
+    toVerify: raw?.toVerify ?? 0,
+    open: raw?.open ?? 0,
+    inProgress: raw?.inProgress ?? raw?.in_progress ?? 0,
+    byType: raw?.byType ?? {}
   };
 }
 
@@ -124,4 +231,3 @@ export function mapTicketDocument(raw: any): TicketDocument {
     createdByName: raw?.created_by_name ?? null
   };
 }
-
