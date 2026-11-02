@@ -80,20 +80,35 @@ public class TicketPhotoService {
                                                           String type, String category, String origin,
                                                           String locationText, UUID ouvrageId, UUID responsiblePartyId,
                                                           List<MultipartFile> photos) {
+        return createWithPhotos(auth, title, description, projectId, assignedToId, priority,
+                startAt, dueAt, documentId, type, category, origin,
+                locationText, ouvrageId, responsiblePartyId, false, photos);
+    }
+
+    @Transactional
+    public TicketService.TicketResponse createWithPhotos(Authentication auth,
+                                                          String title, String description,
+                                                          UUID projectId, UUID assignedToId, String priority,
+                                                          java.time.LocalDate startAt, java.time.LocalDate dueAt,
+                                                          UUID documentId,
+                                                          String type, String category, String origin,
+                                                          String locationText, UUID ouvrageId, UUID responsiblePartyId,
+                                                          boolean isPrivate,
+                                                          List<MultipartFile> photos) {
         if (photos != null) {
             if (photos.size() > MAX_PHOTOS)
                 throw new BusinessRuleException("TOO_MANY_PHOTOS", "10 photos maximum par signalement");
             for (MultipartFile f : photos) validatePhoto(f);
         }
 
-        // check project access before creating
+        // check project access before creating (null project = TACHE « Bureau »; no check)
         AppUser me = users.findByEmail(auth.getName()).orElseThrow();
-        tickets.requireProjectAccess(me, projectId);
+        if (projectId != null) tickets.requireProjectAccess(me, projectId);
 
         // create the ticket (also publishes the TICKET_CREATED domain event)
         TicketService.TicketResponse t = tickets.create(auth, title, description, projectId,
                 assignedToId, priority, startAt, dueAt, documentId,
-                type, category, origin, locationText, ouvrageId, responsiblePartyId);
+                type, category, origin, locationText, ouvrageId, responsiblePartyId, isPrivate);
 
         if (photos != null) {
             for (MultipartFile f : photos) {
@@ -168,6 +183,76 @@ public class TicketPhotoService {
         jdbc.update("delete from ticket_attachment where id = ? and org_id = ?", attachmentId, me.getOrgId());
     }
 
+    // ══════════════════ 5. DELIVERABLE FILE (TACHE) ══════════════════
+
+    /**
+     * Attach a produced document (a TACHE deliverable) to a ticket. Stored as a
+     * ticket_attachment with phase DELIVERABLE, filed in the folder chosen by
+     * the ticket's category. Only the assignee or creator may upload, and only
+     * while the ticket is not CLOSED/CANCELLED. A ticket without a project
+     * cannot carry a deliverable (400).
+     */
+    @Transactional
+    public PhotoResponse addDeliverable(Authentication auth, UUID ticketId, MultipartFile file) {
+        AppUser me = users.findByEmail(auth.getName()).orElseThrow();
+        Map<String, Object> t = requireTicketRow(me, ticketId);
+        tickets.requireReadAccess(me, t);
+        UUID projectId = (UUID) t.get("project_id");
+        if (projectId == null)
+            throw new BusinessRuleException("PROJECT_REQUIRED",
+                    "Rattachez la tâche à un chantier pour joindre un fichier");
+        // only assignee or creator may upload a deliverable
+        UUID assignedTo = (UUID) t.get("assigned_to");
+        UUID createdBy = (UUID) t.get("created_by");
+        if (!me.getId().equals(assignedTo) && !me.getId().equals(createdBy))
+            throw new AccessDeniedException("Seul le responsable ou le créateur peut joindre un livrable");
+        String status = (String) t.get("status");
+        if ("CLOSED".equals(status) || "CANCELLED".equals(status))
+            throw new BusinessRuleException("TICKET_CLOSED",
+                    "Impossible d'ajouter un livrable à un signalement clos ou annulé");
+
+        Integer existing = jdbc.queryForObject(
+                "select count(*) from ticket_attachment where ticket_id = ? and org_id = ?",
+                Integer.class, ticketId, me.getOrgId());
+        if (existing == null) existing = 0;
+        if (existing + 1 > MAX_PHOTOS)
+            throw new BusinessRuleException("TOO_MANY_PHOTOS", "10 fichiers maximum par signalement");
+
+        String typeCode = (String) t.get("type");
+        String category = (String) t.get("category");
+        String ticketTitle = (String) t.get("title");
+        return attachDeliverable(auth, ticketId, projectId, typeCode, category, ticketTitle, file);
+    }
+
+    /** Store one deliverable as a document + create the DELIVERABLE ticket_attachment row. */
+    private PhotoResponse attachDeliverable(Authentication auth, UUID ticketId, UUID projectId,
+                                             String typeCode, String category, String ticketTitle, MultipartFile file) {
+        AppUser me = users.findByEmail(auth.getName()).orElseThrow();
+        UUID folderId = folderFiling.folderFor(projectId, folderCodeForCategory(category));
+        String title = "Livrable — " + (ticketTitle == null ? "" : ticketTitle);
+        DocumentResponse doc = documents.uploadSystemFiled(auth, folderId, title, DocType.PHOTO,
+                ticketId, file);
+        em.flush();
+
+        List<Map<String, Object>> revs = jdbc.queryForList(
+                "select id, storage_key from document_revision where document_id = ? and rev_label = ?",
+                doc.id(), doc.currentRev());
+        if (revs.isEmpty())
+            throw new IllegalStateException("deliverable revision not found after flush");
+        UUID revId = (UUID) revs.get(0).get("id");
+        String storageKey = (String) revs.get(0).get("storage_key");
+        registerDeleteOnRollback(storageKey);
+
+        Map<String, Object> att = jdbc.queryForMap("""
+                insert into ticket_attachment (org_id, ticket_id, document_id, phase, created_by)
+                values (?, ?, ?, 'DELIVERABLE', ?) returning id, created_at
+                """, me.getOrgId(), ticketId, doc.id(), me.getId());
+        UUID attachmentId = (UUID) att.get("id");
+        Instant createdAt = toInstant(att.get("created_at"));
+        String downloadUrl = "/api/documents/" + doc.id() + "/revisions/" + revId + "/download";
+        return new PhotoResponse(attachmentId, doc.id(), "DELIVERABLE", title, me.getId(), createdAt, downloadUrl);
+    }
+
     // ══════════════════ HELPERS ══════════════════
 
     /** Store one photo as a document + create the ticket_attachment row + register rollback cleanup. */
@@ -223,7 +308,19 @@ public class TicketPhotoService {
         return switch (t) {
             case RESERVE                     -> "04_QUAL.RESERVES";
             case PROBLEME, DEMANDE           -> "03_EXEC.PHOTOS";
+            case TACHE                       -> "03_EXEC.PHOTOS"; // photos not expected for a TACHE; default
             case VISA_DOCUMENT               -> "02_TECH.PLANS";
+        };
+    }
+
+    /** Folder code for a TACHE deliverable, by category (A6). */
+    private static String folderCodeForCategory(String category) {
+        return switch (category == null ? "AUTRE" : category.toUpperCase()) {
+            case "DOCUMENT", "TECHNIQUE"     -> "02_TECH";
+            case "ADMINISTRATIF"             -> "01_ADMIN";
+            case "ACHAT"                     -> "05_ACHAT";
+            case "FINANCE"                   -> "06_FIN";
+            default                          -> "03_EXEC"; // AUTRE
         };
     }
 
@@ -253,7 +350,7 @@ public class TicketPhotoService {
 
     private Map<String, Object> requireTicketRow(AppUser me, UUID ticketId) {
         List<Map<String, Object>> rows = jdbc.queryForList(
-                "select project_id, type, title, status from ticket where id = ? and org_id = ?",
+                "select project_id, type, title, status, category, created_by, assigned_to from ticket where id = ? and org_id = ?",
                 ticketId, me.getOrgId());
         if (rows.isEmpty())
             throw new ResourceNotFoundException("TICKET_NOT_FOUND", "Ticket introuvable");

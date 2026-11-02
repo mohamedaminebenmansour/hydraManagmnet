@@ -32,6 +32,18 @@
         }
       </div>
 
+      @if (isTache()) {
+        <!-- TACHE: assigné à right after the title (required) -->
+        <div class="field">
+          <label>Assigné à*</label>
+          <p-select [options]="assigneeOpts()" [ngModel]="assignee()" (ngModelChange)="assignee.set($event)"
+                    placeholder="Choisir une personne" optionLabel="label" optionValue="value" styleClass="w100" />
+          @if (attemptedSave() && !assignee()) {
+            <span class="field-err">Une tâche doit être assignée à une personne.</span>
+          }
+        </div>
+      }
+
       @if (selectedType() !== 'VISA_DOCUMENT') {
         <div class="field">
           <label>Catégorie*</label>
@@ -57,67 +69,94 @@
         </div>
       }
 
-      <div class="field">
-        <label>Photos « avant » ({{ photoCount }}/{{ maxPhotos }})</label>
-        <div class="photo-actions">
-          <label class="photo-btn">
-            <input type="file" accept="image/*" capture="environment" (change)="onPickPhoto($event)" hidden />
-            <i class="pi pi-camera"></i> Prendre une photo
-          </label>
-          <label class="photo-btn">
-            <input type="file" accept="image/*" multiple (change)="onPickPhoto($event)" hidden />
-            <i class="pi pi-images"></i> Choisir dans la galerie
-          </label>
+      @if (showPhotos()) {
+        <div class="field">
+          <label>Photos « avant » ({{ photoCount }}/{{ maxPhotos }})</label>
+          <div class="photo-actions">
+            <label class="photo-btn">
+              <input type="file" accept="image/*" capture="environment" (change)="onPickPhoto($event)" hidden />
+              <i class="pi pi-camera"></i> Prendre une photo
+            </label>
+            <label class="photo-btn">
+              <input type="file" accept="image/*" multiple (change)="onPickPhoto($event)" hidden />
+              <i class="pi pi-images"></i> Choisir dans la galerie
+            </label>
+          </div>
+          @if (compressing()) { <span class="compressing">Préparation…</span> }
+          <div class="thumbs">
+            @for (p of photos(); track p.url; let i = $index) {
+              <div class="thumb">
+                <img [src]="p.url" alt="Photo avant" />
+                <button class="thumb-remove" (click)="removePhoto(i)" aria-label="Supprimer la photo">×</button>
+              </div>
+            }
+          </div>
         </div>
-        @if (compressing()) { <span class="compressing">Préparation…</span> }
-        <div class="thumbs">
-          @for (p of photos(); track p.url; let i = $index) {
-            <div class="thumb">
-              <img [src]="p.url" alt="Photo avant" />
-              <button class="thumb-remove" (click)="removePhoto(i)" aria-label="Supprimer la photo">×</button>
-            </div>
-          }
-        </div>
-      </div>
+      }
 
       <div class="field">
-        <label>Chantier*</label>
-        <p-select [options]="projectOpts()" [ngModel]="selectedProject()" (ngModelChange)="onProjectChange($event)"
-                  placeholder="Choisir un chantier" optionLabel="label" optionValue="value" styleClass="w100" />
-        @if (attemptedSave() && !selectedProject()) {
-          <span class="field-err">Choisissez un chantier.</span>
+        @if (isTache()) {
+          <label>Chantier</label>
+          <p-select [options]="projectOptsTache()" [ngModel]="selectedProject()" (ngModelChange)="onProjectChange($event)"
+                    placeholder="Bureau (aucun chantier)" optionLabel="label" optionValue="value" styleClass="w100" />
+        } @else {
+          <label>Chantier*</label>
+          <p-select [options]="projectOpts()" [ngModel]="selectedProject()" (ngModelChange)="onProjectChange($event)"
+                    placeholder="Choisir un chantier" optionLabel="label" optionValue="value" styleClass="w100" />
+          @if (attemptedSave() && !selectedProject()) {
+            <span class="field-err">Choisissez un chantier.</span>
+          }
         }
       </div>
 
-      <button type="button" class="details-toggle" (click)="showDetails.set(!showDetails())">
-        <i class="pi" [class.pi-angle-down]="!showDetails()" [class.pi-angle-up]="showDetails()"></i>
-        {{ showDetails() ? 'Moins de détails' : 'Plus de détails' }}
-      </button>
-      <div class="details" [class.expanded]="showDetails()">
+      @if (isTache()) {
+        <!-- TACHE: private checkbox -->
         <div class="field">
-          <label>Ouvrage (optionnel)</label>
-          <p-select [options]="ouvrageOpts()" [ngModel]="selectedOuvrage()" (ngModelChange)="selectedOuvrage.set($event)"
-                    placeholder="Aucun" [showClear]="true" optionLabel="label" optionValue="value" styleClass="w100" />
+          <label class="checkbox-row">
+            <p-checkbox [ngModel]="isPrivate()" (ngModelChange)="isPrivate.set($event)" [binary]="true" />
+            <span>Tâche privée</span>
+          </label>
+          <span class="field-help">Visible seulement par vous, la personne assignée et le gérant.</span>
         </div>
-        <div class="field">
-          <label>Lieu / PK</label>
-          <input pInputText [ngModel]="locationText()" (ngModelChange)="locationText.set($event)" placeholder="Ex. : PK 2+300" />
+      }
+
+      @if (showChantierFields()) {
+        <button type="button" class="details-toggle" (click)="showDetails.set(!showDetails())">
+          <i class="pi" [class.pi-angle-down]="!showDetails()" [class.pi-angle-up]="showDetails()"></i>
+          {{ showDetails() ? 'Moins de détails' : 'Plus de détails' }}
+        </button>
+        <div class="details" [class.expanded]="showDetails()">
+          <div class="field">
+            <label>Ouvrage (optionnel)</label>
+            <p-select [options]="ouvrageOpts()" [ngModel]="selectedOuvrage()" (ngModelChange)="selectedOuvrage.set($event)"
+                      placeholder="Aucun" [showClear]="true" optionLabel="label" optionValue="value" styleClass="w100" />
+          </div>
+          <div class="field">
+            <label>Lieu / PK</label>
+            <input pInputText [ngModel]="locationText()" (ngModelChange)="locationText.set($event)" placeholder="Ex. : PK 2+300" />
+          </div>
+          <div class="field">
+            <label>Assigné à</label>
+            <p-select [options]="assigneeOpts()" [ngModel]="assignee()" (ngModelChange)="assignee.set($event)"
+                      placeholder="Non assigné" [showClear]="true" optionLabel="label" optionValue="value" styleClass="w100" />
+          </div>
+          <div class="field">
+            <label>Responsable externe (optionnel)</label>
+            <p-select [options]="partyOpts()" [ngModel]="responsibleParty()" (ngModelChange)="responsibleParty.set($event)"
+                      placeholder="Aucun" [showClear]="true" optionLabel="label" optionValue="value" styleClass="w100" />
+          </div>
+          <div class="field">
+            <label>Description (optionnel)</label>
+            <textarea pTextarea rows="4" [ngModel]="description()" (ngModelChange)="description.set($event)"></textarea>
+          </div>
         </div>
-        <div class="field">
-          <label>Assigné à</label>
-          <p-select [options]="assigneeOpts()" [ngModel]="assignee()" (ngModelChange)="assignee.set($event)"
-                    placeholder="Non assigné" [showClear]="true" optionLabel="label" optionValue="value" styleClass="w100" />
-        </div>
-        <div class="field">
-          <label>Responsable externe (optionnel)</label>
-          <p-select [options]="partyOpts()" [ngModel]="responsibleParty()" (ngModelChange)="responsibleParty.set($event)"
-                    placeholder="Aucun" [showClear]="true" optionLabel="label" optionValue="value" styleClass="w100" />
-        </div>
+      } @else {
+        <!-- TACHE: description only (no details toggle) -->
         <div class="field">
           <label>Description (optionnel)</label>
           <textarea pTextarea rows="4" [ngModel]="description()" (ngModelChange)="description.set($event)"></textarea>
         </div>
-      </div>
+      }
 
       <div class="field">
         <label>Échéance</label>

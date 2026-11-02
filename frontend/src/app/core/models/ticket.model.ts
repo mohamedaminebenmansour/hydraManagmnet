@@ -25,6 +25,7 @@ export interface Ticket {
   responsiblePartyName?: string | null;
   statusLabel?: string | null;
   overdue?: boolean;
+  isPrivate?: boolean;
   processInstanceId?: string | null;
 }
 
@@ -170,6 +171,7 @@ export function mapTicket(raw: any): Ticket {
     responsiblePartyName: raw?.responsiblePartyName ?? raw?.responsible_party_name ?? null,
     statusLabel: raw?.statusLabel ?? null,
     overdue: raw?.overdue ?? false,
+    isPrivate: raw?.isPrivate ?? raw?.is_private ?? false,
     processInstanceId: raw?.processInstanceId ?? raw?.process_instance_id ?? null
   };
 }

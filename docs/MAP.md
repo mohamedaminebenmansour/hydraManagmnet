@@ -17,13 +17,13 @@ section (grep the method, then read around it).
 | `security` | `PermissionService`, `FolderAccessService`, `ToxicPairService`, `HydraUserDetailsService`, `SessionRevoker` | Permissions, folder ACL (a folder without rows inherits its parent's), segregation of duties |
 | `audit` | `EventLogService`, `AuditService`, `AuditController` | Append-only event log |
 | `event` | `DomainEventService`, `EventType`, `DomainEventController` | Domain events (table domain_event, V47): one row per business action, written in the action's transaction by `DomainEventService.publish` (payment submitted, cash posted, step completed, BC created, BL received, facture recorded, bordereau imported / activated, document uploaded). Nothing consumes them yet. `GET /api/events` (owner) feeds the "Journal des événements" page. Not the audit log |
-| `ticket` | `TicketService`, `TicketController`, `TicketPhotoService`, `TicketType`, `TicketWorkflow` | Signalements: 4 types, categories, origine (RESERVE), ouvrage/party links; universal lifecycle OPEN→IN_PROGRESS→RESOLVED→CLOSED (+CANCELLED) driven by named actions (start/resolve/verify/reopen/cancel) with role rules (assignee-or-creator for start/resolve; creator/owner/manager for verify/reopen/cancel; RESERVE resolve needs an AFTER photo, verify ≠ resolver). VISA keeps DRAFT→…→AS_BUILT via POST /{id}/status. Photos (V49) via `DocumentService.upload` filed by type. Timeline + comments (V50, ticket_comment). `GET /api/tickets/catalog` / `/search` / `/summary` / `/{id}/actions` / `/{id}/timeline`. `TICKET_CREATED` + `TICKET_STATUS_CHANGED` domain events |
+| `ticket` | `TicketService` (~1070), `TicketController` (~260), `TicketPhotoService` (~340, photos + deliverable files), `TicketType`, `TicketWorkflow` | Signalements: 5 types (PROBLEME/RESERVE/DEMANDE/TACHE/VISA_DOCUMENT), categories, origine (RESERVE), ouvrage/party links; universal lifecycle OPEN→IN_PROGRESS→RESOLVED→CLOSED (+CANCELLED) for the first four; VISA keeps DRAFT→…→AS_BUILT. TACHE = office task, project optional (null = « Bureau »), is_private (creator+assignee only). Central visibility rule `canRead` + `readVisibilityFragment` (A4) used by get/list/search/summary/actions/timeline/comments/photos/files. Deliverable files (POST /{id}/files, phase DELIVERABLE) filed by category. `GET /api/tickets/catalog` / `/search` / `/summary` / `/{id}/actions` / `/{id}/timeline` / `/{id}/photos` / `/{id}/files`. |
 | `user`, `role`, `auth` | `UserService`, `RoleService`, `AuthController` | Users (incl. absence `absent_until`), roles, login |
-| `config` | `SecurityConfig`, `CorsConfig`, `BootstrapRunner`, `DemoDataRunner`, `DevDataSeedRunner` | Security, CORS, seeding |
+| `config` | `SecurityConfig`, `CorsConfig`, `BootstrapRunner`, `DemoDataRunner` (off by default since T9), `config/demo/` (`DemoScenarioRunner`, `DemoTachesScenario`, `DemoScenario`, `InMemoryMultipartFile`) | Security, CORS, seeding. `@Profile("demo")` demo pack creates the « HYDRA Démo » company + 9 users + 1 chantier + 11 signalements; never touches the real company. See `docs/DEMO.md`. |
 | `common`, `exception` | `GlobalExceptionHandler`, `BusinessRuleException` | Errors → HTTP |
 
-Migrations: `backend/src/main/resources/db/migration/`, last on main = **V50__ticket_comment.sql**.
-Never edit an existing migration; the next one is V51.
+Migrations: `backend/src/main/resources/db/migration/`, last on main = **V51__ticket_task_type.sql**.
+Never edit an existing migration; the next one is V52.
 Recent ones: V38 rule columns · V39 FINANCE_ONLY rule · V40 step approvals (ALL mode) ·
 V41 project_member default · V42 role substitute · V43 opt-out seed · V44 absences ·
 V45 bordereau_version.source_document_id / source_revision · V46 two-level folder tree
@@ -35,7 +35,9 @@ indexes on org+project+type+status, org+assignee+status, org+due_at) ·
 V49 ticket_attachment (photos: ticket_id/document_id/phase BEFORE|AFTER|OTHER,
 unique(ticket_id, document_id), on delete cascade, index org+ticket) ·
 V50 ticket_comment (timeline: author_id/kind COMMENT|STATUS_CHANGE|SYSTEM/body/from_status/to_status;
-index org+ticket+created_at).
+index org+ticket+created_at) ·
+V51 ticket TACHE type (type+status check add TACHE; is_private boolean;
+ticket_attachment phase DELIVERABLE; project_id already nullable — no change).
 
 Key behaviours to remember:
 - A rule is enabled on a chantier unless `project_process_template.enabled = false` (opt-out).
@@ -67,6 +69,7 @@ Tests: `backend/src/test/java/tn/hydra/<package>/`. Test DB: `hydra_test` on
 - `MAP.md` — this file (update it when a module or big file is added)
 - `BORDEREAU-ANALYSIS.md` — bordereau structure and import rules
 - `SECURITY.md` — what is protected and the owner's security checklist
+- `DEMO.md` — how to switch on the « HYDRA Démo » company + scenario pack
 
 ## Never read
 `frontend/node_modules`, `frontend/dist`, `frontend/.angular`, `backend/target`,

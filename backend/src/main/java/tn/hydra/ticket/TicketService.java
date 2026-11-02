@@ -50,7 +50,7 @@ public class TicketService {
                                  String origin, String locationText,
                                  UUID ouvrageId, String ouvrageName,
                                  UUID responsiblePartyId, String responsiblePartyName,
-                                 String statusLabel, boolean overdue) {}
+                                 String statusLabel, boolean overdue, boolean isPrivate) {}
 
     public record CatalogType(String code, String label, String icon, String colour,
                               Integer defaultDays, boolean requiresAfterPhoto,
@@ -68,7 +68,7 @@ public class TicketService {
                    t.type, t.category, t.origin, t.location_text,
                    t.ouvrage_id, o.name as ouvrage_name,
                    t.responsible_party_id, rp.name as responsible_party_name,
-                   t.resolution_note, t.closed_at, t.closed_by
+                   t.resolution_note, t.closed_at, t.closed_by, t.is_private
             from ticket t
             left join project p on p.id = t.project_id
             left join app_user au on au.id = t.assigned_to
@@ -99,19 +99,13 @@ public class TicketService {
         if (priority != null && !priority.isBlank()) { sql.append(" and t.priority = ?"); args.add(priority.trim()); }
         if (type != null && !type.isBlank()) { sql.append(" and t.type = ?"); args.add(type.trim()); }
         if (Boolean.TRUE.equals(mine)) { sql.append(" and t.assigned_to = ?"); args.add(me.getId()); }
+        // Central visibility rule (A4): one SQL fragment, never copied.
+        String vis = readVisibilityFragment(me, args);
+        if (vis != null) sql.append(vis);
         sql.append(" order by t.created_at desc");
 
-        List<TicketResponse> result = jdbc.queryForList(sql.toString(), args.toArray()).stream()
+        return jdbc.queryForList(sql.toString(), args.toArray()).stream()
                 .map(TicketService::toResponse).toList();
-
-        // IDOR guard: non-owner users only see tickets on projects they're members of
-        // (or tickets with no project — those are org-wide).
-        if (Boolean.TRUE.equals(me.getIsOwner())) return result;
-        Set<UUID> accessibleProjects = new HashSet<>(jdbc.queryForList(
-                "select project_id from project_member where user_id = ?", UUID.class, me.getId()));
-        return result.stream()
-                .filter(t -> t.projectId() == null || accessibleProjects.contains(t.projectId()))
-                .toList();
     }
 
     // ══════════════════ 2. GET ONE (null → 404) ══════════════════
@@ -121,20 +115,9 @@ public class TicketService {
         List<Map<String, Object>> rows = jdbc.queryForList(
                 SELECT_SQL + " where t.id = ? and t.org_id = ?", id, me.getOrgId());
         if (rows.isEmpty()) return null;
-        // IDOR guard: non-owner users can only see tickets on projects they're members of
-        // (or tickets with no project — those are org-wide).
+        // Central visibility rule (A4): not readable -> null (controller maps to 404).
         Map<String, Object> row = rows.get(0);
-        if (!Boolean.TRUE.equals(me.getIsOwner())) {
-            UUID ticketProjectId = (UUID) row.get("project_id");
-            if (ticketProjectId != null) {
-                Integer cnt = jdbc.queryForObject(
-                        "select count(*) from project_member where project_id = ? and user_id = ?",
-                        Integer.class, ticketProjectId, me.getId());
-                if (cnt == null || cnt == 0) {
-                    return null; // Not found → same as 404, no info leak
-                }
-            }
-        }
+        if (!canRead(me, row)) return null;
         return toResponse(row);
     }
 
@@ -177,10 +160,12 @@ public class TicketService {
      * and a responsible party. Validation follows the design spec:
      * <ul>
      *   <li>type missing → VISA_DOCUMENT (so a call with no type behaves like the 9-arg create).</li>
-     *   <li>category required for PROBLEME/RESERVE/DEMANDE and must belong to the type; forbidden for VISA_DOCUMENT.</li>
+     *   <li>category required for PROBLEME/RESERVE/DEMANDE/TACHE and must belong to the type; forbidden for VISA_DOCUMENT.</li>
      *   <li>origin only for RESERVE; defaults to INTERNE.</li>
      *   <li>dueAt missing and the type has a default delay → today + default days.</li>
      *   <li>ouvrageId must belong to the same project + org; responsiblePartyId to the same org.</li>
+     *   <li>TACHE: projectId OPTIONAL (null = « Bureau »); assignedToId REQUIRED;
+     *       is_private accepted only for TACHE; origin/ouvrageId/locationText/responsiblePartyId forbidden.</li>
      * </ul>
      */
     @Transactional
@@ -189,18 +174,63 @@ public class TicketService {
                                  LocalDate startAt, LocalDate dueAt, UUID documentId,
                                  String type, String category, String origin,
                                  String locationText, UUID ouvrageId, UUID responsiblePartyId) {
+        return create(auth, title, description, projectId, assignedToId, priority,
+                startAt, dueAt, documentId, type, category, origin,
+                locationText, ouvrageId, responsiblePartyId, false);
+    }
+
+    /** Full create with {@code isPrivate} (TACHE only; 400 for other types). */
+    @Transactional
+    public TicketResponse create(Authentication auth, String title, String description,
+                                 UUID projectId, UUID assignedToId, String priority,
+                                 LocalDate startAt, LocalDate dueAt, UUID documentId,
+                                 String type, String category, String origin,
+                                 String locationText, UUID ouvrageId, UUID responsiblePartyId,
+                                 boolean isPrivate) {
         AppUser me = users.findByEmail(auth.getName()).orElseThrow();
         if (isBlank(title))
             throw new BusinessRuleException("REQUIRED_FIELDS", "Le titre est obligatoire");
-        if (projectId == null)
+
+        TicketType t = TicketType.from(type);
+        boolean isTache = t == TicketType.TACHE;
+
+        // TACHE-specific rules
+        if (isTache) {
+            // assignedToId REQUIRED for a TACHE
+            if (assignedToId == null)
+                throw new BusinessRuleException("REQUIRED_FIELDS",
+                        "Une tâche doit être assignée à une personne");
+            // origin / ouvrageId / locationText / responsiblePartyId forbidden for a TACHE
+            if (!isBlank(origin))
+                throw new BusinessRuleException("INVALID_ORIGIN",
+                        "L'origine ne s'applique pas à une tâche");
+            if (ouvrageId != null)
+                throw new BusinessRuleException("INVALID_OUVRAGE",
+                        "Une tâche n'est pas rattachée à un ouvrage");
+            if (!isBlank(locationText))
+                throw new BusinessRuleException("INVALID_LOCATION",
+                        "Le lieu ne s'applique pas à une tâche");
+            if (responsiblePartyId != null)
+                throw new BusinessRuleException("INVALID_PARTY",
+                        "Un responsable externe ne s'applique pas à une tâche");
+        } else {
+            // is_private only for a TACHE
+            if (isPrivate)
+                throw new BusinessRuleException("INVALID_PRIVATE",
+                        "Seule une tâche peut être privée");
+        }
+
+        // projectId: required for non-TACHE; optional for TACHE (null = « Bureau »)
+        if (projectId == null && !isTache)
             throw new BusinessRuleException("REQUIRED_FIELDS", "Le projet est obligatoire");
-        requireProject(me, projectId, false);                 // must exist in org and be ACTIF
+        if (projectId != null) {
+            requireProject(me, projectId, false);                 // must exist in org and be ACTIF
+            requireProjectAccess(me, projectId);                  // IDOR: caller must be a member (or owner)
+        }
         if (assignedToId != null) requireUserInOrg(me, assignedToId);
         String prio = normalizePriority(priority);
 
-        TicketType t = TicketType.from(type);
-
-        // category: required for the three signalement types (and must belong to the type);
+        // category: required for the signalement types incl. TACHE (and must belong to the type);
         // forbidden for VISA_DOCUMENT.
         String categoryNorm = null;
         if (t == TicketType.VISA_DOCUMENT) {
@@ -224,7 +254,7 @@ public class TicketService {
             if (!originNorm.equals("CLIENT") && !originNorm.equals("INTERNE"))
                 throw new BusinessRuleException("INVALID_ORIGIN",
                         "Origine invalide : CLIENT ou INTERNE");
-        } else if (!isBlank(origin)) {
+        } else if (!isBlank(origin) && !isTache) {
             throw new BusinessRuleException("INVALID_ORIGIN",
                     "L'origine ne s'applique qu'à une réserve");
         }
@@ -242,11 +272,13 @@ public class TicketService {
         UUID id = jdbc.queryForObject("""
                 insert into ticket (org_id, title, description, status, priority,
                                     project_id, assigned_to, start_at, due_at, created_by, document_id,
-                                    type, category, origin, location_text, ouvrage_id, responsible_party_id)
-                values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) returning id
+                                    type, category, origin, location_text, ouvrage_id, responsible_party_id,
+                                    is_private)
+                values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) returning id
                 """, UUID.class, me.getOrgId(), title.trim(), description,
                 initial.name(), prio, projectId, assignedToId, startAt, due, me.getId(), documentId,
-                t.name(), categoryNorm, originNorm, locationText, ouvrageId, responsiblePartyId);
+                t.name(), categoryNorm, originNorm, locationText, ouvrageId, responsiblePartyId,
+                isPrivate);
 
         audit.log("TICKET_CREATED", "ticket", id,
                 "{\"title\":\"" + jsonEscape(title.trim()) + "\",\"type\":\"" + t.name() + "\"}");
@@ -491,19 +523,9 @@ public class TicketService {
             String pat = "%" + q.trim() + "%";
             args.add(pat); args.add(pat);
         }
-        // IDOR: non-owner sees only tickets on projects they're a member of (or no project)
-        if (!Boolean.TRUE.equals(me.getIsOwner())) {
-            Set<UUID> accessible = new HashSet<>(jdbc.queryForList(
-                    "select project_id from project_member where user_id = ?", UUID.class, me.getId()));
-            if (accessible.isEmpty()) {
-                where.append(" and t.project_id is null");
-            } else {
-                where.append(" and (t.project_id is null or t.project_id in (");
-                StringJoiner sj = new StringJoiner(",");
-                for (UUID pid : accessible) { sj.add("?"); args.add(pid); }
-                where.append(sj).append("))");
-            }
-        }
+        // Central visibility rule (A4): one SQL fragment, never copied.
+        String vis = readVisibilityFragment(me, args);
+        if (vis != null) where.append(vis);
 
         Long total = jdbc.queryForObject("select count(*) from ticket t" + where, Long.class, args.toArray());
         List<Object> pageArgs = new ArrayList<>(args);
@@ -534,18 +556,10 @@ public class TicketService {
         if (projectId != null) {
             scope += " and t.project_id = ?";
             scopeArgs.add(projectId);
-        } else if (!Boolean.TRUE.equals(me.getIsOwner())) {
-            Set<UUID> accessible = new HashSet<>(jdbc.queryForList(
-                    "select project_id from project_member where user_id = ?", UUID.class, me.getId()));
-            if (accessible.isEmpty()) {
-                scope += " and t.project_id is null";
-            } else {
-                scope += " and (t.project_id is null or t.project_id in (";
-                StringJoiner sj = new StringJoiner(",");
-                for (UUID pid : accessible) { sj.add("?"); scopeArgs.add(pid); }
-                scope += sj + "))";
-            }
         }
+        // Central visibility rule (A4): one SQL fragment, never copied.
+        String vis = readVisibilityFragment(me, scopeArgs);
+        if (vis != null) scope += vis;
 
         long mineCount = count(scope + " and (t.assigned_to = ? or (t.status = 'RESOLVED' and t.created_by = ?))", append(append(scopeArgs, me.getId()), me.getId()));
         long overdueCount = count(scope + " and t.due_at is not null and t.due_at < current_date and t.status <> 'AS_BUILT'", scopeArgs);
@@ -829,6 +843,60 @@ public class TicketService {
         return cnt != null && cnt > 0;
     }
 
+    // ── A4: central visibility rule (one Java method + one SQL fragment) ──
+
+    /**
+     * Central readability predicate (A4). A user can read a ticket if he is the
+     * owner, the creator or the assignee; otherwise:
+     * <ul>
+     *   <li>TACHE private OR TACHE without project → creator/assignee only (already checked above → false).</li>
+     *   <li>any ticket WITH a project → member of that project.</li>
+     *   <li>non-TACHE WITHOUT a project → org-wide (today's rule; true).</li>
+     * </ul>
+     * Used by {@link #get}, {@link #requireReadAccess} and indirectly by
+     * {@link #readVisibilityFragment} for list/search/summary.
+     */
+    boolean canRead(AppUser me, Map<String, Object> t) {
+        if (Boolean.TRUE.equals(me.getIsOwner())) return true;
+        if (me.getId().equals(t.get("created_by"))) return true;
+        if (me.getId().equals(t.get("assigned_to"))) return true;
+        String type = (String) t.get("type");
+        UUID projectId = (UUID) t.get("project_id");
+        boolean isPrivate = Boolean.TRUE.equals(t.get("is_private"));
+        // restricted TACHE (private OR no project): only creator/assignee/owner — already checked → false
+        if ("TACHE".equals(type) && (isPrivate || projectId == null)) return false;
+        // non-TACHE without project = org-wide (today's rule)
+        if (projectId == null) return true;
+        Integer cnt = jdbc.queryForObject(
+                "select count(*) from project_member where project_id = ? and user_id = ?",
+                Integer.class, projectId, me.getId());
+        return cnt != null && cnt > 0;
+    }
+
+    /**
+     * Central visibility SQL fragment (A4). Encodes the same predicate as
+     * {@link #canRead}: owner sees all (returns null); otherwise creator OR
+     * assignee OR (not-restricted-TACHE AND (no-project OR my-project)). Binds
+     * the caller's id and accessible project ids into {@code args}.
+     */
+    String readVisibilityFragment(AppUser me, List<Object> args) {
+        if (Boolean.TRUE.equals(me.getIsOwner())) return null;
+        Set<UUID> accessible = new HashSet<>(jdbc.queryForList(
+                "select project_id from project_member where user_id = ?", UUID.class, me.getId()));
+        StringBuilder sb = new StringBuilder(" and (t.created_by = ? or t.assigned_to = ?");
+        args.add(me.getId()); args.add(me.getId());
+        sb.append(" or (not (t.type = 'TACHE' and (t.is_private or t.project_id is null))");
+        sb.append(" and (t.project_id is null");
+        if (!accessible.isEmpty()) {
+            sb.append(" or t.project_id in (");
+            StringJoiner sj = new StringJoiner(",");
+            for (UUID pid : accessible) { sj.add("?"); args.add(pid); }
+            sb.append(sj).append(")");
+        }
+        sb.append(")))");
+        return sb.toString();
+    }
+
     /** Reusable project-access check: owner or project_member. Package-private so TicketPhotoService can call it. */
     void requireProjectAccess(AppUser me, UUID projectId) {
         if (Boolean.TRUE.equals(me.getIsOwner())) return;
@@ -840,9 +908,10 @@ public class TicketService {
             throw new AccessDeniedException("Accès non autorisé à ce projet");
     }
 
-    /** Reusable read-access check: owner or project_member of the ticket's project. */
+    /** Reusable read-access check (A4): throws AccessDeniedException when not readable. */
     void requireReadAccess(AppUser me, Map<String, Object> t) {
-        requireProjectAccess(me, (UUID) t.get("project_id"));
+        if (!canRead(me, t))
+            throw new AccessDeniedException("Accès non autorisé à ce signalement");
     }
 
     private static TimelineEntry toTimelineEntry(Map<String, Object> r) {
@@ -867,7 +936,7 @@ public class TicketService {
     /** Same-org ticket row or ResourceNotFoundException(TICKET_NOT_FOUND → 404 JSON). */
     private Map<String, Object> requireTicket(AppUser me, UUID id) {
         List<Map<String, Object>> rows = jdbc.queryForList(
-                "select id, title, status, type, project_id, assigned_to, created_by, resolved_by from ticket where id = ? and org_id = ?",
+                "select id, title, status, type, project_id, assigned_to, created_by, resolved_by, is_private from ticket where id = ? and org_id = ?",
                 id, me.getOrgId());
         if (rows.isEmpty())
             throw new ResourceNotFoundException("TICKET_NOT_FOUND", "Ticket introuvable");
@@ -967,7 +1036,8 @@ public class TicketService {
                 (UUID) r.get("responsible_party_id"),
                 (String) r.get("responsible_party_name"),
                 ts.label(),
-                overdue);
+                overdue,
+                Boolean.TRUE.equals(r.get("is_private")));
     }
 
     private static LocalDate toLocalDate(Object v) {

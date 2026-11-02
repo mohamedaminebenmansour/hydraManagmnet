@@ -40,6 +40,16 @@ public enum TicketType {
                     "DECISION", "Décision",
                     "AUTRE", "Autre")),
 
+    /** Office task (« Préparer le dossier de consultation PEHD »). Project optional. */
+    TACHE("Tâche", "pi-briefcase", "#0891b2", 3, false,
+            cats(
+                    "DOCUMENT", "Document à préparer",
+                    "ADMINISTRATIF", "Administratif",
+                    "ACHAT", "Achat",
+                    "FINANCE", "Finance",
+                    "TECHNIQUE", "Technique",
+                    "AUTRE", "Autre")),
+
     VISA_DOCUMENT("Visa de document", "pi-file-check", "#7c3aed", null, false,
             cats());
 

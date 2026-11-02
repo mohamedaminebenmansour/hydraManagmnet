@@ -89,7 +89,12 @@
                 </span>
               </td>
               <td class="c-sig">
-                <div class="sig-title">{{ t.title }}</div>
+                <div class="sig-title">
+                  {{ t.title }}
+                  @if (t.isPrivate) {
+                    <i class="pi pi-lock priv-lock" aria-label="Privée" title="Tâche privée"></i>
+                  }
+                </div>
                 @if (t.categoryLabel || t.category) { <div class="sig-cat">{{ t.categoryLabel ?? t.category }}</div> }
               </td>
               <td class="c-place">{{ placeLine(t) }}</td>
@@ -130,7 +135,12 @@
       <div class="sig-card" (click)="openTicket(t)" [style.--tc-color]="typeVisual(t.type).color"
            [attr.aria-label]="'Signalement ' + t.title">
         <div class="sc-top">
-          <span class="sc-title">{{ t.title }}</span>
+          <span class="sc-title">
+            {{ t.title }}
+            @if (t.isPrivate) {
+              <i class="pi pi-lock priv-lock" aria-label="Privée" title="Tâche privée"></i>
+            }
+          </span>
           <span class="status-pill" [style.color]="statusVisual(t.status).color"
                 [style.background]="statusVisual(t.status).soft">
             <i class="pi {{ statusVisual(t.status).icon }}"></i> {{ statusVisual(t.status).label }}

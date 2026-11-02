@@ -197,13 +197,13 @@ class TicketTypesTest {
         assertThat(closed.overdue()).isFalse();
     }
 
-    // 9. GET /api/tickets/catalog returns 4 types and the right categories
+    // 9. GET /api/tickets/catalog returns 5 types (T9 adds TACHE) and the right categories
     @Test
     void catalog_returnsFourTypesWithRightCategories() {
         List<TicketService.CatalogType> cat = controller.catalog();
-        assertThat(cat).hasSize(4);
+        assertThat(cat).hasSize(5);
         assertThat(cat).extracting(TicketService.CatalogType::code)
-                .containsExactlyInAnyOrder("PROBLEME", "RESERVE", "DEMANDE", "VISA_DOCUMENT");
+                .containsExactlyInAnyOrder("PROBLEME", "RESERVE", "DEMANDE", "TACHE", "VISA_DOCUMENT");
 
         TicketService.CatalogType probleme = cat.stream().filter(c -> c.code().equals("PROBLEME")).findFirst().orElseThrow();
         assertThat(probleme.label()).isEqualTo("Problème chantier");
@@ -228,6 +228,17 @@ class TicketTypesTest {
 
         TicketService.CatalogType demande = cat.stream().filter(c -> c.code().equals("DEMANDE")).findFirst().orElseThrow();
         assertThat(demande.statuses()).extracting(s -> s.get("code"))
+                .containsExactly("OPEN", "IN_PROGRESS", "RESOLVED", "CLOSED", "CANCELLED");
+
+        TicketService.CatalogType tache = cat.stream().filter(c -> c.code().equals("TACHE")).findFirst().orElseThrow();
+        assertThat(tache.label()).isEqualTo("Tâche");
+        assertThat(tache.icon()).isEqualTo("pi-briefcase");
+        assertThat(tache.colour()).isEqualTo("#0891b2");
+        assertThat(tache.defaultDays()).isEqualTo(3);
+        assertThat(tache.requiresAfterPhoto()).isFalse();
+        assertThat(tache.categories()).extracting(c -> c.get("code"))
+                .containsExactly("DOCUMENT", "ADMINISTRATIF", "ACHAT", "FINANCE", "TECHNIQUE", "AUTRE");
+        assertThat(tache.statuses()).extracting(s -> s.get("code"))
                 .containsExactly("OPEN", "IN_PROGRESS", "RESOLVED", "CLOSED", "CANCELLED");
     }
 }

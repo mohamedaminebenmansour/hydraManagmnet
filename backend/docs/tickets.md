@@ -1,4 +1,4 @@
-# Signalements — Reference v2 (T1–T7)
+# Signalements — Reference v3 (T1–T9)
 
 ## Types
 
@@ -7,19 +7,44 @@
 | PROBLEME | Problème chantier | pi-exclamation-triangle | #ea580c | 2 days | no |
 | RESERVE | Réserve / non-conformité | pi-flag | #dc2626 | 15 days | yes |
 | DEMANDE | Demande | pi-question-circle | #2563eb | 3 days | no |
+| TACHE | Tâche | pi-briefcase | #0891b2 | 3 days | no |
 | VISA_DOCUMENT | Visa de document | pi-file-check | #7c3aed | — | no |
 
 ### Categories
 - **PROBLEME**: MATERIEL_MANQUANT, PANNE_ENGIN, EQUIPE_ABSENTE, METEO, ACCES_TERRAIN, ERREUR_PLAN, AUTRE
 - **RESERVE**: MALFACON, NON_FACON, ESSAI, SECURITE, AUTRE
 - **DEMANDE**: MATERIEL, INFORMATION, DECISION, AUTRE
+- **TACHE**: DOCUMENT « Document à préparer », ADMINISTRATIF « Administratif », ACHAT « Achat », FINANCE « Finance », TECHNIQUE « Technique », AUTRE « Autre »
 - **VISA_DOCUMENT**: none
 
 A RESERVE also carries an **origine**: `CLIENT` (visite client / MOA) or `INTERNE` (contrôle interne, default).
 
+A TACHE is an **office task** (« Préparer le dossier de consultation PEHD »). Its
+`project_id` is OPTIONAL (null = « Bureau », a company task with no chantier).
+It carries an `is_private` flag (visible only to creator, assignee and owner).
+`assignedToId` is REQUIRED. `origin`, `ouvrageId`, `locationText`,
+`responsiblePartyId` are forbidden (400). `is_private` is rejected (400) for
+every other type.
+
+## Visibility (T9 A4) — one central rule
+
+A user can read a ticket if he is the **owner**, OR the **creator**, OR the
+**assignee**, OR:
+- TACHE private OR TACHE without project → creator/assignee only (already covered).
+- any ticket WITH a project → member of that project.
+- non-TACHE WITHOUT a project → org-wide (unchanged).
+
+Not readable → 404 « Signalement introuvable » (404, not 403, so private tasks
+are not revealed). The rule lives in `TicketService.canRead(me, ticketRow)`
+(Java) and `TicketService.readVisibilityFragment(me, args)` (SQL fragment used
+by list/search/summary). Action endpoints (actions/photos/comments/timeline)
+use `requireReadAccess` which throws `AccessDeniedException` (403) — this
+preserves the existing T8 test contract; the read endpoints (get/list/search)
+return 404/excluded.
+
 ## Statuses
 
-**PROBLEME / RESERVE / DEMANDE** — universal lifecycle:
+**PROBLEME / RESERVE / DEMANDE / TACHE** — universal lifecycle:
 ```
 OPEN → IN_PROGRESS → RESOLVED → CLOSED
   ↘ CANCELLED           ↘ IN_PROGRESS (reopen)
@@ -69,11 +94,15 @@ Title format: « <type label> — <ticket title> — avant|après|autre ».
 `GET /api/tickets/summary?projectId` → `{mine, overdue, toVerify, open, inProgress, byType}`.
 
 ### Create
-`POST /api/tickets` → `{title, description, projectId, assignedToId, priority, startAt, dueAt, documentId, type, category, origin, locationText, ouvrageId, responsiblePartyId}`.
+`POST /api/tickets` → `{title, description, projectId, assignedToId, priority, startAt, dueAt, documentId, type, category, origin, locationText, ouvrageId, responsiblePartyId, isPrivate}`.
 ```json
 {"title":"Fuite regard","projectId":"...","type":"PROBLEME","category":"METEO","dueAt":"2026-11-04"}
 ```
-Response: TicketResponse (with type, typeLabel, category, categoryLabel, origin, locationText, ouvrageId/Name, responsiblePartyId/Name, statusLabel, overdue).
+For a TACHE: `projectId` optional (null = « Bureau »), `assignedToId` required, `isPrivate` accepted. For other types: `isPrivate` rejected (400).
+```json
+{"title":"Préparer le dossier PEHD","projectId":null,"assignedToId":"...","type":"TACHE","category":"DOCUMENT","isPrivate":false}
+```
+Response: TicketResponse (with type, typeLabel, category, categoryLabel, origin, locationText, ouvrageId/Name, responsiblePartyId/Name, statusLabel, overdue, isPrivate).
 
 ### Create with photos
 `POST /api/tickets/with-photos` (multipart): part "ticket" = JSON, parts "photos" = image files (all BEFORE). One transaction.
@@ -81,12 +110,12 @@ Response: TicketResponse (with type, typeLabel, category, categoryLabel, origin,
 ### Get one
 `GET /api/tickets/{id}` → TicketResponse.
 
-### Actions (PROBLEME/RESERVE/DEMANDE)
+### Actions (PROBLEME/RESERVE/DEMANDE/TACHE)
 `GET /api/tickets/{id}/actions` → `["START","RESOLVE","COMMENT","ADD_PHOTO"]` (filtered by role + status).
 
 `POST /api/tickets/{id}/start` — OPEN → IN_PROGRESS.
 `POST /api/tickets/{id}/resolve` `{note}` — → RESOLVED. RESERVE needs ≥ 1 AFTER photo.
-`POST /api/tickets/{id}/verify` — RESOLVED → CLOSED.
+`POST /api/tickets/{id}/verify` — RESOLVED → CLOSED. RESERVE: verifier ≠ resolver; TACHE: the resolver may verify (when he is the creator).
 `POST /api/tickets/{id}/reopen` `{comment}` — RESOLVED → IN_PROGRESS.
 `POST /api/tickets/{id}/cancel` `{reason}` — → CANCELLED.
 
@@ -95,10 +124,12 @@ Each = one transaction: status change + STATUS_CHANGE row in ticket_comment + TI
 ### Status (VISA only)
 `POST /api/tickets/{id}/status?status=XX` — VISA_DOCUMENT only; for other types returns 400 « Utilisez les actions du signalement ».
 
-### Photos
+### Photos + deliverable files
 `POST /api/tickets/{id}/photos` (multipart: file, phase) → PhotoResponse.
-`GET /api/tickets/{id}/photos` → `[{id, documentId, phase, title, createdBy, createdAt, downloadUrl}]`.
+`GET /api/tickets/{id}/photos` → `[{id, documentId, phase, title, createdBy, createdAt, downloadUrl}]`. Returns BEFORE/AFTER/OTHER/DELIVERABLE rows (the `phase` field tells them apart).
 `DELETE /api/tickets/{id}/photos/{attachmentId}` — uploader only, not CLOSED/CANCELLED.
+
+`POST /api/tickets/{id}/files` (multipart: file) → PhotoResponse with phase `DELIVERABLE`. **TACHE deliverable**: the produced document. Allowed: what DocumentService accepts (pdf, office, images…), its size limit. Who: assignee or creator, ticket not CLOSED/CANCELLED. Ticket without project → 400 « Rattachez la tâche à un chantier pour joindre un fichier ». Folder by category: DOCUMENT/TECHNIQUE → `02_TECH`; ADMINISTRATIF → `01_ADMIN`; ACHAT → `05_ACHAT`; FINANCE → `06_FIN`; AUTRE → `03_EXEC`. Uses `FolderFilingService.folderFor` + `DocumentService.uploadSystemFiled` + the rollback file cleanup.
 
 ### Comments + Timeline
 `POST /api/tickets/{id}/comments` `{body}` (1-2000 chars).
@@ -109,8 +140,8 @@ Each = one transaction: status change + STATUS_CHANGE row in ticket_comment + TI
 `GET /api/tickets/{id}/transitions` → allowed next statuses (VISA).
 
 ## Schema
-- `ticket` (V1+V6+V7+V13+V48): type, category, origin, location_text, ouvrage_id, responsible_party_id, resolution_note, closed_at, closed_by, cancel_reason.
-- `ticket_attachment` (V49): ticket_id, document_id, phase BEFORE/AFTER/OTHER, unique(ticket_id, document_id).
+- `ticket` (V1+V6+V7+V13+V48+V51): type, category, origin, location_text, ouvrage_id, responsible_party_id, resolution_note, closed_at, closed_by, cancel_reason, is_private. `project_id` is nullable (TACHE « Bureau »).
+- `ticket_attachment` (V49+V51): ticket_id, document_id, phase BEFORE/AFTER/OTHER/DELIVERABLE, unique(ticket_id, document_id).
 - `ticket_comment` (V50): author_id, kind COMMENT/STATUS_CHANGE/SYSTEM, body, from_status, to_status.
 
 ## Domain events
