@@ -8,6 +8,8 @@ import { EmptyStateComponent } from '../../shared/empty-state.component';
 import { LoadErrorComponent } from '../../shared/load-error.component';
 import { ProjectService } from '../../core/services/project.service';
 import { ProcessService } from '../../core/services/process.service';
+import { TicketService } from '../../core/services/ticket.service';
+import { TicketSummary } from '../../core/models/ticket.model';
 import { MyTask } from '../../core/models/process.model';
 import {
   processTypeVisual, roleVisual, stepStatusVisual,
@@ -142,6 +144,42 @@ const TILES: Tile[] = [
             <h3>Aucune tâche en attente</h3>
             <p>Tous vos processus sont à jour — rien à traiter maintenant.</p>
           </div>
+        </section>
+      }
+
+      <!-- 🚩 Signalements -->
+      @if (canReadTickets()) {
+        <section class="home-section">
+          <header class="hs-head">
+            <h2><i class="pi pi-flag" style="color: #dc2626"></i> Signalements</h2>
+            <a [routerLink]="['/tickets']" class="hs-link">Voir tout <i class="pi pi-angle-right"></i></a>
+          </header>
+          @if (ticketSummaryError()) {
+            <app-load-error message="Impossible de charger les signalements." (retry)="loadTicketSummary()" />
+          } @else if (ticketSummaryLoading()) {
+            <div class="sig-skeleton"><div></div><div></div><div></div><div></div></div>
+          } @else {
+            @if (ticketSummary(); as s) {
+              <div class="sig-grid">
+                <a [routerLink]="['/tickets']" [queryParams]="{tab: 'mine'}" class="sig-stat">
+                  <span class="ss-n">{{ s.mine }}</span>
+                  <span class="ss-l">À moi</span>
+                </a>
+                <a [routerLink]="['/tickets']" [queryParams]="{tab: 'mine'}" class="sig-stat">
+                  <span class="ss-n">{{ s.toVerify }}</span>
+                  <span class="ss-l">À vérifier</span>
+                </a>
+                <a [routerLink]="['/tickets']" [queryParams]="{tab: 'overdue'}" class="sig-stat" [class.danger]="s.overdue > 0">
+                  <span class="ss-n">{{ s.overdue }}</span>
+                  <span class="ss-l">En retard</span>
+                </a>
+                <a [routerLink]="['/tickets']" [queryParams]="{type: 'RESERVE'}" class="sig-stat">
+                  <span class="ss-n">{{ s.byType?.['RESERVE'] ?? 0 }}</span>
+                  <span class="ss-l">Réserves ouvertes</span>
+                </a>
+              </div>
+            }
+          }
         </section>
       }
 
@@ -461,12 +499,33 @@ const TILES: Tile[] = [
       .hero-inner { grid-template-columns: 1fr; text-align: center; }
       .hero-stats { justify-content: center; }
     }
+
+    /* SIGNALEMENTS SUMMARY */
+    .sig-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; }
+    .sig-stat {
+      background: #fff; border: 1px solid #e2e8f0; border-radius: 12px; padding: 14px 8px;
+      text-align: center; text-decoration: none; color: inherit; transition: all .15s;
+      &:hover { border-color: #cbd5e1; transform: translateY(-1px); }
+      &.danger { border-color: #fecaca; background: #fef2f2; .ss-n { color: #b91c1c; } .ss-l { color: #b91c1c; } }
+    }
+    .ss-n { font-size: 26px; font-weight: 800; color: #0f172a; display: block; }
+    .ss-l { font-size: 12px; color: #64748b; font-weight: 600; }
+    .sig-skeleton { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px;
+      div { height: 72px; border-radius: 12px; background: #f1f5f9; animation: pulse 1.5s infinite; } }
+    @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.5; } }
+    @media (max-width: 720px) { .sig-grid { grid-template-columns: repeat(2, 1fr); } }
   `]
 })
 export class HomeComponent implements OnInit {
   private auth = inject(AuthService);
   private projectService = inject(ProjectService);
   private processService = inject(ProcessService);
+  private ticketService = inject(TicketService);
+
+  ticketSummary = signal<TicketSummary | null>(null);
+  ticketSummaryLoading = signal(true);
+  ticketSummaryError = signal(false);
+  canReadTickets = computed(() => this.auth.can(PERM.TICKET_READ));
 
   name = computed(() => this.auth.me()?.fullName ?? '');
   me = this.auth.me;
@@ -510,6 +569,16 @@ export class HomeComponent implements OnInit {
   ngOnInit(): void {
     this.loadTasks();
     if (this.showProjects()) this.loadRecentProjects();
+    if (this.canReadTickets()) this.loadTicketSummary();
+  }
+
+  loadTicketSummary(): void {
+    this.ticketSummaryLoading.set(true);
+    this.ticketSummaryError.set(false);
+    this.ticketService.summary().subscribe({
+      next: s => { this.ticketSummary.set(s); this.ticketSummaryLoading.set(false); },
+      error: () => { this.ticketSummary.set(null); this.ticketSummaryError.set(true); this.ticketSummaryLoading.set(false); },
+    });
   }
 
   /** My tasks (PENDING + REJECTED — owner sees both). An error is shown, never "no task". */

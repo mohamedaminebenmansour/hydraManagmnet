@@ -1,6 +1,6 @@
 import { Component, OnInit, computed, inject, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
-import { Router } from '@angular/router';
+import { ActivatedRoute, Router } from '@angular/router';
 import { Subject, debounceTime, distinctUntilChanged } from 'rxjs';
 import { ButtonModule } from 'primeng/button';
 import { InputTextModule } from 'primeng/inputtext';
@@ -37,6 +37,7 @@ export class TicketsComponent implements OnInit {
   private userService = inject(UserService);
   private auth = inject(AuthService);
   private router = inject(Router);
+  private route = inject(ActivatedRoute);
   private msgs = inject(MessageService);
 
   // ── data / state ──────────────────────────────────────────────────────
@@ -109,6 +110,12 @@ export class TicketsComponent implements OnInit {
       next: c => { this.catalog.set(c ?? []); },
       error: () => { this.catalog.set([]); }
     });
+    // read query params (?tab= + ?type=) from the home card links
+    const qp = this.route.snapshot.queryParamMap;
+    const tab = qp.get('tab');
+    if (tab === 'mine' || tab === 'all' || tab === 'overdue') { this.activeTab.set(tab); }
+    const type = qp.get('type');
+    if (type) { this.selectedType.set(type); }
     this.loadOptions();
     this.loadSummary();
     this.runSearch('reset');
