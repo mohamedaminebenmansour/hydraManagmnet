@@ -5,12 +5,17 @@ import { PERM } from '@app/core/permissions';
 
 export const routes: Routes = [
   { path: 'login', loadComponent: () => import('./features/login/login.component').then(m => m.LoginComponent) },
+  // U3 — account pages (outside the shell, no menu)
+  { path: 'premiere-connexion', loadComponent: () => import('./features/account/first-login.component').then(m => m.FirstLoginComponent) },
+  { path: 'mot-de-passe-oublie', loadComponent: () => import('./features/account/forgot-password.component').then(m => m.ForgotPasswordComponent) },
+  { path: 'reinitialiser', loadComponent: () => import('./features/account/reset-password.component').then(m => m.ResetPasswordComponent) },
   {
     path: '',
     canActivate: [authGuard],
     loadComponent: () => import('./features/shell/shell.component').then(m => m.ShellComponent),
     children: [
       { path: '', loadComponent: () => import('./features/home/home.component').then(m => m.HomeComponent) },
+      { path: 'mon-compte', loadComponent: () => import('./features/account/my-account.component').then(m => m.MyAccountComponent) },
       { path: 'tickets', canActivate: [permGuard(PERM.TICKET_READ)],
         loadComponent: () => import('./features/tickets/tickets.component').then(m => m.TicketsComponent) },
       { path: 'tickets/new', canActivate: [permGuard(PERM.TICKET_READ)],

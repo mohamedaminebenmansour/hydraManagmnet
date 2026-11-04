@@ -164,6 +164,26 @@ const NAV: NavItem[] = [
               <span class="who-tasks">Aucune tâche en attente</span>
             }
           </div>
+          <!-- U3: avatar menu (top right) -->
+          <div class="avatar-menu">
+            <button class="avatar-btn" (click)="avatarMenuOpen.set(!avatarMenuOpen())"
+                    [attr.aria-expanded]="avatarMenuOpen()"
+                    aria-label="Mon compte">
+              <span class="avatar-circle" [style.background]="userGradient()">
+                {{ userInitials() }}
+              </span>
+            </button>
+            @if (avatarMenuOpen()) {
+              <div class="avatar-dropdown" (click)="avatarMenuOpen.set(false)">
+                <a routerLink="/mon-compte" class="dropdown-item">
+                  <i class="pi pi-user"></i> Mon compte
+                </a>
+                <button class="dropdown-item danger" (click)="logout()">
+                  <i class="pi pi-power-off"></i> Se déconnecter
+                </button>
+              </div>
+            }
+          </div>
         </header>
         <main>
           @if (storageNotPersistent()) {
@@ -324,7 +344,7 @@ const NAV: NavItem[] = [
     .topbar {
       background: #fff; border-bottom: 1px solid #e2e8f0;
       padding: 12px 24px;
-      display: flex; justify-content: flex-end; align-items: center;
+      display: flex; justify-content: space-between; align-items: center;
     }
     .who {
       display: flex; align-items: center; gap: 8px;
@@ -337,6 +357,26 @@ const NAV: NavItem[] = [
       50% { transform: scale(1.15); }
     }
     .who-tasks { font-weight: 600; }
+    /* U3: avatar menu (top right) */
+    .avatar-menu { position: relative; }
+    .avatar-btn { background: none; border: none; cursor: pointer; padding: 0; border-radius: 50%; }
+    .avatar-circle {
+      width: 36px; height: 36px; border-radius: 50%; display: flex; align-items: center;
+      justify-content: center; color: #fff; font-weight: 800; font-size: 13px;
+    }
+    .avatar-dropdown {
+      position: absolute; right: 0; top: 44px; background: #fff; border: 1px solid #e2e8f0;
+      border-radius: 10px; box-shadow: 0 4px 16px rgba(0,0,0,0.12); min-width: 180px;
+      display: flex; flex-direction: column; padding: 4px; z-index: 100;
+    }
+    .dropdown-item {
+      display: flex; align-items: center; gap: 8px; padding: 10px 12px; border-radius: 6px;
+      font-size: 14px; color: #0f172a; text-decoration: none; background: none; border: none;
+      cursor: pointer; width: 100%; box-sizing: border-box; text-align: left;
+    }
+    .dropdown-item:hover { background: #f1f5f9; }
+    .dropdown-item.danger { color: #dc2626; }
+    .dropdown-item.danger:hover { background: #fef2f2; }
     main { flex: 1; padding: 24px; overflow-y: auto; }
     .storage-banner {
       display: flex; align-items: flex-start; gap: 10px; margin: 0 0 16px;
@@ -367,6 +407,7 @@ export class ShellComponent implements OnInit {
   menu = computed(() => NAV.filter(i => (!i.perm || this.auth.can(i.perm))
       && (!i.ownerOnly || !!this.auth.me()?.isOwner)));
   achatsExpanded = signal(false);
+  avatarMenuOpen = signal(false);
 
   userInitials = computed(() => initials(this.auth.me()?.fullName));
   userGradient = computed(() => {

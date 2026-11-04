@@ -10,6 +10,10 @@ export const apiInterceptor: HttpInterceptorFn = (req, next) => {
   return next(req).pipe(
     catchError(err => {
       if (err.status === 401) router.navigate(['/login']);
+      // U3: 403 PASSWORD_CHANGE_REQUIRED → redirect to /premiere-connexion
+      if (err.status === 403 && err?.error?.code === 'PASSWORD_CHANGE_REQUIRED') {
+        router.navigate(['/premiere-connexion']);
+      }
       // Unexpected server error (INTERNAL_ERROR): show its reference so the user can send it to support.
       const reference = typeof err?.error === 'object' && err.error ? err.error.reference : null;
       if (typeof reference === 'string' && reference) {

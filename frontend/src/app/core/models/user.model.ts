@@ -12,9 +12,18 @@ export interface UserDto {
   fullName: string;
   isOwner: boolean;
   isActive: boolean;
+  mustChangePassword?: boolean;
+  phone?: string | null;
+  jobTitle?: string | null;
+  lastLoginAt?: string | null;
+  passwordChangedAt?: string | null;
+  status?: string;
+  projectCount?: number;
+  projectNames?: string[];
   roleCodes: string[];
   roleLabels: string[];
-  lastLoginAt?: string | null;
+  temporaryPassword?: string | null;
+  invitationSent?: boolean | null;
 }
 
 /** POST /api/users */
@@ -24,6 +33,7 @@ export interface UserCreate {
   password: string;
   roleCodes: string[];
   overrideReason?: string;
+  sendInvitation?: boolean;
 }
 
 /** PUT /api/users/{id} */
