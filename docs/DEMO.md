@@ -105,3 +105,23 @@ Log in as any demo user (password = `HYDRA_DEMO_PASSWORD`) and walk through:
 - No binary files committed: the JPEG and the PDF are generated in code at
   startup (`InMemoryMultipartFile` + `ImageIO` for the image, a hand-written
   minimal PDF for the deliverable).
+
+
+## Comptes scenario (U6 — DemoComptesScenario)
+
+In addition to the 9 demo cast users and 11 signalements, the demo pack now
+creates 6 more users in different account statuses + 1 custom role:
+
+| Email | Name | Role | Status |
+|-------|------|------|--------|
+| `nouveau@demo.hydra.tn` | Nadia Nouveau | ACHAT | PENDING_FIRST_LOGIN |
+| `reinit@demo.hydra.tn` | Rami Réinit | CONDUCTEUR | PENDING (admin reset; password = HYDRA_DEMO_PASSWORD) |
+| `dormant@demo.hydra.tn` | Dali Dormant | INGENIEUR | DORMANT (last login 45 days ago) |
+| `inactif@demo.hydra.tn` | Ines Inactive | BUREAU | INACTIVE |
+| `absent@demo.hydra.tn` | Amel Absente | BUREAU | ABSENT (until +7 days) |
+| `exception@demo.hydra.tn` | Elyes Exception | ACHAT + FINANCE | ACTIVE (signed exception) |
+
+Custom role « Magasinier (démo) » with STOCK_VIEW + STOCK_MOVE, assigned to
+chef.demo@hydra.demo and travaux.demo@hydra.demo.
+
+See `docs/TEST-COMPTES.md` for the manual test script.

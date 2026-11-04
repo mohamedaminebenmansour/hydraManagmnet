@@ -6,6 +6,7 @@ import jakarta.servlet.http.HttpSession;
 
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.security.authentication.AnonymousAuthenticationToken;
 import org.springframework.security.core.AuthenticationException;
 import org.springframework.security.authentication.AuthenticationManager;
@@ -17,10 +18,14 @@ import org.springframework.security.web.context.HttpSessionSecurityContextReposi
 import org.springframework.security.web.context.SecurityContextRepository;
 import org.springframework.web.bind.annotation.*;
 import tn.hydra.audit.EventLogService;
+import tn.hydra.security.PasswordChangeRequiredFilter;
+import tn.hydra.security.PasswordPolicy;
 import tn.hydra.security.PermissionService;
+import tn.hydra.mail.MailService;
 import tn.hydra.user.AppUser;
 import tn.hydra.user.AppUserRepository;
 
+import java.time.Instant;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
@@ -36,20 +41,39 @@ public class AuthController {
     private final EventLogService audit;
     private final tn.hydra.user.UserService userService;
     private final LoginRateLimiter rateLimiter;
+    private final JdbcTemplate jdbc;
+    private final PasswordPolicy passwordPolicy;
+    private final MailService mailService;
 
     public AuthController(AuthenticationManager authManager, AppUserRepository users,
                           PermissionService permissions, EventLogService audit,
-                          tn.hydra.user.UserService userService, LoginRateLimiter rateLimiter) {
+                          tn.hydra.user.UserService userService, LoginRateLimiter rateLimiter,
+                          JdbcTemplate jdbc, PasswordPolicy passwordPolicy, MailService mailService) {
         this.authManager = authManager;
         this.users = users;
         this.permissions = permissions;
         this.audit = audit;
         this.userService = userService;
         this.rateLimiter = rateLimiter;
+        this.jdbc = jdbc;
+        this.passwordPolicy = passwordPolicy;
+        this.mailService = mailService;
     }
 
     public record LoginRequest(String email, String password) {}
-    public record MeResponse(UUID id, String email, String fullName, boolean isOwner, boolean mustChangePassword, Set<String> permissions) {}
+
+    public record MeResponse(UUID id, String email, String fullName, boolean isOwner,
+                             boolean mustChangePassword,
+                             String phone, String jobTitle,
+                             Instant lastLoginAt, Instant passwordChangedAt,
+                             Set<String> permissions) {
+
+        /** Old 6-arg shape kept for the LoginRateLimitDbTest which constructs MeResponse directly. */
+        public MeResponse(UUID id, String email, String fullName, boolean isOwner,
+                          boolean mustChangePassword, Set<String> permissions) {
+            this(id, email, fullName, isOwner, mustChangePassword, null, null, null, null, permissions);
+        }
+    }
 
     @PostMapping("/login")
     public ResponseEntity<?> login(@RequestBody LoginRequest body,
@@ -76,6 +100,22 @@ public class AuthController {
         context.setAuthentication(auth);
         SecurityContextHolder.setContext(context);
         contextRepository.saveContext(context, request, response);
+
+        // U1: set last_login_at = now(), first_login_at = now() if null
+        AppUser u = users.findByEmail(body.email()).orElseThrow();
+        jdbc.update("""
+                update app_user set last_login_at = now(),
+                                    first_login_at = coalesce(first_login_at, now())
+                where id = ?
+                """, u.getId());
+
+        // U1: store the must_change_password flag in the session so the filter doesn't hit the DB
+        HttpSession session = request.getSession(false);
+        if (session != null) {
+            session.setAttribute(PasswordChangeRequiredFilter.SESSION_FLAG,
+                    Boolean.TRUE.equals(u.getMustChangePassword()));
+        }
+
         audit.log("LOGIN_SUCCESS", "app_user", null, "{\"email\":\"" + body.email() + "\"}");
         return ResponseEntity.ok(meResponse(body.email()));
     }
@@ -87,6 +127,21 @@ public class AuthController {
             return ResponseEntity.status(HttpStatus.UNAUTHORIZED).build();
         }
         return ResponseEntity.ok(meResponse(auth.getName()));
+    }
+
+    /** GET /api/auth/password-policy (public) — {minLength, maxLength, rules}. */
+    @GetMapping("/password-policy")
+    public ResponseEntity<?> passwordPolicy() {
+        return ResponseEntity.ok(Map.of(
+                "minLength", passwordPolicy.minLength(),
+                "maxLength", passwordPolicy.maxLength(),
+                "rules", passwordPolicy.rules()));
+    }
+
+    /** GET /api/auth/mail-status (public) — {enabled} so the login page knows what to show. */
+    @GetMapping("/mail-status")
+    public ResponseEntity<?> mailStatus() {
+        return ResponseEntity.ok(Map.of("enabled", mailService.isEnabled()));
     }
 
     public record ChangePasswordRequest(String oldPassword, String newPassword) {}
@@ -115,6 +170,8 @@ public class AuthController {
         return new MeResponse(u.getId(), u.getEmail(), u.getFullName(),
                 Boolean.TRUE.equals(u.getIsOwner()),
                 Boolean.TRUE.equals(u.getMustChangePassword()),
+                u.getPhone(), u.getJobTitle(),
+                u.getLastLoginAt(), u.getPasswordChangedAt(),
                 perms);
     }
 }

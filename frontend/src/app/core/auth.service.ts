@@ -10,6 +10,11 @@ export interface Me {
   email: string;
   fullName: string;
   isOwner: boolean;
+  mustChangePassword?: boolean;
+  phone?: string | null;
+  jobTitle?: string | null;
+  lastLoginAt?: string | null;
+  passwordChangedAt?: string | null;
   permissions: string[];
 }
 

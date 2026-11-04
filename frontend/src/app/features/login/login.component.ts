@@ -1,6 +1,6 @@
 import { Component } from '@angular/core';
 import { FormsModule } from '@angular/forms';
-import { Router } from '@angular/router';
+import { Router, RouterLink } from '@angular/router';
 import { ButtonModule } from 'primeng/button';
 import { InputTextModule } from 'primeng/inputtext';
 import { AuthService } from '../../core/auth.service';
@@ -8,18 +8,22 @@ import { AuthService } from '../../core/auth.service';
 @Component({
   selector: 'app-login',
   standalone: true,
-  imports: [FormsModule, ButtonModule, InputTextModule],
+  imports: [FormsModule, ButtonModule, InputTextModule, RouterLink],
   template: `
     <div class="login-page">
       <div class="login-card">
         <div class="logo"><i class="pi pi-shield"></i></div>
         <h2>HYDRA</h2>
         <p class="sub">Suivi des chantiers</p>
+        @if (resetOk) {
+          <div class="success-msg"><i class="pi pi-check-circle"></i> Mot de passe modifié. Connectez-vous.</div>
+        }
         <input pInputText type="email" placeholder="Email" [(ngModel)]="email" autofocus />
         <input pInputText type="password" placeholder="Mot de passe"
                [(ngModel)]="password" (keyup.enter)="submit()" />
         <p-button label="Se connecter" icon="pi pi-sign-in" [loading]="loading"
                   (onClick)="submit()" styleClass="full-btn" />
+        <a class="forgot-link" routerLink="/mot-de-passe-oublie">Mot de passe oublié ?</a>
         @if (error) {
           <div class="error"><i class="pi pi-exclamation-circle"></i> {{ error }}</div>
         }
@@ -39,11 +43,21 @@ import { AuthService } from '../../core/auth.service';
     input { font-size: 18px; width: 100%; }
     :host ::ng-deep .full-btn { width: 100%; }
     .error { color: #dc2626; font-weight: 600; display: flex; gap: 8px; justify-content: center; }
+    .success-msg { color: #16a34a; font-weight: 600; font-size: 14px; padding: 8px 12px;
+      background: #f0fdf4; border-radius: 8px; display: flex; gap: 8px; align-items: center; justify-content: center; }
+    .forgot-link { color: #0ea5e9; font-size: 14px; text-decoration: none; }
+    .forgot-link:hover { text-decoration: underline; }
   `]
 })
 export class LoginComponent {
   email = ''; password = ''; error = ''; loading = false;
-  constructor(private auth: AuthService, private router: Router) {}
+  resetOk = false;
+
+  constructor(private auth: AuthService, private router: Router) {
+    // U3: ?reset=ok → green message « Mot de passe modifié. Connectez-vous. »
+    const params = new URLSearchParams(window.location.search);
+    this.resetOk = params.get('reset') === 'ok';
+  }
 
   submit(): void {
     if (this.loading) return;
