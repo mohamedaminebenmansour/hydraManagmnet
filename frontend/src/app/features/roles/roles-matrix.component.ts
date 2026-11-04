@@ -1,4 +1,4 @@
-import { Component, OnInit, computed, inject, signal } from '@angular/core';
+import { Component, OnInit, computed, inject, signal, effect } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { Router } from '@angular/router';
 import { HttpClient } from '@angular/common/http';
@@ -58,6 +58,11 @@ interface SelectOption { label: string; value: string; }
         <p-button label="Retour aux rôles" icon="pi pi-arrow-left" [text]="true" (onClick)="back()" />
       </header>
 
+      <!-- DEBUG INFO — visible on screen -->
+      <div class="debug-info" style="background:#fef3c7;border:1px solid #f59e0b;padding:12px;border-radius:8px;font-size:13px;margin-bottom:12px;">
+        <strong>DEBUG:</strong> loading={{loading()}} | loadError={{loadError()}} | rolesCount={{roles().length}} | sortedCount={{sortedRoles().length}} | flatRowsCount={{flatRows().length}} | groups={{groups.length}}
+      </div>
+
       <div class="toolbar">
         <span class="p-input-icon-left search">
           <i class="pi pi-search"></i>
@@ -78,24 +83,19 @@ interface SelectOption { label: string; value: string; }
         }
       </div>
 
-      <!-- Loading -->
       @if (loading()) {
         <div class="state"><i class="pi pi-spin pi-spinner"></i> Chargement…</div>
       }
 
-      <!-- Error -->
       @if (!loading() && loadError()) {
-        <app-load-error message="Impossible de charger la matrice. Vérifiez que le serveur est accessible." (retry)="load()" />
+        <app-load-error message="Impossible de charger la matrice." (retry)="load()" />
       }
 
-      <!-- Empty: no roles -->
       @if (!loading() && !loadError() && sortedRoles().length === 0) {
-        <app-empty-state icon="pi pi-th-large" message="Aucun rôle à afficher. Créez d'abord des rôles depuis la page Rôles." />
+        <app-empty-state icon="pi pi-th-large" message="Aucun rôle à afficher (sortedRoles est vide)." />
       }
 
-      <!-- Matrix: data loaded and roles exist -->
       @if (!loading() && !loadError() && sortedRoles().length > 0) {
-        <!-- Desktop view -->
         <div class="desktop-view">
           <div class="matrix-scroll">
             <table class="matrix-table">
@@ -105,12 +105,9 @@ interface SelectOption { label: string; value: string; }
                   @for (r of sortedRoles(); track r.id) {
                     <th class="role-col">
                       <div class="role-head">
-                        <span class="role-dot" [style.background]="visual(r.code).color"
-                              [pTooltip]="r.isSystem ? 'Rôle système' : 'Rôle personnalisé'"></span>
+                        <span class="role-dot" [style.background]="visual(r.code).color"></span>
                         <span class="role-head-label" [pTooltip]="r.label">{{ r.label }}</span>
-                        @if (r.isSystem) {
-                          <i class="pi pi-lock tiny"></i>
-                        }
+                        @if (r.isSystem) { <i class="pi pi-lock tiny"></i> }
                       </div>
                     </th>
                   }
@@ -150,15 +147,13 @@ interface SelectOption { label: string; value: string; }
           </div>
         </div>
 
-        <!-- Mobile view -->
         <div class="mobile-view">
           <div class="mobile-picker">
             <label class="field-label">Rôle</label>
             <p-select [options]="mobileRoleOptions()" [ngModel]="mobileRoleId()"
                       (ngModelChange)="mobileRoleId.set($event)"
                       optionLabel="label" optionValue="value"
-                      placeholder="Choisir un rôle"
-                      [style]="{ 'width': '100%' }" />
+                      placeholder="Choisir un rôle" [style]="{ 'width': '100%' }" />
           </div>
           @if (mobileRole(); as mr) {
             <div class="matrix-scroll">
@@ -278,21 +273,21 @@ export class RolesMatrixComponent implements OnInit {
 
   readonly sortedRoles = computed<RoleRow[]>(() => {
     const list = this.roles();
+    console.log('[RolesMatrix] sortedRoles() evaluating, roles count:', list?.length);
     if (!list || list.length === 0) return [];
-    return [...list].sort((a, b) => {
+    const sorted = [...list].sort((a, b) => {
       if (a.isSystem !== b.isSystem) return a.isSystem ? -1 : 1;
       return (a.label ?? '').localeCompare(b.label ?? '', 'fr');
     });
+    console.log('[RolesMatrix] sortedRoles() result:', sorted.length, 'roles, first:', sorted[0]?.code);
+    return sorted;
   });
 
-  /**
-   * Flat array of rows for the @for loop. Each row is either a module header
-   * or a permission row. Pre-computed to avoid any @if/@else inside @for.
-   */
   readonly flatRows = computed<FlatRow[]>(() => {
     const q = this.search().trim().toLowerCase();
     const collapsed = this.collapsedModules();
     const out: FlatRow[] = [];
+    console.log('[RolesMatrix] flatRows() evaluating, groups:', this.groups?.length, 'search:', q);
     for (const g of this.groups) {
       const visiblePerms = q
         ? g.ids.filter(p =>
@@ -305,6 +300,7 @@ export class RolesMatrixComponent implements OnInit {
         visiblePerms.forEach(p => out.push({ isHeader: false, code: p }));
       }
     }
+    console.log('[RolesMatrix] flatRows() result:', out.length, 'rows');
     return out;
   });
 
@@ -320,22 +316,40 @@ export class RolesMatrixComponent implements OnInit {
     return this.sortedRoles().find(r => r.id === id) ?? null;
   });
 
+  // Debug: log when any signal changes
+  constructor() {
+    effect(() => {
+      console.log('[RolesMatrix] SIGNAL CHANGE: loading=', this.loading(), 'loadError=', this.loadError(),
+        'roles=', this.roles().length, 'sortedRoles=', this.sortedRoles().length, 'flatRows=', this.flatRows().length);
+    });
+  }
+
   ngOnInit(): void {
+    console.log('[RolesMatrix] ngOnInit, groups:', this.groups?.length, 'PERM_SENTENCES keys:', Object.keys(PERM_SENTENCES ?? {}).length);
     this.load();
   }
 
   load(): void {
+    console.log('[RolesMatrix] load() called');
     this.loading.set(true);
     this.loadError.set(false);
     this.http.get<RoleRow[]>('/api/roles').subscribe({
       next: (list) => {
+        console.log('[RolesMatrix] API success, raw response:', list);
+        console.log('[RolesMatrix] API success, count:', list?.length);
+        if (list && list.length > 0) {
+          console.log('[RolesMatrix] First role:', JSON.stringify(list[0]));
+          console.log('[RolesMatrix] First role permissions:', list[0]?.permissions);
+        }
         this.roles.set(list ?? []);
+        console.log('[RolesMatrix] After roles.set, roles() count:', this.roles().length);
         const first = this.sortedRoles()[0];
         if (first) this.mobileRoleId.set(first.id);
         this.loading.set(false);
+        console.log('[RolesMatrix] After loading.set(false), loading:', this.loading());
       },
       error: (err) => {
-        console.error('[RolesMatrix] Failed to load roles:', err);
+        console.error('[RolesMatrix] API error:', err);
         this.loadError.set(true);
         this.loading.set(false);
       },
@@ -345,7 +359,8 @@ export class RolesMatrixComponent implements OnInit {
   visual(code: string): RoleVisual { return roleVisual(code); }
 
   sentence(code: string): string {
-    return PERM_SENTENCES[code] ?? code;
+    const s = PERM_SENTENCES[code] ?? code;
+    return s;
   }
 
   hasPerm(r: RoleRow, code: string): boolean {
@@ -364,6 +379,7 @@ export class RolesMatrixComponent implements OnInit {
 
   exportCsv(): void {
     const rs = this.sortedRoles();
+    console.log('[RolesMatrix] exportCsv, sortedRoles count:', rs.length);
     if (rs.length === 0) return;
     const lines: string[] = [];
     const header = ['Permission', ...rs.map(r => r.label)].join(';');
