@@ -1,7 +1,7 @@
 import { Injectable, inject } from '@angular/core';
 import { HttpClient } from '@angular/common/http';
 import { Observable, map, catchError, of } from 'rxjs';
-import { UserCreate, UserDto, UserOptionDto, UserUpdate, RoleAssign } from '@app/core/models/user.model';
+import { UserCreate, UserDto, UserOptionDto, UserUpdate, RoleAssign, UserActivity, UserSummary } from '@app/core/models/user.model';
 
 @Injectable({ providedIn: 'root' })
 export class UserService {
@@ -15,6 +15,16 @@ export class UserService {
   /** GET /api/users/options — lightweight list for pickers. */
   options(): Observable<UserOptionDto[]> {
     return this.http.get<UserOptionDto[]>('/api/users/options');
+  }
+
+  /** GET /api/users/summary */
+  summary(): Observable<UserSummary> {
+    return this.http.get<UserSummary>('/api/users/summary');
+  }
+
+  /** GET /api/users/{id}/activity?limit=20 */
+  activity(id: string, limit = 20): Observable<UserActivity[]> {
+    return this.http.get<UserActivity[]>(`/api/users/${id}/activity`, { params: { limit } });
   }
 
   /** POST /api/users */
@@ -35,6 +45,21 @@ export class UserService {
   /** POST /api/users/{id}/activate | deactivate */
   setActive(id: string, active: boolean): Observable<UserDto> {
     return this.http.post<UserDto>(`/api/users/${id}/${active ? 'activate' : 'deactivate'}`, {});
+  }
+
+  /** POST /api/users/{id}/reset-password — returns {temporaryPassword} when blank. */
+  resetPassword(id: string, newPassword?: string): Observable<{ temporaryPassword?: string }> {
+    return this.http.post<{ temporaryPassword?: string }>(`/api/users/${id}/reset-password`, { newPassword: newPassword ?? null });
+  }
+
+  /** POST /api/users/{id}/send-reset-link */
+  sendResetLink(id: string): Observable<void> {
+    return this.http.post<void>(`/api/users/${id}/send-reset-link`, {});
+  }
+
+  /** POST /api/users/{id}/resend-invitation */
+  resendInvitation(id: string): Observable<void> {
+    return this.http.post<void>(`/api/users/${id}/resend-invitation`, {});
   }
 
   /** PUT /api/users/{id}/absence — set or clear absence (null = end). */

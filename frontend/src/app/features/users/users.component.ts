@@ -1,510 +1,502 @@
-import { Component, computed, inject, signal } from '@angular/core';
+import { Component, OnInit, computed, inject, signal, ViewChild } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { RouterLink } from '@angular/router';
-import { HttpClient } from '@angular/common/http';
-import { DatePipe } from '@angular/common';
 import { ButtonModule } from 'primeng/button';
 import { InputTextModule } from 'primeng/inputtext';
+import { TableModule } from 'primeng/table';
 import { SelectModule } from 'primeng/select';
-import { DialogModule } from 'primeng/dialog';
+import { TooltipModule } from 'primeng/tooltip';
 import { MessageService } from 'primeng/api';
 import { AuthService } from '@app/core/auth.service';
 import { PERM } from '@app/core/permissions';
 import { UserService } from '@app/core/services/user.service';
-import { UserDto } from '@app/core/models/user.model';
+import { UserDto, UserSummary } from '@app/core/models/user.model';
+import { ViewModeService } from '@app/core/view-mode.service';
 import { EmptyStateComponent } from '@app/shared/empty-state.component';
-import {
-  roleVisual, avatarGradient, initials,
-} from '@app/shared/hydra-design';
-
-interface RoleRef { code: string; label: string; }
-
-interface UserRow {
-  id: string;
-  email: string;
-  fullName: string;
-  isOwner: boolean;
-  isActive: boolean;
-  roles: RoleRef[];
-  lastLoginAt: string | null;
-}
-
-interface RoleRow { id: string; code: string; label: string; isSystem: boolean; }
+import { LoadErrorComponent } from '@app/shared/load-error.component';
+import { roleVisual, avatarGradient, initials } from '@app/shared/hydra-design';
+import { userStatusVisual } from './user-status';
+import { UserPanelComponent } from './user-panel.component';
+import { UserCreateDialogComponent } from './user-create-dialog.component';
 
 @Component({
   selector: 'app-users',
   standalone: true,
-  imports: [FormsModule, ButtonModule, InputTextModule, SelectModule, DialogModule, DatePipe, RouterLink, EmptyStateComponent],
+  imports: [FormsModule, ButtonModule, InputTextModule, TableModule, SelectModule, TooltipModule, RouterLink, EmptyStateComponent, LoadErrorComponent, UserPanelComponent, UserCreateDialogComponent],
   template: `
     <section class="users">
       <!-- Header -->
       <header class="u-head">
         <div>
-          <h1><i class="pi pi-users"></i> Utilisateurs</h1>
-          <p class="u-sub">Gérez les comptes, rôles métier et statuts depuis un seul endroit.</p>
+          <h1>Utilisateurs</h1>
+          <p class="u-sub">Qui a accès à HYDRA, avec quels rôles et sur quels chantiers</p>
         </div>
-        @if (canCreate()) {
-          <button pButton icon="pi pi-plus" label="Nouvel utilisateur" severity="success"
-                  (click)="showForm = !showForm"></button>
-        }
+        <div class="u-actions">
+          <div class="view-toggle">
+            <button class="vt-btn" [class.active]="viewMode() === 'table'" (click)="setView('table')">Tableau</button>
+            <button class="vt-btn" [class.active]="viewMode() === 'cards'" (click)="setView('cards')">Cartes</button>
+          </div>
+          <p-button label="Exporter (CSV)" icon="pi pi-download" [outlined]="true" size="small" (onClick)="exportCSV()"></p-button>
+          @if (canCreate()) {
+            <p-button label="+ Nouvel utilisateur" icon="pi pi-plus" severity="success" size="small" (onClick)="showCreate()"></p-button>
+          }
+        </div>
       </header>
 
-      <!-- Quick stats -->
-      <div class="u-stats">
-        <div class="u-stat">
-          <span class="us-n">{{ users().length }}</span>
-          <span class="us-l"><i class="pi pi-users"></i> Utilisateurs</span>
-        </div>
-        <div class="u-stat">
-          <span class="us-n">{{ activeCount() }}</span>
-          <span class="us-l"><i class="pi pi-check-circle" style="color: #16a34a"></i> Actifs</span>
-        </div>
-        <div class="u-stat">
-          <span class="us-n">{{ inactiveCount() }}</span>
-          <span class="us-l"><i class="pi pi-ban" style="color: #dc2626"></i> Inactifs</span>
-        </div>
-        <div class="u-stat">
-          <span class="us-n">{{ roles.length }}</span>
-          <span class="us-l"><i class="pi pi-id-card" style="color: #7c3aed"></i> Rôles</span>
-        </div>
-      </div>
-
-      <!-- Create form (collapsible) -->
-      @if (showForm) {
-        <div class="u-form">
-          <h3><i class="pi pi-user-plus"></i> Nouvel utilisateur</h3>
-          <div class="form-row">
-            <input pInputText placeholder="Nom complet" [(ngModel)]="fullName" />
-            <input pInputText type="email" placeholder="Email" [(ngModel)]="email" />
-            <input pInputText type="password" placeholder="Mot de passe (8 caractères min.)"
-                   [(ngModel)]="password" (keyup.enter)="create()" />
-          </div>
-          <div class="rb-title"><i class="pi pi-id-card"></i> Rôles métier</div>
-          <div class="rb-grid">
-            @for (r of roles; track r.code) {
-              <label class="rb-item" [style.--rc-color]="rv(r.code).color" [style.--rc-soft]="rv(r.code).soft">
-                <input type="checkbox" [checked]="selectedRoles.has(r.code)"
-                       (change)="toggleRole(r.code, $event)" />
-                <span class="rb-icon"><i class="pi" [class]="rv(r.code).icon"></i></span>
-                <span class="rb-label">{{ r.label }}</span>
-              </label>
-            }
-          </div>
-          @if (createConflict) {
-            <div class="conflict">
-              <div class="conflict-msg">
-                <i class="pi pi-exclamation-triangle"></i> {{ createConflict }}
-              </div>
-              <input pInputText placeholder="Raison de la dérogation (obligatoire)"
-                     [(ngModel)]="createOverrideReason" />
-              <p-button label="Forcer quand même" icon="pi pi-shield" severity="danger"
-                        (onClick)="create()" [disabled]="!createOverrideReason.trim()" />
-            </div>
+      <!-- Counter row -->
+      @if (summary()) {
+        <div class="counters">
+          <button class="counter" [class.active]="filterStatus() === null" (click)="filterStatus.set(null)">
+            <span class="c-n">{{ summary()!.active }}</span>
+            <span class="c-l"><i class="pi pi-check-circle" style="color:#16a34a"></i> Actifs</span>
+          </button>
+          <button class="counter" [class.active]="filterStatus() === 'PENDING'" (click)="filterStatus.set('PENDING')">
+            <span class="c-n">{{ summary()!.pendingFirstLogin }}</span>
+            <span class="c-l"><i class="pi pi-clock" style="color:#ea580c"></i> En attente 1re co.</span>
+          </button>
+          <button class="counter" [class.danger]="summary()!.dormant30 > 0" [class.active]="filterStatus() === 'DORMANT'"
+                  (click)="filterStatus.set('DORMANT')">
+            <span class="c-n">{{ summary()!.dormant30 }}</span>
+            <span class="c-l"><i class="pi pi-exclamation-triangle" [style.color]="summary()!.dormant30 > 0 ? '#dc2626' : '#64748b'"></i> Sans co. 30 j</span>
+          </button>
+          <button class="counter" [class.active]="filterStatus() === 'INACTIVE'" (click)="filterStatus.set('INACTIVE')">
+            <span class="c-n">{{ summary()!.inactive }}</span>
+            <span class="c-l"><i class="pi pi-ban" style="color:#dc2626"></i> Inactifs</span>
+          </button>
+          @if (summary()!.signedExceptions > 0) {
+            <button class="counter" (click)="filterStatus.set('EXCEPTION')">
+              <span class="c-n">{{ summary()!.signedExceptions }}</span>
+              <span class="c-l"><i class="pi pi-flag" style="color:#b45309"></i> Exceptions signées</span>
+            </button>
           }
-          <div class="form-actions">
-            <button pButton label="Annuler" severity="secondary" [text]="true" (click)="showForm = false"></button>
-            <button pButton label="Créer l'utilisateur" icon="pi pi-check" severity="success"
-                    (click)="create()"
-                    [disabled]="!fullName.trim() || !email.trim() || !password"></button>
-          </div>
         </div>
       }
 
       <!-- Filters -->
-      <div class="u-filters">
-        <div class="u-search">
-          <i class="pi pi-search u-search-icon"></i>
-          <input pInputText placeholder="Rechercher par nom ou email…" [(ngModel)]="searchQuery"
-                 (ngModelChange)="bumpRefresh()" />
-        </div>
-        <div class="u-filter-field">
-          <label><i class="pi pi-id-card"></i> Rôle</label>
-          <p-select [options]="roleFilterOptions()" [(ngModel)]="roleFilter"
-                    placeholder="Tous les rôles" [showClear]="true"
-                    optionLabel="label" optionValue="value"
-                    (onChange)="bumpRefresh()" />
-        </div>
-        <div class="u-filter-field">
-          <label><i class="pi pi-circle"></i> Statut</label>
-          <p-select [options]="statusFilterOptions" [(ngModel)]="statusFilter"
-                    placeholder="Tous les statuts" [showClear]="true"
-                    optionLabel="label" optionValue="value"
-                    (onChange)="bumpRefresh()" />
-        </div>
-        @if (hasActiveFilters()) {
-          <button pButton label="Réinitialiser" icon="pi pi-times" severity="secondary" [text]="true"
-                  (click)="clearFilters()"></button>
-        }
+      <div class="filters">
+        <input pInputText type="text" placeholder="Rechercher (nom, email, téléphone)"
+               [(ngModel)]="searchText" (ngModelChange)="applyFilters()" />
+        <p-select [options]="statusOptions" [(ngModel)]="filterStatusVal" (ngModelChange)="onStatusFilter($event)"
+                  placeholder="Statut" optionLabel="label" optionValue="value" styleClass="filter-select" />
+        <p-select [options]="chantierOptions()" [(ngModel)]="filterChantier" (ngModelChange)="applyFilters()"
+                  placeholder="Chantier" optionLabel="label" optionValue="value" styleClass="filter-select" [showClear]="true" />
       </div>
 
-      <!-- Active filters chips -->
-      @if (hasActiveFilters()) {
-        <div class="u-active-chips">
-          <span class="u-active-label">Filtres :</span>
-          @if (searchQuery) { <span class="u-active-chip"><i class="pi pi-search"></i> "{{ searchQuery }}" <button (click)="searchQuery = ''; bumpRefresh()"><i class="pi pi-times"></i></button></span> }
-          @if (roleFilter) { <span class="u-active-chip" [style.--chip-color]="rv(roleFilter).color"><i class="pi" [class]="rv(roleFilter).icon"></i> {{ rv(roleFilter).label }} <button (click)="roleFilter = null; bumpRefresh()"><i class="pi pi-times"></i></button></span> }
-          @if (statusFilter) { <span class="u-active-chip" [style.--chip-color]="statusFilter === 'active' ? '#16a34a' : '#dc2626'"><i class="pi" [class]="statusFilter === 'active' ? 'pi-check-circle' : 'pi-ban'"></i> {{ statusFilter === 'active' ? 'Actifs' : 'Inactifs' }} <button (click)="statusFilter = null; bumpRefresh()"><i class="pi pi-times"></i></button></span> }
+      <!-- Active filter chips -->
+      @if (activeChips().length > 0) {
+        <div class="chips">
+          @for (chip of activeChips(); track chip) {
+            <span class="chip">{{ chip.label }} <button class="chip-x" (click)="chip.remove()">×</button></span>
+          }
         </div>
       }
 
-      <!-- Users list -->
-      @if (loaded() && filteredUsers().length === 0) {
-        <div class="u-empty">
-          <i class="pi pi-users"></i>
-          <h3>Aucun utilisateur trouvé</h3>
-          <p>Aucun utilisateur ne correspond à ces filtres.</p>
-          @if (hasActiveFilters()) {
-            <button pButton label="Réinitialiser les filtres" icon="pi pi-times" severity="info" [text]="true"
-                    (click)="clearFilters()"></button>
-          }
-        </div>
+      <!-- Content -->
+      @if (loadError()) {
+        <app-load-error message="Impossible de charger les utilisateurs." (retry)="load()" />
       } @else {
-        <div class="u-grid">
-          @for (u of filteredUsers(); track u.id) {
-            <article class="user-card"
-                     [style.--role-color]="userMainRoleColor(u.roles)"
-                     [class.inactive]="!u.isActive">
-              <div class="uc-head">
-                <span class="uc-avatar" [style.background]="ag(u)">{{ ui(u) }}</span>
-                <div class="uc-info">
-                  <div class="uc-name">
-                    {{ u.fullName }}
-                    @if (u.isOwner) { <span class="uc-owner-badge"><i class="pi pi-crown"></i> Gérant</span> }
+        @if (filtered().length === 0) {
+          <app-empty-state icon="pi pi-users" message="Aucun utilisateur ne correspond à vos filtres."></app-empty-state>
+        } @else if (viewMode() === 'table') {
+        <p-table [value]="filtered()" [rows]="25" [paginator]="true"
+                 styleClass="users-table" [tableStyle]="{'min-width': '800px'}">
+          <ng-template #header>
+            <tr>
+              <th pSortableColumn="fullName">Utilisateur <p-sortIcon field="fullName"></p-sortIcon></th>
+              <th>Rôles</th>
+              <th pSortableColumn="projectCount">Chantiers <p-sortIcon field="projectCount"></p-sortIcon></th>
+              <th pSortableColumn="status">Statut <p-sortIcon field="status"></p-sortIcon></th>
+              <th pSortableColumn="lastLoginAt">Dernière connexion <p-sortIcon field="lastLoginAt"></p-sortIcon></th>
+              <th></th>
+            </tr>
+          </ng-template>
+          <ng-template #body let-u sortMode="multiple">
+            <tr (click)="openPanel(u)" [class.inactive-row]="!u.isActive" style="cursor: pointer">
+              <td>
+                <div class="user-cell">
+                  <span class="mini-avatar" [style.background]="avatarFor(u)">{{ initialsFor(u) }}</span>
+                  <div class="user-info">
+                    <span class="user-name">
+                      {{ u.fullName }}
+                      @if (u.isOwner) { <i class="pi pi-crown" aria-label="Gérant" style="color:#b45309"></i> }
+                    </span>
+                    <span class="user-email">{{ u.email }}</span>
                   </div>
-                  <div class="uc-email">{{ u.email }}</div>
                 </div>
-                <span class="uc-status" [class.active]="u.isActive" [class.inactive]="!u.isActive">
-                  <i class="pi" [class]="u.isActive ? 'pi-check-circle' : 'pi-ban'"></i>
-                  {{ u.isActive ? 'Actif' : 'Inactif' }}
+              </td>
+              <td>
+                <div class="roles-cell">
+                  @for (r of firstRoles(u); track r) {
+                    <span class="role-chip" [style.--rc-color]="roleVisual(r).color" [style.--rc-soft]="roleVisual(r).soft">
+                      <i class="pi {{ roleVisual(r).icon }}"></i> {{ roleVisual(r).label }}
+                    </span>
+                  }
+                  @if (u.roleCodes.length > 2) {
+                    <span class="role-more" [pTooltip]="allRolesTooltip(u)">+{{ u.roleCodes.length - 2 }}</span>
+                  }
+                </div>
+              </td>
+              <td>
+                <span [pTooltip]="u.projectNames?.join(', ') ?? ''">{{ u.projectCount ?? 0 }}</span>
+              </td>
+              <td>
+                <span class="status-pill" [style.color]="statusVisual(u.status).color" [style.background]="statusVisual(u.status).soft">
+                  <i class="pi {{ statusVisual(u.status).icon }}"></i> {{ statusVisual(u.status).label }}
+                </span>
+              </td>
+              <td [class.dormant]="isDormant(u)">
+                <span [pTooltip]="fullDate(u.lastLoginAt)">{{ lastLoginLabel(u) }}</span>
+              </td>
+              <td (click)="$event.stopPropagation()">
+                <button class="row-menu-btn" (click)="rowMenuUser.set(u)" aria-label="Actions">
+                  <i class="pi pi-ellipsis-v"></i>
+                </button>
+                @if (rowMenuUser()?.id === u.id) {
+                  <div class="row-menu" (click)="rowMenuUser.set(null)">
+                    <button class="mi" (click)="openPanel(u)"><i class="pi pi-folder-open"></i> Ouvrir</button>
+                    <button class="mi" (click)="resetPw(u)"><i class="pi pi-key"></i> Réinitialiser le mot de passe</button>
+                    @if (mailEnabled()) {
+                      <button class="mi" (click)="sendLink(u)"><i class="pi pi-send"></i> Envoyer un lien</button>
+                      @if (u.status === 'PENDING') {
+                        <button class="mi" (click)="resendInvite(u)"><i class="pi pi-envelope"></i> Renvoyer l'invitation</button>
+                      }
+                    }
+                    <button class="mi" (click)="toggleActive(u)"><i class="pi {{ u.isActive ? 'pi-ban' : 'pi-check' }}"></i> {{ u.isActive ? 'Désactiver' : 'Réactiver' }}</button>
+                  </div>
+                }
+              </td>
+            </tr>
+          </ng-template>
+        </p-table>
+      } @else {
+        <!-- Cards view -->
+        <div class="cards-view">
+          @for (u of filtered(); track u.id) {
+            <div class="user-card" (click)="openPanel(u)" [class.inactive]="!u.isActive">
+              <div class="card-top">
+                <span class="mini-avatar" [style.background]="avatarFor(u)">{{ initialsFor(u) }}</span>
+                <div class="card-info">
+                  <div class="card-name">
+                    {{ u.fullName }}
+                    @if (u.isOwner) { <i class="pi pi-crown" style="color:#b45309"></i> }
+                  </div>
+                  <div class="card-email">{{ u.email }}</div>
+                </div>
+                <span class="status-pill" [style.color]="statusVisual(u.status).color" [style.background]="statusVisual(u.status).soft">
+                  <i class="pi {{ statusVisual(u.status).icon }}"></i>
                 </span>
               </div>
-
-              <div class="uc-roles">
-                @for (r of u.roles; track r.code) {
-                  <span class="uc-role-chip" [style.--rc-color]="rv(r.code).color" [style.--rc-soft]="rv(r.code).soft">
-                    <i class="pi" [class]="rv(r.code).icon"></i> {{ rv(r.code).label }}
+              <div class="card-roles">
+                @for (r of firstRoles(u); track r) {
+                  <span class="role-chip" [style.--rc-color]="roleVisual(r).color" [style.--rc-soft]="roleVisual(r).soft">
+                    {{ roleVisual(r).label }}
                   </span>
-                } @empty {
-                  <span class="uc-no-role"><i class="pi pi-info"></i> Aucun rôle</span>
                 }
               </div>
-
-              @if (u.lastLoginAt) {
-                <div class="uc-last-login">
-                  <i class="pi pi-clock"></i> Dernière connexion : {{ u.lastLoginAt | date:'short' }}
-                </div>
-              } @else {
-                <div class="uc-last-login never">
-                  <i class="pi pi-clock"></i> Jamais connecté
-                </div>
-              }
-
-              <div class="uc-actions">
-                @if (!u.isOwner) {
-                  @if (canAssign()) {
-                    <button pButton label="Rôles" icon="pi pi-id-card" size="small" severity="info" [text]="true"
-                            (click)="openRoles(u)"></button>
-                  }
-                  @if (canUpdate()) {
-                    <button pButton label="Modifier" icon="pi pi-pencil" size="small" severity="info" [text]="true"
-                            (click)="openEdit(u)"></button>
-                  }
-                  @if (canDeactivate()) {
-                    <button pButton [label]="u.isActive ? 'Désactiver' : 'Réactiver'"
-                            [icon]="u.isActive ? 'pi pi-ban' : 'pi pi-check-circle'"
-                            size="small" [severity]="u.isActive ? 'danger' : 'success'" [text]="true"
-                            (click)="setActive(u, !u.isActive)"></button>
-                  }
-                }
+              <div class="card-meta">
+                <span [class.dormant]="isDormant(u)"><i class="pi pi-clock"></i> {{ lastLoginLabel(u) }}</span>
+                <span><i class="pi pi-briefcase"></i> {{ u.projectCount ?? 0 }} chantier(s)</span>
               </div>
-            </article>
+            </div>
           }
         </div>
       }
-
-      <!-- Roles dialog -->
-      <p-dialog header="Attribuer les rôles" [(visible)]="showRolesDialog"
-                [modal]="true" [style]="{ width: '480px' }">
-        <div class="dlg-form">
-          @if (rolesTarget) {
-            <div class="dlg-who">
-              <span class="dlg-avatar" [style.background]="ag(rolesTarget)">{{ ui(rolesTarget) }}</span>
-              <div>
-                <div class="dlg-name">{{ rolesTarget.fullName }}</div>
-                <div class="dlg-email">{{ rolesTarget.email }}</div>
-              </div>
-            </div>
-          }
-          <div class="rb-grid">
-            @for (r of roles; track r.code) {
-              <label class="rb-item" [style.--rc-color]="rv(r.code).color" [style.--rc-soft]="rv(r.code).soft">
-                <input type="checkbox" [checked]="rolesSelected.has(r.code)"
-                       (change)="toggleRoleEdit(r.code, $event)" />
-                <span class="rb-icon"><i class="pi" [class]="rv(r.code).icon"></i></span>
-                <span class="rb-label">{{ r.label }}</span>
-              </label>
-            }
-          </div>
-          @if (rolesConflict) {
-            <div class="conflict">
-              <div class="conflict-msg">
-                <i class="pi pi-exclamation-triangle"></i> {{ rolesConflict }}
-              </div>
-              <input pInputText placeholder="Raison de la dérogation (obligatoire)"
-                     [(ngModel)]="rolesOverrideReason" />
-              <p-button label="Forcer quand même" icon="pi pi-shield" severity="danger"
-                        (onClick)="saveRoles(true)" [disabled]="!rolesOverrideReason.trim()" />
-            </div>
-          }
-        </div>
-        <ng-template pTemplate="footer">
-          <p-button label="Annuler" [text]="true" (onClick)="showRolesDialog = false" />
-          <p-button label="Enregistrer" icon="pi pi-check" (onClick)="saveRoles()" />
-        </ng-template>
-      </p-dialog>
-
-      <!-- Edit dialog -->
-      <p-dialog header="Modifier l'utilisateur" [(visible)]="showEditDialog"
-                [modal]="true" [style]="{ width: '440px' }">
-        <div class="dlg-form">
-          @if (editTarget) {
-            <div class="dlg-who">
-              <span class="dlg-avatar" [style.background]="ag(editTarget)">{{ ui(editTarget) }}</span>
-              <div>
-                <div class="dlg-name">{{ editTarget.fullName }}</div>
-                <div class="dlg-email">{{ editTarget.email }}</div>
-              </div>
-            </div>
-          }
-          <input pInputText placeholder="Nom complet" [(ngModel)]="editFullName" />
-          <input pInputText type="password" placeholder="Nouveau mot de passe (optionnel)"
-                 [(ngModel)]="editPassword" (keyup.enter)="saveEdit()" />
-        </div>
-        <ng-template pTemplate="footer">
-          <p-button label="Annuler" [text]="true" (onClick)="showEditDialog = false" />
-          <p-button label="Enregistrer" icon="pi pi-check" (onClick)="saveEdit()"
-                    [disabled]="!editFullName.trim()" />
-        </ng-template>
-      </p-dialog>
+      }
     </section>
+
+    <!-- Side panel -->
+    <app-user-panel (userChanged)="onUserChanged($event)" (tempPasswordShown)="onTempPw($event)"></app-user-panel>
+
+    <!-- Create dialog -->
+    <app-user-create-dialog (created)="onCreated($event)"></app-user-create-dialog>
   `,
-  styleUrl: './users.component.scss',
+  styles: [`
+    .users { display: flex; flex-direction: column; gap: 16px; }
+    .u-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; flex-wrap: wrap; }
+    .u-head h1 { font-size: 22px; color: #0f172a; margin: 0; }
+    .u-sub { font-size: 14px; color: #64748b; margin: 4px 0 0; }
+    .u-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+    .view-toggle { display: flex; border: 1px solid #cbd5e1; border-radius: 8px; overflow: hidden; }
+    .vt-btn { padding: 6px 12px; border: none; background: none; cursor: pointer; font-size: 13px; font-weight: 600; color: #64748b; }
+    .vt-btn.active { background: #0ea5e9; color: #fff; }
+
+    .counters { display: flex; gap: 8px; flex-wrap: wrap; }
+    .counter { display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 10px 16px;
+      border-radius: 10px; border: 1px solid #e2e8f0; background: #fff; cursor: pointer; min-width: 120px; }
+    .counter.active { border-color: #0ea5e9; background: #f0f9ff; }
+    .counter.danger { border-color: #dc2626; }
+    .c-n { font-size: 20px; font-weight: 800; color: #0f172a; }
+    .c-l { font-size: 12px; color: #475569; display: flex; align-items: center; gap: 4px; }
+
+    .filters { display: flex; gap: 8px; flex-wrap: wrap; }
+    .filters input { flex: 1; min-width: 200px; }
+    :host ::ng-deep .filter-select { min-width: 140px; }
+
+    .chips { display: flex; gap: 6px; flex-wrap: wrap; }
+    .chip { padding: 4px 8px; border-radius: 999px; background: #eff6ff; color: #1e40af;
+      font-size: 12px; font-weight: 600; display: flex; align-items: center; gap: 4px; }
+    .chip-x { background: none; border: none; cursor: pointer; color: #1e40af; font-size: 14px; padding: 0; }
+
+    :host ::ng-deep .users-table { .p-datatable-thead > tr > th { background: #f8fafc; position: sticky; top: 0; z-index: 1; } }
+    .user-cell { display: flex; align-items: center; gap: 8px; }
+    .mini-avatar { width: 32px; height: 32px; border-radius: 50%; display: flex; align-items: center;
+      justify-content: center; color: #fff; font-weight: 700; font-size: 12px; flex-shrink: 0; }
+    .user-name { font-weight: 600; font-size: 14px; color: #0f172a; display: flex; align-items: center; gap: 4px; }
+    .user-email { font-size: 12px; color: #64748b; }
+    .inactive-row .user-name, .inactive-row .user-email { color: #94a3b8; }
+    .roles-cell { display: flex; gap: 4px; align-items: center; flex-wrap: wrap; }
+    .role-chip { padding: 2px 6px; border-radius: 999px; font-size: 11px; font-weight: 600;
+      color: var(--rc-color); background: var(--rc-soft); display: inline-flex; align-items: center; gap: 3px; white-space: nowrap; }
+    .role-more { font-size: 11px; color: #64748b; cursor: help; }
+    .status-pill { padding: 2px 8px; border-radius: 999px; font-size: 11px; font-weight: 600;
+      display: inline-flex; align-items: center; gap: 3px; white-space: nowrap; }
+    .dormant { color: #dc2626 !important; font-weight: 600; }
+    .row-menu-btn { background: none; border: none; cursor: pointer; color: #64748b; padding: 4px 8px; font-size: 16px; }
+    .row-menu-btn:hover { color: #0f172a; }
+    .row-menu { position: absolute; right: 0; top: 32px; background: #fff; border: 1px solid #e2e8f0;
+      border-radius: 8px; box-shadow: 0 4px 12px rgba(0,0,0,0.1); min-width: 220px; z-index: 10; padding: 4px; }
+    .mi { display: flex; align-items: center; gap: 8px; padding: 8px 12px; border-radius: 6px;
+      font-size: 13px; color: #0f172a; background: none; border: none; cursor: pointer; width: 100%; text-align: left; }
+    .mi:hover { background: #f1f5f9; }
+
+    .cards-view { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 12px; }
+    .user-card { background: #fff; border: 1px solid #e2e8f0; border-radius: 12px; padding: 14px; cursor: pointer; }
+    .user-card:hover { border-color: #0ea5e9; }
+    .user-card.inactive { opacity: 0.6; }
+    .card-top { display: flex; align-items: center; gap: 10px; }
+    .card-info { flex: 1; min-width: 0; }
+    .card-name { font-weight: 600; font-size: 14px; display: flex; align-items: center; gap: 4px; }
+    .card-email { font-size: 12px; color: #64748b; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .card-roles { display: flex; flex-wrap: wrap; gap: 4px; margin: 8px 0; }
+    .card-meta { display: flex; justify-content: space-between; font-size: 12px; color: #64748b; }
+    .card-meta span { display: flex; align-items: center; gap: 4px; }
+
+    @media (max-width: 768px) {
+      .cards-view { grid-template-columns: 1fr; }
+    }
+  `]
 })
-export class UsersComponent {
-  private http = inject(HttpClient); // kept only for /api/roles
+export class UsersComponent implements OnInit {
   private userService = inject(UserService);
   private auth = inject(AuthService);
   private msgs = inject(MessageService);
+  private viewModeService = inject(ViewModeService);
 
-  users = signal<UserRow[]>([]);
-  roles: RoleRow[] = [];
-  loaded = signal(false);
+  users = signal<UserDto[]>([]);
+  summary = signal<UserSummary | null>(null);
+  loadError = signal(false);
+  mailEnabled = signal(false);
 
-  showForm = false;
-  fullName = '';
-  email = '';
-  password = '';
-  selectedRoles = new Set<string>();
-  createConflict = '';
-  createOverrideReason = '';
+  viewMode = this.viewModeService.forPage('users', 'table');
 
-  showRolesDialog = false;
-  rolesTarget: UserRow | null = null;
-  rolesSelected = new Set<string>();
-  rolesConflict = '';
-  rolesOverrideReason = '';
+  // Filters
+  searchText = '';
+  filterStatus = signal<string | null>(null);
+  filterStatusVal: string | null = null;
+  filterChantier: string | null = null;
 
-  showEditDialog = false;
-  editTarget: UserRow | null = null;
-  editFullName = '';
-  editPassword = '';
+  // Row menu
+  rowMenuUser = signal<UserDto | null>(null);
 
-  // Filters (plain values — but use a refresh signal so computed re-evaluates)
-  searchQuery = '';
-  roleFilter: string | null = null;
-  statusFilter: 'active' | 'inactive' | null = null;
-  refresh = signal(0);
+  @ViewChild(UserPanelComponent) panel!: UserPanelComponent;
+  @ViewChild(UserCreateDialogComponent) createDialog!: UserCreateDialogComponent;
 
   canCreate = computed(() => this.auth.can(PERM.USER_CREATE));
-  canUpdate = computed(() => this.auth.can(PERM.USER_UPDATE));
-  canDeactivate = computed(() => this.auth.can(PERM.USER_DEACTIVATE));
-  canAssign = computed(() => this.auth.can(PERM.ROLE_ASSIGN));
 
-  // Expose hydra-design helpers
-  rv = roleVisual;
-  ag = (u: { id: string }) => avatarGradient(u.id);
-  ui = (u: { fullName: string }) => initials(u.fullName);
-
-  activeCount = computed(() => this.users().filter(u => u.isActive).length);
-  inactiveCount = computed(() => this.users().filter(u => !u.isActive).length);
-
-  roleFilterOptions = computed(() => {
-    const codes = new Set<string>();
-    for (const u of this.users()) for (const r of u.roles) codes.add(r.code);
-    return [...codes].sort().map(c => ({ label: roleVisual(c).label, value: c }));
-  });
-
-  readonly statusFilterOptions = [
-    { label: 'Actifs', value: 'active' },
-    { label: 'Inactifs', value: 'inactive' },
+  statusOptions = [
+    { label: 'Tous', value: null },
+    { label: 'Actifs', value: 'ACTIVE' },
+    { label: 'En attente 1re co.', value: 'PENDING' },
+    { label: 'Inactifs', value: 'INACTIVE' },
   ];
 
-  filteredUsers = computed(() => {
-    // touch the refresh signal so computed re-evaluates when filters change
-    this.refresh();
-    const q = this.searchQuery.trim().toLowerCase();
-    return this.users().filter(u => {
-      if (q && !(u.fullName.toLowerCase().includes(q) || u.email.toLowerCase().includes(q))) return false;
-      if (this.roleFilter && !u.roles.some(r => r.code === this.roleFilter)) return false;
-      if (this.statusFilter === 'active' && !u.isActive) return false;
-      if (this.statusFilter === 'inactive' && u.isActive) return false;
-      return true;
-    });
+  chantierOptions = computed(() => {
+    const names = new Set<string>();
+    for (const u of this.users()) {
+      for (const p of u.projectNames ?? []) names.add(p);
+    }
+    return [...names].sort().map(n => ({ label: n, value: n }));
   });
 
-  hasActiveFilters(): boolean {
-    return !!(this.searchQuery || this.roleFilter || this.statusFilter);
-  }
-
-  clearFilters(): void {
-    this.searchQuery = '';
-    this.roleFilter = null;
-    this.statusFilter = null;
-    this.refresh.set(this.refresh() + 1);
-  }
-
-  bumpRefresh(): void { this.refresh.set(this.refresh() + 1); }
-
-  userMainRoleColor(roles: RoleRef[]): string {
-    if (!roles?.length) return '#64748b';
-    const priority = ['OWNER', 'DIRECTION', 'CHEF_PROJET', 'CONDUCTEUR', 'INGENIEUR', 'BUREAU',
-      'QA', 'DOC_CTRL', 'ACHAT', 'FINANCE', 'CHEF_CHANTIER', 'HSE', 'SOUS_TRAITANT'];
-    for (const p of priority) {
-      if (roles.some(r => r.code === p)) return roleVisual(p).color;
+  filtered = computed(() => {
+    let list = this.users();
+    const s = this.searchText.trim().toLowerCase();
+    if (s) {
+      list = list.filter(u =>
+        u.fullName.toLowerCase().includes(s) ||
+        u.email.toLowerCase().includes(s) ||
+        (u.phone ?? '').toLowerCase().includes(s));
     }
-    return roleVisual(roles[0].code).color;
-  }
+    const st = this.filterStatus();
+    if (st === 'DORMANT') {
+      list = list.filter(u => this.isDormant(u));
+    } else if (st === 'EXCEPTION') {
+      // not filterable client-side; show all (the counter is just a badge)
+    } else if (st) {
+      list = list.filter(u => u.status === st);
+    }
+    if (this.filterChantier) {
+      list = list.filter(u => (u.projectNames ?? []).includes(this.filterChantier!));
+    }
+    return list;
+  });
 
-  constructor() { this.load(); }
+  activeChips = computed(() => {
+    const chips: { label: string; remove: () => void }[] = [];
+    if (this.searchText) chips.push({ label: `« ${this.searchText} »`, remove: () => { this.searchText = ''; this.applyFilters(); } });
+    const st = this.filterStatus();
+    if (st) chips.push({ label: this.statusOptions.find(o => o.value === st)?.label ?? st, remove: () => { this.filterStatus.set(null); this.filterStatusVal = null; } });
+    if (this.filterChantier) chips.push({ label: this.filterChantier, remove: () => { this.filterChantier = null; } });
+    return chips;
+  });
+
+  ngOnInit(): void {
+    this.load();
+    this.userService.summary().subscribe({ next: s => this.summary.set(s), error: () => {} });
+    // Check mail status
+    this.auth.check().subscribe(() => {});
+  }
 
   load(): void {
-    this.userService.list().subscribe(list => {
-      this.users.set((list ?? []).map(d => ({
-        id: d.id,
-        email: d.email,
-        fullName: d.fullName,
-        isOwner: d.isOwner,
-        isActive: d.isActive,
-        roles: d.roleCodes.map((code, i) => ({ code, label: d.roleLabels[i] ?? code })),
-        lastLoginAt: d.lastLoginAt ?? null
-      })));
-      this.loaded.set(true);
-    });
-    this.http.get<RoleRow[]>('/api/roles').subscribe(r => this.roles = r);
-  }
-
-  formatLastLogin(iso: string): string {
-    const d = new Date(iso);
-    if (isNaN(d.getTime())) { return iso; }
-    return d.toLocaleString('fr-FR', { dateStyle: 'short', timeStyle: 'short' });
-  }
-
-  toggleRole(code: string, ev: Event): void {
-    const c = (ev.target as HTMLInputElement).checked;
-    if (c) { this.selectedRoles.add(code); } else { this.selectedRoles.delete(code); }
-  }
-
-  toggleRoleEdit(code: string, ev: Event): void {
-    const c = (ev.target as HTMLInputElement).checked;
-    if (c) { this.rolesSelected.add(code); } else { this.rolesSelected.delete(code); }
-  }
-
-  create(): void {
-    this.userService.create({
-      fullName: this.fullName,
-      email: this.email,
-      password: this.password,
-      roleCodes: [...this.selectedRoles],
-      overrideReason: this.createOverrideReason || undefined
-    }).subscribe({
-      next: () => {
-        this.msgs.add({ severity: 'success', summary: 'Utilisateur créé' });
-        this.email = ''; this.fullName = ''; this.password = '';
-        this.selectedRoles.clear(); this.showForm = false;
-        this.createOverrideReason = '';
-        this.load();
-      },
-      error: (err) => this.handleError(err, m => this.createConflict = m,
-        () => { this.createConflict = ''; this.load(); })
+    this.loadError.set(false);
+    this.userService.list().subscribe({
+      next: (u) => { this.users.set(u ?? []); },
+      error: () => { this.loadError.set(true); this.users.set([]); }
     });
   }
 
-  openRoles(u: UserRow): void {
-    this.rolesTarget = u;
-    this.rolesSelected = new Set(u.roles.map(r => r.code));
-    this.rolesConflict = '';
-    this.rolesOverrideReason = '';
-    this.showRolesDialog = true;
+  setView(mode: 'table' | 'cards'): void {
+    this.viewModeService.set('users', mode);
   }
 
-  saveRoles(override = false): void {
-    if (!this.rolesTarget) return;
-    this.rolesConflict = '';
-    this.userService.assignRoles(this.rolesTarget.id, {
-      roleCodes: [...this.rolesSelected],
-      overrideReason: override ? this.rolesOverrideReason : undefined
-    }).subscribe({
-      next: () => {
-        this.msgs.add({ severity: 'success', summary: 'Rôles enregistrés',
-          detail: 'La personne doit se reconnecter.' });
-        this.showRolesDialog = false;
-        this.load();
-      },
-      error: (err) => this.handleError(err, m => this.rolesConflict = m,
-        () => { this.rolesConflict = ''; this.showRolesDialog = false; this.load(); })
-    });
+  applyFilters(): void {
+    // signals are reactive; this just triggers change detection
   }
 
-  openEdit(u: UserRow): void {
-    this.editTarget = u;
-    this.editFullName = u.fullName;
-    this.editPassword = '';
-    this.showEditDialog = true;
+  onStatusFilter(v: string | null): void {
+    this.filterStatus.set(v);
   }
 
-  saveEdit(): void {
-    if (!this.editTarget) return;
-    this.userService.update(this.editTarget.id, {
-      fullName: this.editFullName, password: this.editPassword || undefined
-    }).subscribe({
-      next: () => {
-        this.msgs.add({ severity: 'success', summary: 'Utilisateur modifié' });
-        this.showEditDialog = false;
-        this.load();
-      },
-      error: () => this.msgs.add({ severity: 'error', summary: 'Erreur', detail: 'Modification impossible' })
-    });
-  }
-
-  setActive(u: UserRow, active: boolean): void {
-    this.userService.setActive(u.id, active).subscribe({
-      next: () => {
-        this.msgs.add({ severity: 'success',
-          summary: active ? 'Utilisateur réactivé' : 'Utilisateur désactivé' });
-        this.load();
-      },
-      error: (err) => this.msgs.add({ severity: 'error', summary: 'Erreur',
-        detail: err.error?.message ?? 'Action impossible' })
-    });
-  }
-
-  private handleError(err: any, setConflict: (m: string) => void, onSuccessOverride: () => void): void {
-    if (err.status === 409 && (err.error?.code === 'TOXIC_PAIR_CONFLICT' || err.error?.code === 'TOXIC_PAIR')) {
-      setConflict(err.error.message);
-    } else {
-      this.msgs.add({ severity: 'error', summary: 'Erreur',
-        detail: err.error?.message ?? 'Action impossible' });
-      onSuccessOverride();
+  openPanel(u: UserDto): void {
+    this.rowMenuUser.set(null);
+    if (this.panel) {
+      this.panel.open(u);
     }
+  }
+
+  onUserChanged(u: UserDto): void {
+    this.users.update(list => list.map(x => x.id === u.id ? u : x));
+  }
+
+  onCreated(u: UserDto): void {
+    this.users.update(list => [...list, u]);
+    this.userService.summary().subscribe({ next: s => this.summary.set(s), error: () => {} });
+  }
+
+  onTempPw(e: { name: string; pw: string }): void {
+    if (this.createDialog) {
+      this.createDialog.showTempPassword(e.name, e.pw);
+    }
+  }
+
+  showCreate(): void {
+    if (this.createDialog) this.createDialog.show();
+  }
+
+  resetPw(u: UserDto): void {
+    this.rowMenuUser.set(null);
+    this.userService.resetPassword(u.id).subscribe({
+      next: (r) => {
+        if (r.temporaryPassword && this.createDialog) {
+          this.createDialog.showTempPassword(u.fullName, r.temporaryPassword);
+        }
+        this.msgs.add({ severity: 'info', summary: 'Mot de passe réinitialisé' });
+      },
+      error: (err) => this.msgs.add({ severity: 'error', summary: 'Erreur', detail: err?.error?.message ?? 'Erreur' })
+    });
+  }
+
+  sendLink(u: UserDto): void {
+    this.rowMenuUser.set(null);
+    this.userService.sendResetLink(u.id).subscribe({
+      next: () => this.msgs.add({ severity: 'success', summary: 'Lien envoyé', detail: `à ${u.email}` }),
+      error: (err) => this.msgs.add({ severity: 'error', summary: 'Erreur', detail: err?.error?.message ?? 'Erreur' })
+    });
+  }
+
+  resendInvite(u: UserDto): void {
+    this.rowMenuUser.set(null);
+    this.userService.resendInvitation(u.id).subscribe({
+      next: () => this.msgs.add({ severity: 'success', summary: 'Invitation renvoyée', detail: `à ${u.email}` }),
+      error: (err) => this.msgs.add({ severity: 'error', summary: 'Erreur', detail: err?.error?.message ?? 'Erreur' })
+    });
+  }
+
+  toggleActive(u: UserDto): void {
+    this.rowMenuUser.set(null);
+    this.userService.setActive(u.id, !u.isActive).subscribe({
+      next: (updated) => {
+        this.users.update(list => list.map(x => x.id === updated.id ? updated : x));
+        this.msgs.add({ severity: u.isActive ? 'warn' : 'success', summary: u.isActive ? 'Compte désactivé' : 'Compte réactivé' });
+      },
+      error: (err) => this.msgs.add({ severity: 'error', summary: 'Erreur', detail: err?.error?.message ?? 'Erreur' })
+    });
+  }
+
+  exportCSV(): void {
+    const rows = this.filtered();
+    const header = ['Nom', 'Email', 'Téléphone', 'Fonction', 'Rôles', 'Chantiers', 'Statut', 'Dernière connexion'];
+    const lines = rows.map(u => [
+      u.fullName, u.email, u.phone ?? '', u.jobTitle ?? '',
+      u.roleLabels.join(', '),
+      (u.projectNames ?? []).join(', '),
+      this.statusVisual(u.status).label,
+      u.lastLoginAt ?? ''
+    ].map(v => `"${(v ?? '').replace(/"/g, '""')}"`).join(';'));
+    const csv = '\uFEFF' + header.join(';') + '\n' + lines.join('\n');
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'utilisateurs.csv';
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+
+  // ── helpers ────────────────────────────────────────────────────────
+  avatarFor(u: UserDto): string {
+    return u.roleCodes.length > 0 ? roleVisual(u.roleCodes[0]).color : avatarGradient(u.email);
+  }
+  initialsFor(u: UserDto): string { return initials(u.fullName); }
+  firstRoles(u: UserDto): string[] { return u.roleCodes.slice(0, 2); }
+  allRolesTooltip(u: UserDto): string {
+    return u.roleCodes.map(c => roleVisual(c).label).join(', ');
+  }
+  statusVisual(status?: string) { return userStatusVisual(status); }
+  roleVisual(code: string) { return roleVisual(code); }
+
+  isDormant(u: UserDto): boolean {
+    if (!u.lastLoginAt) return false;
+    const d = new Date(u.lastLoginAt);
+    return !isNaN(d.getTime()) && (Date.now() - d.getTime()) > 30 * 24 * 3600000;
+  }
+
+  lastLoginLabel(u: UserDto): string {
+    if (!u.lastLoginAt) return 'Jamais';
+    const d = new Date(u.lastLoginAt);
+    if (isNaN(d.getTime())) return 'Jamais';
+    const diff = Date.now() - d.getTime();
+    const h = Math.floor(diff / 3600000);
+    if (h < 1) return "à l'instant";
+    if (h < 24) return `il y a ${h} h`;
+    const days = Math.floor(h / 24);
+    if (days < 30) return `il y a ${days} j`;
+    return d.toLocaleDateString('fr-FR');
+  }
+
+  fullDate(iso: string | null | undefined): string {
+    if (!iso) return '';
+    const d = new Date(iso);
+    return isNaN(d.getTime()) ? '' : d.toLocaleString('fr-FR');
   }
 }

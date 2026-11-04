@@ -116,8 +116,7 @@ public class UserController {
         return ResponseEntity.ok().build();
     }
 
-    /**
-     * PUT /api/users/{id}/absence — set or clear the absence (absentUntil = null
+    /** PUT /api/users/{id}/absence — set or clear the absence (absentUntil = null
      * ends the absence). Allowed for the org owner, or the user for himself.
      */
     @PutMapping("/{id}/absence")
@@ -125,5 +124,23 @@ public class UserController {
                                           Authentication auth) {
         service.setAbsence(auth, id, body.absentUntil());
         return ResponseEntity.ok().build();
+    }
+
+    // ── U4: admin reads ────────────────────────────────────────────────
+
+    /** GET /api/users/{id}/activity?limit=20 — last audit events of that user. */
+    @GetMapping("/{id}/activity")
+    @PreAuthorize("hasAnyAuthority('PERM_USER_CREATE','PERM_USER_UPDATE')")
+    public List<UserService.ActivityEntry> activity(@PathVariable UUID id,
+                                                     @RequestParam(value = "limit", required = false, defaultValue = "20") int limit,
+                                                     Authentication auth) {
+        return service.activity(auth, id, limit);
+    }
+
+    /** GET /api/users/summary — counters for the header. */
+    @GetMapping("/summary")
+    @PreAuthorize("hasAnyAuthority('PERM_USER_CREATE','PERM_USER_UPDATE','PERM_ROLE_ASSIGN')")
+    public UserService.UserSummary summary(Authentication auth) {
+        return service.summary(auth);
     }
 }

@@ -760,4 +760,107 @@ public class UserService {
         int projectCount; List<String> projectNames;
         List<String> roleCodes, roleLabels;
     }
+
+    // ══════════════════ 10. ADMIN READS (U4) ══════════════════
+
+    public record ActivityEntry(Instant at, String action, String subjectType, String subjectLabel) {}
+
+    /** Small map of audit action codes → French labels for the activity feed. */
+    private static final Map<String, String> ACTION_LABELS = Map.ofEntries(
+            Map.entry("USER_CREATED", "Création d'un utilisateur"),
+            Map.entry("USER_UPDATED", "Modification d'un utilisateur"),
+            Map.entry("USER_DEACTIVATED", "Désactivation d'un utilisateur"),
+            Map.entry("USER_REACTIVATED", "Réactivation d'un utilisateur"),
+            Map.entry("USER_ROLES_UPDATED", "Modification des rôles"),
+            Map.entry("PASSWORD_CHANGED", "Changement de mot de passe"),
+            Map.entry("PASSWORD_RESET", "Réinitialisation (admin)"),
+            Map.entry("PASSWORD_RESET_BY_TOKEN", "Réinitialisation par lien"),
+            Map.entry("ACCOUNT_ACTIVATED", "Activation du compte"),
+            Map.entry("PROFILE_UPDATED", "Mise à jour du profil"),
+            Map.entry("LOGIN_SUCCESS", "Connexion"),
+            Map.entry("LOGIN_FAILURE", "Échec de connexion"),
+            Map.entry("LOGOUT", "Déconnexion"),
+            Map.entry("RESET_LINK_SENT", "Envoi d'un lien de réinitialisation"),
+            Map.entry("INVITATION_RESENT", "Renvoi d'invitation"),
+            Map.entry("USER_ABSENCE_SET", "Déclaration d'absence"),
+            Map.entry("TOXIC_PAIR_OVERRIDDEN", "Exception signée sur les rôles")
+    );
+
+    /**
+     * GET /api/users/{id}/activity?limit=20 — last audit events where the user is the actor,
+     * newest first. Owner or USER_CREATE only.
+     */
+    public List<ActivityEntry> activity(Authentication auth, UUID id, int limit) {
+        AppUser me = users.findByEmail(auth.getName()).orElseThrow();
+        int lim = Math.min(Math.max(limit <= 0 ? 20 : limit, 1), 50);
+        List<Map<String, Object>> rows = jdbc.queryForList("""
+                select created_at, action, entity_type, entity_id
+                from event_log
+                where user_id = ?
+                order by created_at desc
+                limit ?
+                """, id, lim);
+        return rows.stream().map(r -> {
+            String action = (String) r.get("action");
+            String label = ACTION_LABELS.getOrDefault(action, action);
+            String entityType = (String) r.get("entity_type");
+            UUID entityId = (UUID) r.get("entity_id");
+            return new ActivityEntry(
+                    toInstant(r.get("created_at")),
+                    label,
+                    entityType,
+                    subjectLabel(entityType, entityId, me.getOrgId()));
+        }).toList();
+    }
+
+    /** Resolve a human-readable label for the subject of an audit event. */
+    private String subjectLabel(String entityType, UUID entityId, UUID orgId) {
+        if (entityId == null || entityType == null) return "";
+        try {
+            return switch (entityType) {
+                case "app_user" -> jdbc.queryForObject(
+                        "select full_name from app_user where id = ? and org_id = ?",
+                        String.class, entityId, orgId);
+                case "ticket" -> jdbc.queryForObject(
+                        "select title from ticket where id = ? and org_id = ?",
+                        String.class, entityId, orgId);
+                case "project" -> jdbc.queryForObject(
+                        "select name from project where id = ? and org_id = ?",
+                        String.class, entityId, orgId);
+                case "document" -> jdbc.queryForObject(
+                        "select title from document where id = ? and org_id = ?",
+                        String.class, entityId, orgId);
+                default -> entityType;
+            };
+        } catch (Exception e) {
+            return entityType;
+        }
+    }
+
+    public record UserSummary(long active, long pendingFirstLogin, long dormant30,
+                              long inactive, long signedExceptions) {}
+
+    /**
+     * GET /api/users/summary — counts in one query (+ one subquery for signed exceptions).
+     */
+    public UserSummary summary(Authentication auth) {
+        AppUser me = users.findByEmail(auth.getName()).orElseThrow();
+        Map<String, Object> row = jdbc.queryForMap("""
+                select
+                  count(*) filter (where is_active = true and must_change_password = false
+                                    and (last_login_at is null or last_login_at >= now() - interval '30 days')) as active,
+                  count(*) filter (where must_change_password = true) as pending_first_login,
+                  count(*) filter (where is_active = true and last_login_at is not null
+                                    and last_login_at < now() - interval '30 days') as dormant30,
+                  count(*) filter (where is_active = false) as inactive,
+                  (select count(*) from toxic_pair_override where org_id = ?) as signed_exceptions
+                from app_user where org_id = ?
+                """, me.getOrgId(), me.getOrgId());
+        return new UserSummary(
+                ((Number) row.get("active")).longValue(),
+                ((Number) row.get("pending_first_login")).longValue(),
+                ((Number) row.get("dormant30")).longValue(),
+                ((Number) row.get("inactive")).longValue(),
+                ((Number) row.get("signed_exceptions")).longValue());
+    }
 }

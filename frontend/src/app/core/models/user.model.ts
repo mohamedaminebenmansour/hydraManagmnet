@@ -47,3 +47,20 @@ export interface RoleAssign {
   roleCodes: string[];
   overrideReason?: string;
 }
+
+/** GET /api/users/{id}/activity?limit=20 */
+export interface UserActivity {
+  at: string;
+  action: string;
+  subjectType: string | null;
+  subjectLabel: string | null;
+}
+
+/** GET /api/users/summary */
+export interface UserSummary {
+  active: number;
+  pendingFirstLogin: number;
+  dormant30: number;
+  inactive: number;
+  signedExceptions: number;
+}
