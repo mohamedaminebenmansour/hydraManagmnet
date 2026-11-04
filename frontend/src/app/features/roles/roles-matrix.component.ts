@@ -55,7 +55,7 @@ interface SelectOption { label: string; value: string; }
           <h1>Matrice des permissions</h1>
           <p class="sub">Vue croisée permissions × rôles (lecture seule)</p>
         </div>
-        <p-button label="Retour" icon="pi pi-arrow-left" [text]="true" (onClick)="back()" />
+        <p-button label="Retour aux rôles" icon="pi pi-arrow-left" [text]="true" (onClick)="back()" />
       </header>
 
       <div class="toolbar">
@@ -114,30 +114,34 @@ interface SelectOption { label: string; value: string; }
                   </thead>
                   <tbody>
                     @for (row of rows(); track row.type + (row.code ?? row.group?.key ?? '')) {
-                      @if (row.type === 'header' && row.group) {
-                        <tr class="module-row" (click)="toggleModule(row.group!.key)">
-                          <th class="module-header">
-                            <i [className]="row.group!.icon"></i>
-                            <span>{{ row.group!.title }}</span>
-                            <span class="module-count">{{ row.group!.ids.length }}</span>
-                            <i class="pi {{ collapsedModules().has(row.group!.key) ? 'pi-chevron-right' : 'pi-chevron-down' }} chev"></i>
-                          </th>
-                          <td [attr.colspan]="sortedRoles().length" class="module-spacer"></td>
-                        </tr>
-                      } @else if (row.type === 'perm' && row.code) {
-                        <tr>
-                          <th class="perm-name">
-                            <span class="perm-sentence">{{ sentence(row.code!) }}</span>
-                            <span class="perm-code">{{ row.code! }}</span>
-                          </th>
-                          @for (r of sortedRoles(); track r.id) {
-                            <td class="cell">
-                              @if (hasPerm(r, row.code!)) {
-                                <i class="pi pi-check-circle check" aria-label="Accordé"></i>
-                              }
-                            </td>
-                          }
-                        </tr>
+                      @if (row.type === 'header') {
+                        @if (row.group) {
+                          <tr class="module-row" (click)="toggleModule(row.group!.key)">
+                            <th class="module-header">
+                              <i [className]="row.group!.icon"></i>
+                              <span>{{ row.group!.title }}</span>
+                              <span class="module-count">{{ row.group!.ids.length }}</span>
+                              <i class="pi {{ collapsedModules().has(row.group!.key) ? 'pi-chevron-right' : 'pi-chevron-down' }} chev"></i>
+                            </th>
+                            <td [attr.colspan]="sortedRoles().length" class="module-spacer"></td>
+                          </tr>
+                        }
+                      } @else {
+                        @if (row.code) {
+                          <tr>
+                            <th class="perm-name">
+                              <span class="perm-sentence">{{ sentence(row.code!) }}</span>
+                              <span class="perm-code">{{ row.code! }}</span>
+                            </th>
+                            @for (r of sortedRoles(); track r.id) {
+                              <td class="cell">
+                                @if (hasPerm(r, row.code!)) {
+                                  <i class="pi pi-check-circle check" aria-label="Accordé"></i>
+                                }
+                              </td>
+                            }
+                          </tr>
+                        }
                       }
                     } @empty {
                       <tr>
@@ -176,27 +180,31 @@ interface SelectOption { label: string; value: string; }
                     </thead>
                     <tbody>
                       @for (row of rows(); track row.type + (row.code ?? row.group?.key ?? '')) {
-                        @if (row.type === 'header' && row.group) {
-                          <tr class="module-row">
-                            <th class="module-header">
-                              <i [className]="row.group!.icon"></i>
-                              <span>{{ row.group!.title }}</span>
-                              <span class="module-count">{{ row.group!.ids.length }}</span>
-                            </th>
-                            <td class="module-spacer"></td>
-                          </tr>
-                        } @else if (row.type === 'perm' && row.code) {
-                          <tr>
-                            <th class="perm-name">
-                              <span class="perm-sentence">{{ sentence(row.code!) }}</span>
-                              <span class="perm-code">{{ row.code! }}</span>
-                            </th>
-                            <td class="cell">
-                              @if (hasPerm(mr, row.code!)) {
-                                <i class="pi pi-check-circle check" aria-label="Accordé"></i>
-                              }
-                            </td>
-                          </tr>
+                        @if (row.type === 'header') {
+                          @if (row.group) {
+                            <tr class="module-row">
+                              <th class="module-header">
+                                <i [className]="row.group!.icon"></i>
+                                <span>{{ row.group!.title }}</span>
+                                <span class="module-count">{{ row.group!.ids.length }}</span>
+                              </th>
+                              <td class="module-spacer"></td>
+                            </tr>
+                          }
+                        } @else {
+                          @if (row.code) {
+                            <tr>
+                              <th class="perm-name">
+                                <span class="perm-sentence">{{ sentence(row.code!) }}</span>
+                                <span class="perm-code">{{ row.code! }}</span>
+                              </th>
+                              <td class="cell">
+                                @if (hasPerm(mr, row.code!)) {
+                                  <i class="pi pi-check-circle check" aria-label="Accordé"></i>
+                                }
+                              </td>
+                            </tr>
+                          }
                         }
                       } @empty {
                         <tr>
@@ -355,7 +363,6 @@ export class RolesMatrixComponent implements OnInit {
         : g.ids;
       if (visiblePerms.length === 0) continue;
       out.push({ type: 'header', group: g });
-      // Search overrides collapse state: show matching perms expanded.
       if (q || !collapsed.has(g.key)) {
         visiblePerms.forEach(p => out.push({ type: 'perm', code: p }));
       }
