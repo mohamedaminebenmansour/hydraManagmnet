@@ -22,7 +22,8 @@ public class UserController {
     }
 
     public record CreateUserRequest(String fullName, String email, String password,
-                                    List<String> roleCodes, String overrideReason) {}
+                                    List<String> roleCodes, String overrideReason,
+                                    Boolean sendInvitation) {}
     public record ChangePasswordRequest(String oldPassword, String newPassword) {}
     public record ResetPasswordRequest(String newPassword) {}
     public record UpdateUserRequest(String fullName, String password) {}
@@ -61,7 +62,8 @@ public class UserController {
     @PreAuthorize("hasAuthority('PERM_USER_CREATE')")
     public UserService.UserResponse create(@RequestBody CreateUserRequest body, Authentication auth) {
         return service.createUser(auth, body.fullName(), body.email(),
-                body.password(), body.roleCodes(), body.overrideReason());
+                body.password(), body.roleCodes(), body.overrideReason(),
+                Boolean.TRUE.equals(body.sendInvitation()));
     }
 
     @PostMapping("/{id}/deactivate")
@@ -95,6 +97,22 @@ public class UserController {
         if (tempPw != null) {
             return ResponseEntity.ok(java.util.Map.of("temporaryPassword", tempPw));
         }
+        return ResponseEntity.ok().build();
+    }
+
+    /** POST /api/users/{id}/send-reset-link — admin-triggered RESET email (U2). */
+    @PostMapping("/{id}/send-reset-link")
+    @PreAuthorize("hasAuthority('PERM_USER_UPDATE')")
+    public ResponseEntity<?> sendResetLink(@PathVariable UUID id, Authentication auth) {
+        service.sendResetLink(auth, id);
+        return ResponseEntity.ok().build();
+    }
+
+    /** POST /api/users/{id}/resend-invitation — resend the INVITE email for a PENDING user (U2). */
+    @PostMapping("/{id}/resend-invitation")
+    @PreAuthorize("hasAuthority('PERM_USER_UPDATE')")
+    public ResponseEntity<?> resendInvitation(@PathVariable UUID id, Authentication auth) {
+        service.resendInvitation(auth, id);
         return ResponseEntity.ok().build();
     }
 

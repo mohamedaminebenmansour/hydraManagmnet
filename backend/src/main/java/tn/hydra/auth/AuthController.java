@@ -21,6 +21,7 @@ import tn.hydra.audit.EventLogService;
 import tn.hydra.security.PasswordChangeRequiredFilter;
 import tn.hydra.security.PasswordPolicy;
 import tn.hydra.security.PermissionService;
+import tn.hydra.mail.MailService;
 import tn.hydra.user.AppUser;
 import tn.hydra.user.AppUserRepository;
 
@@ -42,11 +43,12 @@ public class AuthController {
     private final LoginRateLimiter rateLimiter;
     private final JdbcTemplate jdbc;
     private final PasswordPolicy passwordPolicy;
+    private final MailService mailService;
 
     public AuthController(AuthenticationManager authManager, AppUserRepository users,
                           PermissionService permissions, EventLogService audit,
                           tn.hydra.user.UserService userService, LoginRateLimiter rateLimiter,
-                          JdbcTemplate jdbc, PasswordPolicy passwordPolicy) {
+                          JdbcTemplate jdbc, PasswordPolicy passwordPolicy, MailService mailService) {
         this.authManager = authManager;
         this.users = users;
         this.permissions = permissions;
@@ -55,6 +57,7 @@ public class AuthController {
         this.rateLimiter = rateLimiter;
         this.jdbc = jdbc;
         this.passwordPolicy = passwordPolicy;
+        this.mailService = mailService;
     }
 
     public record LoginRequest(String email, String password) {}
@@ -133,6 +136,12 @@ public class AuthController {
                 "minLength", passwordPolicy.minLength(),
                 "maxLength", passwordPolicy.maxLength(),
                 "rules", passwordPolicy.rules()));
+    }
+
+    /** GET /api/auth/mail-status (public) — {enabled} so the login page knows what to show. */
+    @GetMapping("/mail-status")
+    public ResponseEntity<?> mailStatus() {
+        return ResponseEntity.ok(Map.of("enabled", mailService.isEnabled()));
     }
 
     public record ChangePasswordRequest(String oldPassword, String newPassword) {}

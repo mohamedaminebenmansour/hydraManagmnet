@@ -54,19 +54,49 @@ sessions anyway).
 - `POST /api/auth/login` `{email, password}` → `MeResponse`.
 - `GET /api/auth/me` → `MeResponse`.
 - `GET /api/auth/password-policy` (public) → `{minLength, maxLength, rules}`.
+- `GET /api/auth/mail-status` (public) → `{enabled}` — whether SMTP is configured.
+- `POST /api/auth/forgot-password` `{email}` (public) → always 200
+  `{"message":"Si un compte existe pour cette adresse, un lien vient d'y être envoyé."}`
+  Rate-limited: 3/h per email, 10/h per IP. Sends a reset link only when the user
+  exists, is active, and mail is enabled. Fixed ~400 ms timing to prevent enumeration.
+- `GET /api/auth/reset-password/check?token=...` (public) → `{valid, purpose, firstName}`.
+- `POST /api/auth/reset-password` `{token, newPassword}` (public) → 200 on success,
+  400 `TOKEN_INVALID` / `WEAK_PASSWORD` on failure. No automatic login.
 - `POST /api/auth/change-password` `{oldPassword, newPassword}`.
 - `POST /api/auth/logout`.
+
+### Mail (optional)
+- SMTP is used when `HYDRA_MAIL_HOST` AND `HYDRA_MAIL_FROM` are both set.
+- Otherwise `MailServiceDisabled`: `isEnabled()=false`, `send()` logs one INFO line.
+- Emails are sent AFTER the transaction commits (`sendAfterCommit`); a send failure
+  is logged at WARN and never breaks the user action.
+- 3 templates: `reset.html`, `invite.html`, `changed.html` (French, plain HTML, no images).
+- Links use `hydra.app-url` (env `HYDRA_APP_URL`), NEVER the request `Host` header.
+
+### Tokens
+- `password_token` table (V52): `token_hash` = SHA-256 hex of the raw token. The raw
+  token is NEVER stored — it appears only in the email link.
+- RESET tokens: valid 30 minutes. INVITE tokens: valid 72 hours.
+- Creating a token marks the user's previous unused tokens of the same purpose as used.
+- `consume`: validates, applies `PasswordPolicy`, sets password
+  (`must_change_password=false`), revokes ALL sessions, audits
+  `PASSWORD_RESET_BY_TOKEN` or `ACCOUNT_ACTIVATED`. Sends the « changed » email.
 
 ### Users (admin)
 - `GET /api/users` → `UserResponse[]` (one SQL query + one for projects).
 - `GET /api/users/options` → active users for pickers.
-- `POST /api/users` `{fullName, email, password?, roleCodes, overrideReason?}` →
-  `UserResponse` (with `temporaryPassword` when password was blank).
+- `POST /api/users` `{fullName, email, password?, roleCodes, overrideReason?, sendInvitation?}` →
+  `UserResponse` (with `temporaryPassword` when password was blank;
+  `invitationSent=true` when `sendInvitation=true` and mail enabled).
 - `PUT /api/users/{id}` `{fullName, password?}`.
 - `PUT /api/users/{id}/roles` `{roleCodes, overrideReason?}`.
 - `POST /api/users/{id}/deactivate` / `/reactivate` / `/activate`.
 - `POST /api/users/{id}/reset-password` `{newPassword?}` →
-  `{temporaryPassword}` when password was blank.
+  `{temporaryPassword}` when password was blank. Sends the « changed » email.
+- `POST /api/users/{id}/send-reset-link` (U2) — admin-triggered RESET email.
+  400 `MAIL_DISABLED` if mail is not configured.
+- `POST /api/users/{id}/resend-invitation` (U2) — resend the INVITE email for a
+  user still in PENDING_FIRST_LOGIN. 400 `NOT_PENDING` if already activated.
 - `PUT /api/users/{id}/absence` `{absentUntil}`.
 
 ### My profile (any authenticated user)

@@ -38,15 +38,22 @@ public class SecurityConfig {
     @Bean
     SecurityFilterChain filterChain(HttpSecurity http) throws Exception {
         http
-            .csrf(csrf -> csrf.csrfTokenRepository(
-                    CookieCsrfTokenRepository.withHttpOnlyFalse())
+            .csrf(csrf -> csrf
+                    .csrfTokenRepository(
+                            CookieCsrfTokenRepository.withHttpOnlyFalse())
                     // Plain handler: client sends the raw cookie value as X-XSRF-TOKEN
                     // (the Angular/HttpClient default). The Security 7 default Xor handler
                     // expects a masked 2x-token-length payload and rejects raw cookies.
-                    .csrfTokenRequestHandler(new CsrfTokenRequestAttributeHandler()))
+                    .csrfTokenRequestHandler(new CsrfTokenRequestAttributeHandler())
+                    // U2: public password-reset POSTs happen before the user has a session/CSRF cookie
+                    .ignoringRequestMatchers("/api/auth/forgot-password", "/api/auth/reset-password"))
             .authorizeHttpRequests(auth -> auth
                     .requestMatchers("/api/auth/login").permitAll()
                     .requestMatchers("/api/auth/password-policy").permitAll()
+                    .requestMatchers("/api/auth/mail-status").permitAll()
+                    .requestMatchers("/api/auth/forgot-password").permitAll()
+                    .requestMatchers("/api/auth/reset-password").permitAll()
+                    .requestMatchers("/api/auth/reset-password/check").permitAll()
                     .requestMatchers("/error").permitAll()
                     .requestMatchers("/health").permitAll()
                     .anyRequest().authenticated())

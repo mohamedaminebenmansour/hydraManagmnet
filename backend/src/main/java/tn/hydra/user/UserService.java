@@ -7,7 +7,9 @@ import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import tn.hydra.audit.EventLogService;
+import tn.hydra.auth.PasswordTokenService;
 import tn.hydra.common.BusinessRuleException;
+import tn.hydra.mail.MailService;
 import tn.hydra.security.PasswordPolicy;
 import tn.hydra.security.SessionRevoker;
 import tn.hydra.security.TemporaryPasswordGenerator;
@@ -31,6 +33,10 @@ public class UserService {
     private PasswordPolicy passwordPolicy;
     @Autowired(required = false)
     private TemporaryPasswordGenerator tempPasswordGenerator;
+    @Autowired(required = false)
+    private MailService mailService;
+    @Autowired(required = false)
+    private PasswordTokenService passwordTokens;
 
     public UserService(JdbcTemplate jdbc, AppUserRepository users, PasswordEncoder encoder,
                        EventLogService audit, SessionRevoker sessions, ToxicPairService toxicPairs) {
@@ -46,13 +52,13 @@ public class UserService {
                                Instant lastLoginAt, Instant passwordChangedAt,
                                String status, int projectCount, List<String> projectNames,
                                List<String> roleCodes, List<String> roleLabels,
-                               String temporaryPassword) {
+                               String temporaryPassword, Boolean invitationSent) {
 
         /** Old 8-arg shape kept for callers that don't need the new fields (mock tests). */
         public UserResponse(UUID id, String email, String fullName, boolean isOwner,
                             boolean isActive, List<String> roleCodes, List<String> roleLabels) {
             this(id, email, fullName, isOwner, isActive, false, null, null, null, null, null, 0, List.of(),
-                    roleCodes, roleLabels, null);
+                    roleCodes, roleLabels, null, null);
         }
     }
 
@@ -82,6 +88,11 @@ public class UserService {
         if (currentSession != null) sessions.revokeAllExcept(me.getEmail(), currentSession);
         else sessions.revokeAllFor(me.getEmail());     // non-web fallback: nobody survives
         audit.log("PASSWORD_CHANGED", "app_user", me.getId(), null);
+
+        // U2: send the « changed » email after commit (never breaks the action)
+        if (mailService != null && mailService.isEnabled()) {
+            sendChangedEmail(me);
+        }
     }
 
     // ══════════════════ 2. LIST USERS ══════════════════
@@ -148,7 +159,7 @@ public class UserService {
             out.add(new UserResponse(b.id, b.email, b.fullName, b.isOwner, b.isActive, b.mustChangePassword,
                     b.phone, b.jobTitle, b.lastLoginAt, b.passwordChangedAt,
                     userStatus(b.isOwner, b.isActive, b.mustChangePassword, b.passwordChangedAt, b.lastLoginAt, b.projectCount > 0),
-                    b.projectCount, b.projectNames, b.roleCodes, b.roleLabels, null));
+                    b.projectCount, b.projectNames, b.roleCodes, b.roleLabels, null, null));
         }
         return out;
     }
@@ -171,9 +182,28 @@ public class UserService {
 
     // ══════════════════ 3. CREATE USER ══════════════════
 
+    /** Old 6-arg signature (no sendInvitation) — kept for mock tests + old callers. */
     @Transactional
     public UserResponse createUser(Authentication auth, String fullName, String email,
                                    String password, List<String> roleCodes, String overrideReason) {
+        return createUser(auth, fullName, email, password, roleCodes, overrideReason, false);
+    }
+
+    /**
+     * Full create with {@code sendInvitation} (U2):
+     * <ul>
+     *   <li>sendInvitation=true AND mail enabled → create with a random unusable password
+     *       hash, must_change_password=true, send INVITE email. Response:
+     *       temporaryPassword=null, invitationSent=true.</li>
+     *   <li>sendInvitation=true AND mail disabled → ignore the option, return a temp
+     *       password (U1 behaviour).</li>
+     *   <li>sendInvitation=false → U1 behaviour (temp password if password blank).</li>
+     * </ul>
+     */
+    @Transactional
+    public UserResponse createUser(Authentication auth, String fullName, String email,
+                                   String password, List<String> roleCodes, String overrideReason,
+                                   boolean sendInvitation) {
         AppUser me = users.findByEmail(auth.getName()).orElseThrow();
 
         if (isBlank(fullName) || isBlank(email))
@@ -193,18 +223,25 @@ public class UserService {
         List<ToxicPairService.RolePairConflict> conflicts = toxicPairs.conflictingPairs(codes);
         if (!conflicts.isEmpty() && isBlank(overrideReason))
             throw new BusinessRuleException("TOXIC_PAIR", conflicts.get(0).reason());
-        // a non-empty overrideReason turns the refusal into a signed, audited exception
 
-        // Password: if blank -> generate a temporary one (returned ONCE); else validate.
+        // U2: invitation flow (mail enabled + sendInvitation requested)
+        boolean useInvitation = sendInvitation && mailService != null && mailService.isEnabled()
+                && passwordTokens != null;
+
         String effectivePassword;
         String temporaryPassword = null;
-        if (isBlank(password)) {
+        boolean invitationSent = false;
+
+        if (useInvitation) {
+            // random unusable password hash — the user activates via the invite link
+            effectivePassword = java.util.UUID.randomUUID().toString();
+        } else if (isBlank(password)) {
             if (tempPasswordGenerator == null)
                 throw new BusinessRuleException("WEAK_PASSWORD", "Aucun mot de passe fourni");
             temporaryPassword = tempPasswordGenerator.generate();
             effectivePassword = temporaryPassword;
         } else {
-            List<String> errors = validatePassword(null, password); // user not created yet; name/email check skipped
+            List<String> errors = validatePassword(null, password);
             if (!errors.isEmpty())
                 throw new BusinessRuleException("WEAK_PASSWORD", errors.get(0));
             effectivePassword = password;
@@ -235,9 +272,27 @@ public class UserService {
 
         audit.log("USER_CREATED", "app_user", id,
                 "{\"email\":\"" + jsonEscape(email) + "\",\"roles\":\"" + jsonEscape(String.join(",", codes)) + "\"}");
+
+        // U2: send the invitation email after commit
+        if (useInvitation) {
+            AppUser newUser = users.findById(id).orElseThrow();
+            String rawToken = passwordTokens.create(newUser, "INVITE", null);
+            String link = passwordTokens.resetLink(rawToken);
+            String companyName = jdbc.queryForObject("select name from organization where id = ?",
+                    String.class, me.getOrgId());
+            String html = tn.hydra.auth.PasswordResetController.loadTemplate("templates/mail/invite.html")
+                    .replace("{{firstName}}", firstNameOf(newUser))
+                    .replace("{{companyName}}", companyName == null ? "" : companyName)
+                    .replace("{{invitedByName}}", me.getFullName() == null ? "" : me.getFullName())
+                    .replace("{{link}}", link);
+            mailService.sendAfterCommit(email, "Votre accès à HYDRA — " + (companyName == null ? "" : companyName), html);
+            invitationSent = true;
+        }
+
         return new UserResponse(id, email, fullName.trim(), false, true, true,
                 null, null, null, null, "PENDING", 0, List.of(),
-                new ArrayList<>(codes), labelsOf(roleIds, codes), temporaryPassword);
+                new ArrayList<>(codes), labelsOf(roleIds, codes), temporaryPassword,
+                invitationSent ? true : null);
     }
 
     // ══════════════════ 4. DEACTIVATE / REACTIVATE ══════════════════
@@ -292,6 +347,11 @@ public class UserService {
         sessions.revokeAllFor(target.getEmail());       // he must log in again with the new password
         audit.log("PASSWORD_RESET", "app_user", target.getId(),
                 "{\"email\":\"" + jsonEscape(target.getEmail()) + "\"}");
+
+        // U2: send the « changed » email after commit
+        if (mailService != null && mailService.isEnabled()) {
+            sendChangedEmail(target);
+        }
         return temporaryPassword;
     }
 
@@ -449,6 +509,76 @@ public class UserService {
         );
     }
 
+    // ══════════════════ 9. ADMIN SEND RESET LINK / RESEND INVITATION (U2) ══════════════════
+
+    /**
+     * Admin-triggered RESET email. If mail is disabled → 400. Else creates a RESET
+     * token and sends the email after commit.
+     */
+    @Transactional
+    public void sendResetLink(Authentication auth, UUID id) {
+        if (mailService == null || !mailService.isEnabled()) {
+            throw new BusinessRuleException("MAIL_DISABLED", "L'envoi d'emails n'est pas configuré");
+        }
+        AppUser target = editable(auth, id);
+        String rawToken = passwordTokens.create(target, "RESET", null);
+        String link = passwordTokens.resetLink(rawToken);
+        String html = tn.hydra.auth.PasswordResetController.loadTemplate("templates/mail/reset.html")
+                .replace("{{firstName}}", firstNameOf(target))
+                .replace("{{link}}", link);
+        mailService.sendAfterCommit(target.getEmail(), "Réinitialiser votre mot de passe HYDRA", html);
+        audit.log("RESET_LINK_SENT", "app_user", target.getId(),
+                "{\"email\":\"" + jsonEscape(target.getEmail()) + "\"}");
+    }
+
+    /**
+     * Resend the INVITE email for a user still in PENDING_FIRST_LOGIN
+     * (must_change_password=true AND first_login_at is null).
+     */
+    @Transactional
+    public void resendInvitation(Authentication auth, UUID id) {
+        if (mailService == null || !mailService.isEnabled()) {
+            throw new BusinessRuleException("MAIL_DISABLED", "L'envoi d'emails n'est pas configuré");
+        }
+        AppUser target = editable(auth, id);
+        if (!Boolean.TRUE.equals(target.getMustChangePassword()) || target.getFirstLoginAt() != null) {
+            throw new BusinessRuleException("NOT_PENDING", "Cet utilisateur a déjà activé son compte");
+        }
+        String rawToken = passwordTokens.create(target, "INVITE", null);
+        String link = passwordTokens.resetLink(rawToken);
+        String companyName = jdbc.queryForObject("select name from organization where id = ?",
+                String.class, target.getOrgId());
+        AppUser me = users.findByEmail(auth.getName()).orElseThrow();
+        String html = tn.hydra.auth.PasswordResetController.loadTemplate("templates/mail/invite.html")
+                .replace("{{firstName}}", firstNameOf(target))
+                .replace("{{companyName}}", companyName == null ? "" : companyName)
+                .replace("{{invitedByName}}", me.getFullName() == null ? "" : me.getFullName())
+                .replace("{{link}}", link);
+        mailService.sendAfterCommit(target.getEmail(), "Votre accès à HYDRA — " + (companyName == null ? "" : companyName), html);
+        audit.log("INVITATION_RESENT", "app_user", target.getId(),
+                "{\"email\":\"" + jsonEscape(target.getEmail()) + "\"}");
+    }
+
+    // ── email helpers ──────────────────────────────────────────────────
+
+    /** Load the « changed » template, fill it, and send after commit. */
+    private void sendChangedEmail(AppUser user) {
+        String html = tn.hydra.auth.PasswordResetController.loadTemplate("templates/mail/changed.html")
+                .replace("{{firstName}}", firstNameOf(user))
+                .replace("{{dateTime}}", nowTunisFormatted());
+        mailService.sendAfterCommit(user.getEmail(), "Votre mot de passe HYDRA a été modifié", html);
+    }
+
+    private static String firstNameOf(AppUser u) {
+        if (u == null || u.getFullName() == null || u.getFullName().isBlank()) return "";
+        return u.getFullName().split("\\s+")[0];
+    }
+
+    private static String nowTunisFormatted() {
+        return java.time.ZonedDateTime.now(java.time.ZoneId.of("Africa/Tunis"))
+                .format(java.time.format.DateTimeFormatter.ofPattern("dd/MM/yyyy à HH:mm", java.util.Locale.FRENCH));
+    }
+
     // ══════════════════ HELPERS ══════════════════
 
     /**
@@ -506,7 +636,7 @@ public class UserService {
                 userStatus(Boolean.TRUE.equals(target.getIsOwner()), Boolean.TRUE.equals(target.getIsActive()),
                         Boolean.TRUE.equals(target.getMustChangePassword()), target.getPasswordChangedAt(),
                         target.getLastLoginAt(), false),
-                0, List.of(), roleCodes, roleLabels, null);
+                0, List.of(), roleCodes, roleLabels, null, null);
     }
 
     private static Instant toInstant(Object v) {
