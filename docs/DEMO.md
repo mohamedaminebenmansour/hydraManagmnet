@@ -35,15 +35,15 @@ All passwords = `HYDRA_DEMO_PASSWORD`.
 
 | # | Email | Full name (FR) | Company role | Chantier role | Notes |
 |---|-------|----------------|--------------|---------------|-------|
-| 1 | `gerant.demo@hydra.demo` | Gérant Démo | OWNER | MANAGER | is_owner = true; bypasses every ACL |
-| 2 | `achats.demo@hydra.demo` | Responsable Achats | BUREAU | ENGINEER | can create/start/resolve TACHEs |
-| 3 | `metre.demo@hydra.demo` | Métreur | INGENIEUR | ENGINEER | uploads a deliverable in #3 |
-| 4 | `finance.demo@hydra.demo` | Responsable Financier | CHEF_PROJET | ENGINEER | resolves #4 |
-| 5 | `travaux.demo@hydra.demo` | Conducteur Travaux | CONDUCTEUR | ENGINEER | target of several tasks |
-| 6 | `chef.demo@hydra.demo` | Chef Chantier | CONDUCTEUR | ENGINEER | creates #9, acts on #10 |
-| 7 | `quantites.demo@hydra.demo` | Responsable Quantités | INGENIEUR | ENGINEER | creates #10 |
-| 8 | `externe.demo@hydra.demo` | Consultant Externe | SOUS_TRAITANT | — (not a member) | cannot see project tickets |
-| 9 | `doc.demo@hydra.demo` | Responsable Documentaire | DOC_CTRL | ENGINEER | document controller |
+| 1 | `gerant.demo@demo.hydra.tn` | Gérant Démo | OWNER | MANAGER | is_owner = true; bypasses every ACL |
+| 2 | `achats.demo@demo.hydra.tn` | Responsable Achats | BUREAU | ENGINEER | can create/start/resolve TACHEs |
+| 3 | `metre.demo@demo.hydra.tn` | Métreur | INGENIEUR | ENGINEER | uploads a deliverable in #3 |
+| 4 | `finance.demo@demo.hydra.tn` | Responsable Financier | CHEF_PROJET | ENGINEER | resolves #4 |
+| 5 | `travaux.demo@demo.hydra.tn` | Conducteur Travaux | CONDUCTEUR | ENGINEER | target of several tasks |
+| 6 | `chef.demo@demo.hydra.tn` | Chef Chantier | CONDUCTEUR | ENGINEER | creates #9, acts on #10 |
+| 7 | `quantites.demo@demo.hydra.tn` | Responsable Quantités | INGENIEUR | ENGINEER | creates #10 |
+| 8 | `externe.demo@demo.hydra.tn` | Consultant Externe | SOUS_TRAITANT | — (not a member) | cannot see project tickets |
+| 9 | `doc.demo@demo.hydra.tn` | Responsable Documentaire | DOC_CTRL | ENGINEER | document controller |
 
 ## The demo chantier
 
@@ -122,6 +122,6 @@ creates 6 more users in different account statuses + 1 custom role:
 | `exception@demo.hydra.tn` | Elyes Exception | ACHAT + FINANCE | ACTIVE (signed exception) |
 
 Custom role « Magasinier (démo) » with STOCK_VIEW + STOCK_MOVE, assigned to
-chef.demo@hydra.demo and travaux.demo@hydra.demo.
+chef.demo@demo.hydra.tn and travaux.demo@demo.hydra.tn.
 
 See `docs/TEST-COMPTES.md` for the manual test script.

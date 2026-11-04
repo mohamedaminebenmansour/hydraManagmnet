@@ -125,23 +125,36 @@ public class PasswordTokenService {
     // ── consume ────────────────────────────────────────────────────────
 
     /**
-     * Consume a token: validate, apply {@link PasswordPolicy}, set the new password
-     * (must_change_password=false), mark used, revoke ALL sessions, audit. One
-     * transaction. Never logs the raw token.
+     * Consume a token: atomically claim it FIRST, then apply {@link PasswordPolicy},
+     * set the new password (must_change_password=false), revoke ALL sessions, audit.
+     * One transaction. A weak password rolls the claim back (so the link stays usable).
+     * Never logs the raw token.
      */
     @Transactional
     public void consume(String rawToken, String newPassword) {
-        Map<String, Object> row = findByHash(rawToken);
-        if (row == null) {
+        if (rawToken == null || rawToken.isBlank()) {
             throw new BusinessRuleException("TOKEN_INVALID",
                     "Ce lien n'est plus valide. Demandez-en un nouveau.");
         }
-        if (!isValid(row)) {
+        String hash = sha256Hex(rawToken);
+
+        // Step 1: ATOMIC CLAIM — only one thread can win; the others get 0 rows.
+        List<Map<String, Object>> claimed = jdbc.queryForList("""
+                update password_token set used_at = now()
+                where token_hash = ? and used_at is null and expires_at > now()
+                returning id, user_id, purpose
+                """, hash);
+
+        if (claimed.isEmpty()) {
             throw new BusinessRuleException("TOKEN_INVALID",
                     "Ce lien n'est plus valide. Demandez-en un nouveau.");
         }
+
+        Map<String, Object> row = claimed.get(0);
         UUID userId = (UUID) row.get("user_id");
         String purpose = (String) row.get("purpose");
+
+        // Step 2: Load the user (must be active)
         AppUser user = users.findById(userId)
                 .orElseThrow(() -> new BusinessRuleException("TOKEN_INVALID",
                         "Ce lien n'est plus valide. Demandez-en un nouveau."));
@@ -150,30 +163,29 @@ public class PasswordTokenService {
                     "Ce lien n'est plus valide. Demandez-en un nouveau.");
         }
 
-        // PasswordPolicy
+        // Step 3: PasswordPolicy — if this throws, the transaction rolls back
+        // (the atomic claim is undone, so the token stays usable).
         List<String> errors = passwordPolicy.validate(user, newPassword);
         if (!errors.isEmpty()) {
             throw new BusinessRuleException("WEAK_PASSWORD", errors.get(0));
         }
 
-        // set password, must_change_password=false, password_changed_at=now()
+        // Step 4: set password, must_change_password=false, password_changed_at=now()
         jdbc.update("""
                 update app_user set password_hash = ?, must_change_password = false,
                                   password_changed_at = now()
                 where id = ?
                 """, encoder.encode(newPassword), userId);
 
-        // mark token used
-        jdbc.update("update password_token set used_at = now() where id = ?", row.get("id"));
-
-        // revoke ALL sessions of the user
+        // Step 5: revoke ALL sessions of the user
         sessions.revokeAllFor(user.getEmail());
 
+        // Step 6: audit
         String action = "INVITE".equals(purpose) ? "ACCOUNT_ACTIVATED" : "PASSWORD_RESET_BY_TOKEN";
         audit.log(action, "app_user", userId,
                 "{\"email\":\"" + jsonEscape(user.getEmail()) + "\"}");
 
-        // Send the « changed » email after commit (never breaks the action)
+        // Step 7: Send the « changed » email after commit (never breaks the action)
         if (mailService.isEnabled()) {
             sendChangedEmail(user);
         }
