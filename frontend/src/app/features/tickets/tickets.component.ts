@@ -236,9 +236,14 @@ export class TicketsComponent implements OnInit {
     return d.toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit', year: 'numeric' });
   }
 
-  /** Ouvrage / lieu line: ouvrage name, else location text, else project name. */
+  /** Ouvrage / lieu line: ouvrage name, else location text, else project name, else « Bureau ». */
   placeLine(t: Ticket): string {
-    return t.ouvrageName ?? t.locationText ?? t.projectName ?? '—';
+    if (t.ouvrageName) { return t.ouvrageName; }
+    if (t.locationText) { return t.locationText; }
+    if (t.projectName) { return t.projectName; }
+    // TACHE without project = « Bureau »
+    if (t.type === 'TACHE' && !t.projectId) { return 'Bureau'; }
+    return '—';
   }
 
   /** Responsable: assignee name, or tiers (responsible party) name with « externe ». */

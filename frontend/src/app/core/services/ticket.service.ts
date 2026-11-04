@@ -180,6 +180,13 @@ export class TicketService {
     return this.http.delete<void>(`/api/tickets/${id}/photos/${attachmentId}`);
   }
 
+  /** POST /api/tickets/{id}/files (multipart: file) — attach a TACHE deliverable. */
+  addFile(id: string, file: File): Observable<PhotoResponse> {
+    const fd = new FormData();
+    fd.append('file', file, file.name);
+    return this.http.post<PhotoResponse>(`/api/tickets/${id}/files`, fd);
+  }
+
   /** Backend expects yyyy-MM-dd date strings, not full ISO datetimes. */
   private normalize(body: TicketUpsert) {
     return { ...body, startAt: this.toYmd(body.startAt), dueAt: this.toYmd(body.dueAt) };

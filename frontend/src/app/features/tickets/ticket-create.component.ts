@@ -19,6 +19,7 @@ import { Project } from '@app/core/models/project.model';
 import { Ouvrage } from '@app/core/models/ouvrage.model';
 import { Party } from '@app/core/models/cash.model';
 import { TicketCatalogType } from '@app/core/models/ticket.model';
+import { CheckboxModule } from 'primeng/checkbox';
 import { compressImage } from '@app/shared/image-compress';
 import { typeVisual } from './signalement-visual';
 
@@ -28,7 +29,7 @@ interface PhotoItem { file: File; url: string; }
   selector: 'app-ticket-create',
   standalone: true,
   imports: [
-    FormsModule, ButtonModule, InputTextModule, TextareaModule, SelectModule, DatePickerModule
+    FormsModule, ButtonModule, InputTextModule, TextareaModule, SelectModule, DatePickerModule, CheckboxModule
   ],
   templateUrl: './ticket-create.component.html',
   styleUrl: './ticket-create.component.scss'
@@ -61,6 +62,7 @@ export class TicketCreateComponent implements OnInit {
   responsibleParty = signal<string | null>(null);
   dueAt = signal<Date | null>(null);
   description = signal('');
+  isPrivate = signal(false);
   showDetails = signal(false);
   sending = signal(false);
   progress = signal(0);
@@ -99,16 +101,32 @@ export class TicketCreateComponent implements OnInit {
       case 'PROBLEME': return 'Ex. : Tractopelle en panne au PK 2+300';
       case 'RESERVE': return 'Ex. : Réserves sur le béton de la dalle RDC';
       case 'DEMANDE': return 'Ex. : Besoin de 50 sacs de ciment';
+      case 'TACHE': return 'Ex. : Préparer le dossier de consultation PEHD';
       case 'VISA_DOCUMENT': return 'Ex. : Visa plan de coffrage dallage';
       default: return 'Titre du signalement';
     }
   });
 
-  /** Help lines for the 4 type tiles. */
+  /** True when the selected type is TACHE (office task). */
+  isTache = computed(() => this.selectedType() === 'TACHE');
+
+  /** Whether to show the chantier / ouvrage / lieu / responsable / origine / photos fields. */
+  showChantierFields = computed(() => !this.isTache());
+  showPhotos = computed(() => !this.isTache());
+
+  /** Project options with a « Bureau » first entry for TACHE. */
+  projectOptsTache = computed(() => {
+    const opts = this.projects().filter(p => p.status === 'ACTIF')
+      .map(p => ({ label: p.code ? `${p.code} — ${p.name}` : p.name, value: p.id }));
+    return [{ label: 'Bureau (aucun chantier)', value: null }, ...opts];
+  });
+
+  /** Help lines for the type tiles. */
   readonly typeHelp: Record<string, string> = {
     PROBLEME: 'Quelque chose bloque ou ralentit le chantier',
     RESERVE: 'Un défaut à corriger avant réception',
     DEMANDE: "Besoin de matériel, d'une information ou d'une décision",
+    TACHE: 'Un travail de bureau à faire : document, démarche, achat…',
     VISA_DOCUMENT: 'Un plan ou document à faire viser'
   };
 
@@ -140,6 +158,7 @@ export class TicketCreateComponent implements OnInit {
     this.selectedType.set(code);
     this.category.set(null);
     this.origin.set('INTERNE');
+    this.isPrivate.set(false);
     this.attemptedSave.set(false);
     // pre-fill due date: today + defaultDays
     const ct = this.catalog().find(t => t.code === code);
@@ -203,7 +222,12 @@ export class TicketCreateComponent implements OnInit {
     if (this.selectedType() !== 'VISA_DOCUMENT' && !this.category()) {
       return 'Choisissez une catégorie.';
     }
-    if (!this.selectedProject()) { return 'Choisissez un chantier.'; }
+    // TACHE: assignee required, project optional; other types: project required
+    if (this.isTache()) {
+      if (!this.assignee()) { return 'Une tâche doit être assignée à une personne.'; }
+    } else {
+      if (!this.selectedProject()) { return 'Choisissez un chantier.'; }
+    }
     if (this.photos().length > this.maxPhotos) { return `Maximum ${this.maxPhotos} photos.`; }
     return null;
   }
@@ -220,16 +244,17 @@ export class TicketCreateComponent implements OnInit {
     const ticket: Record<string, any> = {
       title: this.title().trim(),
       description: this.description().trim() || null,
-      projectId: this.selectedProject(),
+      projectId: this.isTache() ? (this.selectedProject() || null) : this.selectedProject(),
       assignedToId: this.assignee() || null,
       priority: 'MEDIUM',
       dueAt: this.dueAt() ? this.toYmd(this.dueAt()!) : null,
       type: this.selectedType(),
       category: this.selectedType() === 'VISA_DOCUMENT' ? null : this.category(),
       origin: this.selectedType() === 'RESERVE' ? this.origin() : null,
-      locationText: this.locationText().trim() || null,
-      ouvrageId: this.selectedOuvrage() || null,
-      responsiblePartyId: this.responsibleParty() || null,
+      locationText: this.isTache() ? null : (this.locationText().trim() || null),
+      ouvrageId: this.isTache() ? null : (this.selectedOuvrage() || null),
+      responsiblePartyId: this.isTache() ? null : (this.responsibleParty() || null),
+      isPrivate: this.isTache() ? this.isPrivate() : false,
     };
     const files = this.photos().map(p => p.file);
 

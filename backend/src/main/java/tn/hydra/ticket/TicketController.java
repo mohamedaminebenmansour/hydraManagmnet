@@ -42,7 +42,8 @@ public class TicketController {
                                       LocalDate startAt, LocalDate dueAt,
                                       UUID documentId,
                                       String type, String category, String origin,
-                                      String locationText, UUID ouvrageId, UUID responsiblePartyId) {}
+                                      String locationText, UUID ouvrageId, UUID responsiblePartyId,
+                                      Boolean isPrivate) {}
 
     public record UpdateTicketRequest(String title, String description, UUID projectId,
                                       UUID assignedToId, String priority,
@@ -86,7 +87,8 @@ public class TicketController {
         return service.create(auth, body.title(), body.description(), body.projectId(),
                 body.assignedToId(), body.priority(), body.startAt(), body.dueAt(), body.documentId(),
                 body.type(), body.category(), body.origin(),
-                body.locationText(), body.ouvrageId(), body.responsiblePartyId());
+                body.locationText(), body.ouvrageId(), body.responsiblePartyId(),
+                Boolean.TRUE.equals(body.isPrivate()));
     }
 
     @PutMapping("/{id}")
@@ -152,7 +154,8 @@ public class TicketController {
         return photoService.createWithPhotos(auth, ticket.title(), ticket.description(), ticket.projectId(),
                 ticket.assignedToId(), ticket.priority(), ticket.startAt(), ticket.dueAt(), ticket.documentId(),
                 ticket.type(), ticket.category(), ticket.origin(),
-                ticket.locationText(), ticket.ouvrageId(), ticket.responsiblePartyId(), photoFiles);
+                ticket.locationText(), ticket.ouvrageId(), ticket.responsiblePartyId(),
+                Boolean.TRUE.equals(ticket.isPrivate()), photoFiles);
     }
 
     @PostMapping("/{id}/photos")
@@ -176,6 +179,17 @@ public class TicketController {
                                             Authentication auth) {
         photoService.deletePhoto(auth, id, attachmentId);
         return ResponseEntity.noContent().build();
+    }
+
+    // ── deliverable files (TACHE) ───────────────────────────────────────
+
+    /** Attach a produced document to a TACHE (phase DELIVERABLE, filed by category). */
+    @PostMapping("/{id}/files")
+    @PreAuthorize("hasAuthority('PERM_TICKET_WRITE')")
+    public TicketPhotoService.PhotoResponse addFile(@PathVariable UUID id,
+                                                     @RequestParam("file") MultipartFile file,
+                                                     Authentication auth) {
+        return photoService.addDeliverable(auth, id, file);
     }
 
     // ── search + summary ──

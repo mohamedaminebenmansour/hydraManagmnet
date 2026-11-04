@@ -74,8 +74,14 @@ export class TicketDetailComponent implements OnInit {
   visaTransitions = computed(() => this.isVisa() ? this.actions() : []);
   beforePhotos = computed(() => this.photos().filter(p => p.phase === 'BEFORE'));
   afterPhotos = computed(() => this.photos().filter(p => p.phase === 'AFTER'));
+  deliverables = computed(() => this.photos().filter(p => p.phase === 'DELIVERABLE'));
   canAddPhoto = computed(() => this.actions().includes('ADD_PHOTO'));
   creatorName = computed(() => this.timeline().find(e => e.kind === 'SYSTEM')?.authorName ?? null);
+
+  /** TACHE: the resolve dialog offers a deliverable upload when the task has a chantier. */
+  isTache = computed(() => this.ticket()?.type === 'TACHE');
+  resolveHasChantier = computed(() => !!this.ticket()?.projectId);
+  resolveDeliverable = signal<File | null>(null);
 
   readonly actionLabels: Record<string, string> = {
     START: 'Démarrer', RESOLVE: 'Marquer résolu', VERIFY: 'Vérifier et clore',
@@ -157,6 +163,18 @@ export class TicketDetailComponent implements OnInit {
   async confirmResolve(): Promise<void> {
     if (!this.ticketId || this.resolveNote().trim().length < 5) { return; }
     this.sending.set(true);
+    // TACHE: upload the optional deliverable file first (if picked and the task has a chantier)
+    if (this.isTache() && this.resolveHasChantier() && this.resolveDeliverable()) {
+      try {
+        await this.ticketService.addFile(this.ticketId, this.resolveDeliverable()!).toPromise();
+        this.resolveDeliverable.set(null);
+        this.ticketService.photos(this.ticketId!).subscribe({ next: p2 => this.photos.set(p2 ?? []), error: () => {} });
+      } catch {
+        this.sending.set(false);
+        this.msgs.add({ severity: 'error', summary: 'Erreur', detail: 'Upload du livrable échoué' });
+        return;
+      }
+    }
     // upload after photos first, removing each from the list after success (so retry doesn't re-upload)
     const toUpload = [...this.resolveAfterPhotos()];
     for (const p of toUpload) {
@@ -174,7 +192,7 @@ export class TicketDetailComponent implements OnInit {
     this.ticketService.resolve(this.ticketId, this.resolveNote().trim()).subscribe({
       next: () => {
         this.sending.set(false); this.showResolve.set(false);
-        this.resolveNote.set(''); this.resolveAfterPhotos.set([]);
+        this.resolveNote.set(''); this.resolveAfterPhotos.set([]); this.resolveDeliverable.set(null);
         this.msgs.add({ severity: 'success', summary: 'Signalement résolu' });
         this.loadAll();
       },
@@ -184,6 +202,15 @@ export class TicketDetailComponent implements OnInit {
         // photos stay attached; keep dialog open
       }
     });
+  }
+
+  /** TACHE resolve dialog: pick the produced document (optional). */
+  onPickDeliverable(event: Event): void {
+    const input = event.target as HTMLInputElement;
+    if (input.files && input.files.length > 0) {
+      this.resolveDeliverable.set(input.files[0]);
+    }
+    input.value = '';
   }
 
   confirmVerify(): void {

@@ -4,7 +4,7 @@
 .step-label { font-size: 14px; font-weight: 700; color: #475569; text-transform: uppercase;
   letter-spacing: 0.03em; margin: 18px 0 10px; }
 
-// ── type tiles (2x2 grid) ────────────────────────────────────────────────
+// ── type tiles (2 columns; 5th tile spans both columns on desktop) ───────
 .type-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
 .type-tile {
   display: flex; flex-direction: column; align-items: center; gap: 4px; text-align: center;
@@ -16,6 +16,12 @@
   &:hover { border-color: var(--tc-color, #cbd5e1); }
   &.selected { border-color: var(--tc-color); background: color-mix(in srgb, var(--tc-color) 8%, transparent);
     i { transform: scale(1.1); } }
+  // 5th tile (TACHE) spans both columns so the grid stays 2×3 with one full-width row
+  &:nth-child(5) { grid-column: 1 / -1; }
+}
+@media (max-width: 360px) {
+  .type-grid { grid-template-columns: 1fr; }
+  .type-tile:nth-child(5) { grid-column: auto; }
 }
 
 // ── form fields ─────────────────────────────────────────────────────────
@@ -26,6 +32,8 @@
   textarea { resize: vertical; }
 }
 .field-err { color: #b91c1c; font-size: 12px; font-weight: 600; }
+.field-help { font-size: 12px; color: #64748b; }
+.checkbox-row { display: flex; align-items: center; gap: 8px; font-size: 15px; font-weight: 600; color: #0f172a; }
 .w100 { width: 100%; }
 
 // ── category chips ───────────────────────────────────────────────────────
