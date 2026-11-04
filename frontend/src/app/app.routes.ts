@@ -36,6 +36,8 @@ export const routes: Routes = [
         loadComponent: () => import('./features/users/users.component').then(m => m.UsersComponent) },
       { path: 'roles', canActivate: [permGuard(PERM.ROLE_MANAGE)],
         loadComponent: () => import('./features/roles/roles.component').then(m => m.RolesComponent) },
+      { path: 'roles/matrice', canActivate: [permGuard(PERM.ROLE_MANAGE)],
+        loadComponent: () => import('./features/roles/roles-matrix.component').then(m => m.RolesMatrixComponent) },
       { path: 'roles/:id', canActivate: [permGuard(PERM.ROLE_MANAGE)],
         loadComponent: () => import('./features/roles/role-detail.component').then(m => m.RoleDetailComponent) },
       { path: 'audit', canActivate: [permGuard(PERM.AUDIT_VIEW)],

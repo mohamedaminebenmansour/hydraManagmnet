@@ -1,6 +1,6 @@
 import { Component, OnInit, computed, inject, signal, ViewChild } from '@angular/core';
 import { FormsModule } from '@angular/forms';
-import { RouterLink } from '@angular/router';
+import { ActivatedRoute, RouterLink } from '@angular/router';
 import { ButtonModule } from 'primeng/button';
 import { InputTextModule } from 'primeng/inputtext';
 import { TableModule } from 'primeng/table';
@@ -281,6 +281,7 @@ export class UsersComponent implements OnInit {
   private auth = inject(AuthService);
   private msgs = inject(MessageService);
   private viewModeService = inject(ViewModeService);
+  private route = inject(ActivatedRoute);
 
   users = signal<UserDto[]>([]);
   summary = signal<UserSummary | null>(null);
@@ -294,6 +295,7 @@ export class UsersComponent implements OnInit {
   filterStatus = signal<string | null>(null);
   filterStatusVal: string | null = null;
   filterChantier: string | null = null;
+  filterRole = signal<string | null>(null);
 
   // Row menu
   rowMenuUser = signal<UserDto | null>(null);
@@ -338,6 +340,10 @@ export class UsersComponent implements OnInit {
     if (this.filterChantier) {
       list = list.filter(u => (u.projectNames ?? []).includes(this.filterChantier!));
     }
+    const role = this.filterRole();
+    if (role) {
+      list = list.filter(u => u.roleCodes.includes(role!));
+    }
     return list;
   });
 
@@ -353,7 +359,9 @@ export class UsersComponent implements OnInit {
   ngOnInit(): void {
     this.load();
     this.userService.summary().subscribe({ next: s => this.summary.set(s), error: () => {} });
-    // Check mail status
+    // U5: read ?role=CODE to preselect the filter (from the roles page)
+    const roleCode = this.route.snapshot.queryParamMap.get('role');
+    if (roleCode) this.filterRole.set(roleCode);
     this.auth.check().subscribe(() => {});
   }
 
