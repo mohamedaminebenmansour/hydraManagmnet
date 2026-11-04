@@ -267,7 +267,7 @@ class TicketPhotoTest {
 
         TicketService.TicketSummary s = tickets.summary(auth, projectId);
         assertThat(s.byType()).isEqualTo(java.util.Map.of(
-                "PROBLEME", 1L, "RESERVE", 1L, "DEMANDE", 1L, "VISA_DOCUMENT", 0L));
+                "PROBLEME", 1L, "RESERVE", 1L, "DEMANDE", 1L, "TACHE", 0L, "VISA_DOCUMENT", 0L));
         assertThat(s.open()).isEqualTo(3);
         assertThat(s.inProgress()).isZero();
         assertThat(s.toVerify()).isZero();

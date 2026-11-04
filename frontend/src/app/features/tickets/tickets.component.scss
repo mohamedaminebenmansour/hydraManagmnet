@@ -92,7 +92,8 @@ button:focus-visible, a:focus-visible, input:focus-visible,
     &:last-child { border-bottom: none; }
     td { padding: 10px 12px; color: #0f172a; vertical-align: middle; white-space: nowrap; }
   }
-  .c-sig { .sig-title { font-weight: 600; } .sig-cat { color: #94a3b8; font-size: 12px; margin-top: 1px; } }
+  .c-sig { .sig-title { font-weight: 600; display: flex; align-items: center; gap: 4px; } .sig-cat { color: #94a3b8; font-size: 12px; margin-top: 1px; } }
+  .priv-lock { color: #64748b; font-size: 13px; }
   .c-place { color: #64748b; }
   .c-resp { color: #475569; }
   .c-due { color: #475569; &.overdue { color: #b91c1c; font-weight: 700; } }

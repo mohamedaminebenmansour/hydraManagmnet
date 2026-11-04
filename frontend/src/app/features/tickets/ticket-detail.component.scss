@@ -34,6 +34,14 @@ button:focus-visible, input:focus-visible, textarea:focus-visible { outline: 2px
 .photo-group {
   h3 { margin: 0 0 8px; font-size: 15px; font-weight: 700; color: #475569; }
 }
+.deliverable-list { display: flex; flex-direction: column; gap: 6px; }
+.deliverable-row {
+  display: flex; align-items: center; gap: 8px; padding: 8px 12px; border-radius: 8px;
+  border: 1px solid #e2e8f0; background: #f8fafc; text-decoration: none; color: #0f172a; font-size: 14px;
+  &:hover { border-color: #0ea5e9; background: #f0f9ff; }
+  span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .pi-download { color: #0ea5e9; }
+}
 .thumbs { display: flex; flex-wrap: wrap; gap: 8px; }
 .thumb { position: relative; width: 96px; height: 96px; border-radius: 8px; overflow: hidden;
   border: 1px solid #e2e8f0; cursor: pointer;

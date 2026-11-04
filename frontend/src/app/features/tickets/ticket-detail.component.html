@@ -86,6 +86,22 @@
               }
             </div>
           </div>
+
+          <!-- TACHE deliverable files -->
+          @if (deliverables().length) {
+            <div class="photo-group">
+              <h3>Documents livrés</h3>
+              <div class="deliverable-list">
+                @for (p of deliverables(); track p.id) {
+                  <a class="deliverable-row" [href]="p.downloadUrl ?? '#'" target="_blank" rel="noopener">
+                    <i class="pi pi-file"></i>
+                    <span>{{ p.title }}</span>
+                    <i class="pi pi-download"></i>
+                  </a>
+                }
+              </div>
+            </div>
+          }
         </div>
 
         <!-- timeline -->
@@ -145,26 +161,39 @@
 }
 
 <!-- resolve dialog -->
-<p-dialog [visible]="showResolve()" (visibleChange)="showResolve.set($event)" header="Marquer résolu" [modal]="true" [style]="{width: '480px'}">
+<p-dialog [visible]="showResolve()" (visibleChange)="showResolve.set($event)"
+          [header]="isTache() ? 'Marquer résolu' : 'Marquer résolu'" [modal]="true" [style]="{width: '480px'}">
   <div class="dlg">
-    <label>Qu'est-ce qui a été fait ?*</label>
+    <label>{{ isTache() ? "Qu'avez-vous livré ?*" : "Qu'est-ce qui a été fait ?*" }}</label>
     <textarea pTextarea rows="3" [ngModel]="resolveNote()" (ngModelChange)="resolveNote.set($event)"
-              placeholder="Ex. : Fuite réparée, joint remplacé"></textarea>
+              [placeholder]="isTache() ? 'Ex. : Dossier préparé et envoyé au client' : 'Ex. : Fuite réparée, joint remplacé'"></textarea>
     @if (resolveNote().trim().length > 0 && resolveNote().trim().length < 5) {
       <span class="field-err">Minimum 5 caractères.</span>
     }
-    <label>Photos après travaux</label>
-    @if (ticket()?.type === 'RESERVE') { <span class="field-hint">Obligatoire pour une réserve</span> }
-    <div class="photo-actions">
-      <label class="photo-btn"><input type="file" accept="image/*" capture="environment" (change)="onPickAfterPhoto($event)" hidden /><i class="pi pi-camera"></i> Prendre une photo</label>
-      <label class="photo-btn"><input type="file" accept="image/*" multiple (change)="onPickAfterPhoto($event)" hidden /><i class="pi pi-images"></i> Galerie</label>
-    </div>
-    @if (resolveCompressing()) { <span class="compressing">Préparation…</span> }
-    <div class="thumbs">
-      @for (p of resolveAfterPhotos(); track p.url; let i = $index) {
-        <div class="thumb"><img [src]="p.url" alt="Photo après" /><button class="thumb-rm" (click)="removeAfterPhoto(i)" aria-label="Supprimer">×</button></div>
-      }
-    </div>
+
+    @if (isTache() && resolveHasChantier()) {
+      <!-- TACHE with a chantier: offer the produced document (optional) -->
+      <label>Joindre le document produit (optionnel)</label>
+      <label class="photo-btn">
+        <input type="file" accept=".pdf,.doc,.docx,.xls,.xlsx,.jpg,.png" (change)="onPickDeliverable($event)" hidden />
+        <i class="pi pi-file"></i> {{ resolveDeliverable() ? resolveDeliverable()!.name : 'Choisir un fichier' }}
+      </label>
+    }
+
+    @if (!isTache()) {
+      <label>Photos après travaux</label>
+      @if (ticket()?.type === 'RESERVE') { <span class="field-hint">Obligatoire pour une réserve</span> }
+      <div class="photo-actions">
+        <label class="photo-btn"><input type="file" accept="image/*" capture="environment" (change)="onPickAfterPhoto($event)" hidden /><i class="pi pi-camera"></i> Prendre une photo</label>
+        <label class="photo-btn"><input type="file" accept="image/*" multiple (change)="onPickAfterPhoto($event)" hidden /><i class="pi pi-images"></i> Galerie</label>
+      </div>
+      @if (resolveCompressing()) { <span class="compressing">Préparation…</span> }
+      <div class="thumbs">
+        @for (p of resolveAfterPhotos(); track p.url; let i = $index) {
+          <div class="thumb"><img [src]="p.url" alt="Photo après" /><button class="thumb-rm" (click)="removeAfterPhoto(i)" aria-label="Supprimer">×</button></div>
+        }
+      </div>
+    }
   </div>
   <ng-template pTemplate="footer">
     <p-button label="Annuler" [text]="true" (onClick)="showResolve.set(false)" />

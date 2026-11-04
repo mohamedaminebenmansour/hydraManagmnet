@@ -60,6 +60,10 @@ public class DemoDataRunner implements CommandLineRunner {
     private String demoPassword;
     private String demoPwHash;
 
+    /** T9: the legacy big seed is off by default; DemoScenarioRunner replaces it. */
+    @Value("${hydra.demo.legacy:false}")
+    private boolean legacyEnabled;
+
     private String demoPwHash() {
         if (demoPwHash == null) demoPwHash = encoder.encode(demoPassword);
         return demoPwHash;
@@ -75,6 +79,11 @@ public class DemoDataRunner implements CommandLineRunner {
 
     @Override
     public void run(String... args) {
+        if (!legacyEnabled) {
+            org.slf4j.LoggerFactory.getLogger(DemoDataRunner.class)
+                    .info("Legacy demo data skipped (set HYDRA_DEMO_LEGACY=true to run it)");
+            return;
+        }
         if (demoPassword == null || demoPassword.isBlank()) {
             org.slf4j.LoggerFactory.getLogger(DemoDataRunner.class)
                     .warn("Demo data skipped: HYDRA_DEMO_PASSWORD is not set.");

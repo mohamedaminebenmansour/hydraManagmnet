@@ -18,13 +18,15 @@ section (grep the method, then read around it).
 | `security` | `PermissionService`, `FolderAccessService`, `ToxicPairService`, `HydraUserDetailsService`, `SessionRevoker`, `PasswordPolicy` (U1), `TemporaryPasswordGenerator` (U1), `PasswordChangeRequiredFilter` (U1) | Permissions, folder ACL, segregation of duties, password policy (min 12, blocklist, personal info), temp password generation, forced change at first login |
 | `audit` | `EventLogService`, `AuditService`, `AuditController` | Append-only event log |
 | `event` | `DomainEventService`, `EventType`, `DomainEventController` | Domain events (table domain_event, V47): one row per business action, written in the action's transaction by `DomainEventService.publish` (payment submitted, cash posted, step completed, BC created, BL received, facture recorded, bordereau imported / activated, document uploaded). Nothing consumes them yet. `GET /api/events` (owner) feeds the "Journal des événements" page. Not the audit log |
-| `ticket` | `TicketService`, `TicketController`, `TicketPhotoService`, `TicketType`, `TicketWorkflow` | Signalements: 4 types, categories, origine (RESERVE), ouvrage/party links; universal lifecycle OPEN→IN_PROGRESS→RESOLVED→CLOSED (+CANCELLED) driven by named actions (start/resolve/verify/reopen/cancel) with role rules (assignee-or-creator for start/resolve; creator/owner/manager for verify/reopen/cancel; RESERVE resolve needs an AFTER photo, verify ≠ resolver). VISA keeps DRAFT→…→AS_BUILT via POST /{id}/status. Photos (V49) via `DocumentService.upload` filed by type. Timeline + comments (V50, ticket_comment). `GET /api/tickets/catalog` / `/search` / `/summary` / `/{id}/actions` / `/{id}/timeline`. `TICKET_CREATED` + `TICKET_STATUS_CHANGED` domain events |
-| `user`, `role`, `auth` | `UserService` (~690), `UserController`, `MyProfileController` (U1, `/api/me`), `RoleService`, `AuthController` (login + last_login_at/first_login_at + password-policy + mail-status), `PasswordTokenService` (U2), `PasswordResetController` (U2), `ForgotPasswordRateLimiter` (U2) | Users (incl. absence, phone, job_title, last_login_at, password_changed_at, first_login_at), roles, login, my profile, forgotten password + invitation tokens. See `backend/docs/users.md`. |
-| `config` | `SecurityConfig`, `CorsConfig`, `BootstrapRunner`, `DemoDataRunner`, `DevDataSeedRunner` | Security, CORS, seeding |
+| `ticket` | `TicketService` (~1070), `TicketController` (~260), `TicketPhotoService` (~340, photos + deliverable files), `TicketType`, `TicketWorkflow` | Signalements: 5 types (PROBLEME/RESERVE/DEMANDE/TACHE/VISA_DOCUMENT), categories, origine (RESERVE), ouvrage/party links; universal lifecycle OPEN→IN_PROGRESS→RESOLVED→CLOSED (+CANCELLED) for the first four; VISA keeps DRAFT→…→AS_BUILT. TACHE = office task, project optional (null = « Bureau »), is_private (creator+assignee only). Central visibility rule `canRead` + `readVisibilityFragment` (A4) used by get/list/search/summary/actions/timeline/comments/photos/files. Deliverable files (POST /{id}/files, phase DELIVERABLE) filed by category. `GET /api/tickets/catalog` / `/search` / `/summary` / `/{id}/actions` / `/{id}/timeline` / `/{id}/photos` / `/{id}/files`. |
+| `mail` | `MailService` (interface), `MailServiceSmtp`, `MailServiceDisabled`, `MailConfig` | Optional email: SMTP when `HYDRA_MAIL_HOST` + `HYDRA_MAIL_FROM` set, disabled otherwise. `sendAfterCommit` defers to after-commit. 3 templates (reset/invite/changed). |
+| `security` | `PermissionService`, `FolderAccessService`, `ToxicPairService`, `HydraUserDetailsService`, `SessionRevoker`, `PasswordPolicy` (U1), `TemporaryPasswordGenerator` (U1), `PasswordChangeRequiredFilter` (U1) | Permissions, folder ACL, segregation of duties, password policy (min 12, blocklist, personal info), temp password generation, forced change at first login |
+| `user`, `role`, `auth` | `UserService` (~690), `UserController`, `MyProfileController` (U1, `/api/me`), `RoleService` (~250), `RoleController`, `AuthController` (login + last_login_at/first_login_at + password-policy + mail-status), `PasswordTokenService` (U2), `PasswordResetController` (U2), `ForgotPasswordRateLimiter` (U2) | Users (incl. absence, phone, job_title, last_login_at, password_changed_at, first_login_at), roles (with userCount + moduleKeys + confirm-impact + duplicate), login, my profile, forgotten password + invitation tokens. See `backend/docs/users.md`. |
+| `config` | `SecurityConfig`, `CorsConfig`, `BootstrapRunner`, `DemoDataRunner` (off by default since T9), `DevDataSeedRunner`, `config/demo/` (`DemoScenarioRunner`, `DemoTachesScenario`, `DemoScenario`, `InMemoryMultipartFile`) | Security, CORS, seeding. `@Profile("demo")` demo pack creates the « HYDRA Démo » company + 9 users + 1 chantier + 11 signalements; never touches the real company. See `docs/DEMO.md`. |
 | `common`, `exception` | `GlobalExceptionHandler`, `BusinessRuleException` | Errors → HTTP |
 
-Migrations: `backend/src/main/resources/db/migration/`, last on main = **V52__password_token.sql**.
-Never edit an existing migration; the next one is V53.
+Migrations: `backend/src/main/resources/db/migration/`, last = **V53__user_profile_security.sql**.
+Never edit an existing migration; the next one is V54.
 Recent ones: V38 rule columns · V39 FINANCE_ONLY rule · V40 step approvals (ALL mode) ·
 V41 project_member default · V42 role substitute · V43 opt-out seed · V44 absences ·
 V45 bordereau_version.source_document_id / source_revision · V46 two-level folder tree
@@ -37,9 +39,11 @@ V49 ticket_attachment (photos: ticket_id/document_id/phase BEFORE|AFTER|OTHER,
 unique(ticket_id, document_id), on delete cascade, index org+ticket) ·
 V50 ticket_comment (timeline: author_id/kind COMMENT|STATUS_CHANGE|SYSTEM/body/from_status/to_status;
 index org+ticket+created_at) ·
-V51 user_profile_security (app_user: phone, job_title, last_login_at, password_changed_at, first_login_at) ·
+V51 ticket TACHE type (type+status check add TACHE; is_private boolean;
+ticket_attachment phase DELIVERABLE; project_id already nullable — no change) ·
 V52 password_token (id/org_id/user_id/purpose RESET|INVITE/token_hash unique/expires_at/used_at/created_ip;
-index user_id+purpose where used_at is null).
+index user_id+purpose where used_at is null) ·
+V53 user_profile_security (app_user: phone, job_title, last_login_at, password_changed_at, first_login_at).
 
 Key behaviours to remember:
 - A rule is enabled on a chantier unless `project_process_template.enabled = false` (opt-out).
@@ -72,6 +76,7 @@ Tests: `backend/src/test/java/tn/hydra/<package>/`. Test DB: `hydra_test` on
 - `BORDEREAU-ANALYSIS.md` — bordereau structure and import rules
 - `SECURITY.md` — what is protected and the owner's security checklist
 - `backend/docs/users.md` — user accounts: password policy, statuses, endpoints
+- `DEMO.md` — how to switch on the « HYDRA Démo » company + scenario pack
 
 ## Never read
 `frontend/node_modules`, `frontend/dist`, `frontend/.angular`, `backend/target`,

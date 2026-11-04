@@ -26,6 +26,7 @@ const TYPE_VISUAL: Record<string, V> = {
   PROBLEME: { icon: 'pi-exclamation-triangle', color: '#ea580c', label: 'Problème chantier' },
   RESERVE: { icon: 'pi-flag', color: '#dc2626', label: 'Réserve / non-conformité' },
   DEMANDE: { icon: 'pi-question-circle', color: '#2563eb', label: 'Demande' },
+  TACHE: { icon: 'pi-briefcase', color: '#0891b2', label: 'Tâche' },
   VISA_DOCUMENT: { icon: 'pi-file-check', color: '#7c3aed', label: 'Visa de document' }
 };
 
