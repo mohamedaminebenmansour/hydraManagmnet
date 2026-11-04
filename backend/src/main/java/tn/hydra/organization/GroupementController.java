@@ -37,9 +37,14 @@ public class GroupementController {
 
     @PostMapping
     @PreAuthorize("hasAuthority('PERM_ORG_SETTINGS')")
-    public GroupementService.GroupementResponse create(@RequestBody GroupementService.GroupementInput body,
-                                                       Authentication auth) {
-        return service.create(auth, body);
+    public ResponseEntity<?> create(@RequestBody GroupementService.GroupementInput body,
+                                    Authentication auth) {
+        try {
+            return ResponseEntity.ok(service.create(auth, body));
+        } catch (CompanyProfileService.ValidationException e) {
+            return ResponseEntity.badRequest()
+                    .body(Map.of("code", "VALIDATION", "fields", e.getFields()));
+        }
     }
 
     @PutMapping("/{id}")
@@ -49,6 +54,9 @@ public class GroupementController {
                                     Authentication auth) {
         try {
             return ResponseEntity.ok(service.update(auth, id, body));
+        } catch (CompanyProfileService.ValidationException e) {
+            return ResponseEntity.badRequest()
+                    .body(Map.of("code", "VALIDATION", "fields", e.getFields()));
         } catch (BusinessRuleException e) {
             if ("STALE_GROUPEMENT".equals(e.getCode())) {
                 return ResponseEntity.status(HttpStatus.CONFLICT)

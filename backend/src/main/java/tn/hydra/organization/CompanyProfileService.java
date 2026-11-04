@@ -5,9 +5,12 @@ import org.springframework.security.access.AccessDeniedException;
 import org.springframework.security.core.Authentication;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 import tn.hydra.audit.EventLogService;
 import tn.hydra.common.BusinessRuleException;
 import tn.hydra.document.service.FileStorage;
+import tn.hydra.exception.FileStorageException;
 import tn.hydra.user.AppUser;
 import tn.hydra.user.AppUserRepository;
 
@@ -158,32 +161,50 @@ public class CompanyProfileService {
 
         int newVersion = body.version();
         if (existing.isEmpty()) {
-            // INSERT (version must be 0)
+            // INSERT path: version must be 0, then "insert ... on conflict do nothing".
+            // If 0 rows are inserted, another transaction created the row between our
+            // SELECT and INSERT — return STALE_PROFILE so the user reloads.
             if (body.version() != 0) {
                 throw new BusinessRuleException("STALE_PROFILE",
                         "Le profil a été modifié par quelqu'un d'autre. Rechargez la page.");
             }
-            jdbc.update("""
+            int inserted = jdbc.update("""
                     insert into company_profile (org_id, pays, raison_sociale, nom_commercial, forme_juridique,
                         matricule_fiscal, rne, capital, assujetti_tva, adresse, code_postal, ville,
                         gouvernorat, telephone, email, site_web, banque, rib, version, updated_by)
                     values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)
+                    on conflict (org_id) do nothing
                     """, orgId, pays, raisonSociale, nomCommercial, formeJuridique,
                     mfNormalized, rne, body.capital(), assujetti, adresse, codePostal, ville,
                     gouvernorat, telephone, email, siteWeb, banque, ribNormalized, me.getId());
+            if (inserted == 0) {
+                // A row appeared between our SELECT and INSERT — caller must reload.
+                throw new BusinessRuleException("STALE_PROFILE",
+                        "Le profil a été modifié par quelqu'un d'autre. Rechargez la page.");
+            }
             newVersion = 1;
             // Audit: all fields are "new"
             auditChange(orgId, me, null, pays, raisonSociale, nomCommercial, formeJuridique,
                     mfNormalized, rne, body.capital(), assujetti, adresse, codePostal, ville,
                     gouvernorat, telephone, email, siteWeb, banque, ribNormalized);
         } else {
-            // UPDATE with optimistic lock
+            // UPDATE path with optimistic lock
             Map<String, Object> old = existing.get(0);
             int oldVersion = ((Number) old.get("version")).intValue();
             if (body.version() != oldVersion) {
                 throw new BusinessRuleException("STALE_PROFILE",
                         "Le profil a été modifié par quelqu'un d'autre. Rechargez la page.");
             }
+
+            // FIX 2e: if no field changed, write NO audit row and do NOT bump the version
+            // (compare capital with BigDecimal.compareTo; compare assujettiTva too).
+            if (!hasChanges(old, pays, raisonSociale, nomCommercial, formeJuridique,
+                    mfNormalized, rne, body.capital(), assujetti, adresse, codePostal, ville,
+                    gouvernorat, telephone, email, siteWeb, banque, ribNormalized)) {
+                // No changes: return the current profile, no audit row, no version bump.
+                return mapRow(old);
+            }
+
             int updated = jdbc.update("""
                     update company_profile set pays = ?, raison_sociale = ?, nom_commercial = ?,
                         forme_juridique = ?, matricule_fiscal = ?, rne = ?, capital = ?,
@@ -218,17 +239,22 @@ public class CompanyProfileService {
         UUID orgId = me.getOrgId();
 
         String ext = "image/png".equals(detectedContentType) ? ".png" : ".jpg";
-        String key = "org/" + orgId + "/company/logo-" + UUID.randomUUID() + ext;
+        String newKey = "org/" + orgId + "/company/logo-" + UUID.randomUUID() + ext;
 
-        // Save to storage FIRST (so we have the file)
-        storage.save(key, content, detectedContentType);
+        // Save to storage FIRST (so we have the file).
+        storage.save(newKey, content, detectedContentType);
 
-        // Load old key for cleanup
+        // Load old key for cleanup (kept after commit if our update succeeds)
         List<Map<String, Object>> rows = jdbc.queryForList(
                 "select logo_key, version from company_profile where org_id = ?", orgId);
         String oldKey = rows.isEmpty() ? null : (String) rows.get(0).get("logo_key");
 
-        int updated;
+        // FIX 2c: register ONE TransactionSynchronization RIGHT AFTER storage.save(newKey)
+        // and BEFORE the DB write — so even if the DB step throws, the
+        // afterCompletion(STATUS_ROLLED_BACK) hook still fires and deletes newKey
+        // (no orphan file). The "updated == 0" dead branch is gone.
+        registerLogoSwapSynchronization(newKey, oldKey);
+
         if (rows.isEmpty()) {
             // No profile row yet: create one with just the logo
             String orgName = jdbc.queryForObject(
@@ -236,28 +262,16 @@ public class CompanyProfileService {
             jdbc.update("""
                     insert into company_profile (org_id, raison_sociale, logo_key, logo_content_type, version, updated_by)
                     values (?, ?, ?, ?, 1, ?)
-                    """, orgId, orgName, key, detectedContentType, me.getId());
+                    """, orgId, orgName, newKey, detectedContentType, me.getId());
         } else {
-            int oldVersion = ((Number) rows.get(0).get("version")).intValue();
-            updated = jdbc.update("""
+            jdbc.update("""
                     update company_profile set logo_key = ?, logo_content_type = ?,
                         version = version + 1, updated_at = now(), updated_by = ?
                     where org_id = ?
-                    """, key, detectedContentType, me.getId(), orgId);
-            if (updated == 0) {
-                // DB update failed: delete the new file to avoid orphan
-                try { storage.delete(key); } catch (RuntimeException ignored) {}
-                throw new BusinessRuleException("STALE_PROFILE",
-                        "Le profil a été modifié par quelqu'un d'autre. Rechargez la page.");
-            }
+                    """, newKey, detectedContentType, me.getId(), orgId);
         }
 
         audit.log("COMPANY_LOGO_UPDATED", "company_profile", orgId, null);
-
-        // Delete old logo file after commit
-        if (oldKey != null) {
-            registerAfterCommitDelete(oldKey);
-        }
     }
 
     @Transactional
@@ -279,7 +293,8 @@ public class CompanyProfileService {
                 """, me.getId(), orgId);
 
         audit.log("COMPANY_LOGO_REMOVED", "company_profile", orgId, null);
-        registerAfterCommitDelete(oldKey);
+        // deleteLogo is the "swap null in" case: on commit, delete oldKey; on rollback, keep it.
+        registerLogoSwapSynchronization(null, oldKey);
     }
 
     public record LogoData(byte[] content, String contentType, String logoKey) {}
@@ -293,7 +308,21 @@ public class CompanyProfileService {
         String key = (String) rows.get(0).get("logo_key");
         String contentType = (String) rows.get(0).get("logo_content_type");
         if (key == null) return null;
-        byte[] bytes = storage.load(key);
+        // FIX 2f: if the key is set but storage.load throws or returns null, return null
+        // (the controller maps this to 404) and log a warning with the key.
+        byte[] bytes;
+        try {
+            bytes = storage.load(key);
+        } catch (RuntimeException e) {
+            org.slf4j.LoggerFactory.getLogger(CompanyProfileService.class)
+                    .warn("Logo key '{}' is set in DB but storage.load failed: {}", key, e.getMessage());
+            return null;
+        }
+        if (bytes == null) {
+            org.slf4j.LoggerFactory.getLogger(CompanyProfileService.class)
+                    .warn("Logo key '{}' is set in DB but storage.load returned null", key);
+            return null;
+        }
         return new LogoData(bytes, contentType, key);
     }
 
@@ -305,20 +334,47 @@ public class CompanyProfileService {
         return t.isEmpty() ? null : t;
     }
 
-    private void registerAfterCommitDelete(String key) {
-        if (!org.springframework.transaction.support.TransactionSynchronizationManager.isSynchronizationActive()) return;
-        org.springframework.transaction.support.TransactionSynchronizationManager.registerSynchronization(
-                new org.springframework.transaction.support.TransactionSynchronization() {
-                    @Override
-                    public void afterCompletion(int status) {
-                        if (status != STATUS_ROLLED_BACK) {
-                            try { storage.delete(key); } catch (RuntimeException e) {
-                                org.slf4j.LoggerFactory.getLogger(CompanyProfileService.class)
-                                        .warn("Failed to delete old logo file {}", key);
-                            }
+    /**
+     * Register ONE TransactionSynchronization that handles the logo swap atomically
+     * with the DB transaction:
+     *   - on STATUS_ROLLED_BACK → delete newKey (if not null) so we don't leave an orphan
+     *   - on STATUS_COMMITTED   → delete oldKey (if not null) since the new key is now the source of truth
+     *
+     * For deleteLogo, newKey is null (we're just removing the logo).
+     */
+    private void registerLogoSwapSynchronization(String newKey, String oldKey) {
+        if (!TransactionSynchronizationManager.isSynchronizationActive()) {
+            // No transaction: best-effort immediate delete of whichever key is "the loser".
+            // If newKey is set, the DB write already happened in the same call; if it threw,
+            // we wouldn't reach here. So the safe immediate action is: delete oldKey if any.
+            if (oldKey != null) {
+                try { storage.delete(oldKey); } catch (RuntimeException e) {
+                    org.slf4j.LoggerFactory.getLogger(CompanyProfileService.class)
+                            .warn("Failed to delete old logo file {}", oldKey);
+                }
+            }
+            return;
+        }
+        TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+            @Override
+            public void afterCompletion(int status) {
+                if (status == STATUS_ROLLED_BACK) {
+                    if (newKey != null) {
+                        try { storage.delete(newKey); } catch (RuntimeException e) {
+                            org.slf4j.LoggerFactory.getLogger(CompanyProfileService.class)
+                                    .warn("Failed to delete rolled-back new logo file {}", newKey);
                         }
                     }
-                });
+                } else if (status == STATUS_COMMITTED) {
+                    if (oldKey != null) {
+                        try { storage.delete(oldKey); } catch (RuntimeException e) {
+                            org.slf4j.LoggerFactory.getLogger(CompanyProfileService.class)
+                                    .warn("Failed to delete old logo file {}", oldKey);
+                        }
+                    }
+                }
+            }
+        });
     }
 
     private void auditChange(UUID orgId, AppUser me, Map<String, Object> oldRow,
@@ -336,6 +392,7 @@ public class CompanyProfileService {
         first = addDiff(sb, first, "matriculeFiscal", oldRow, mf);
         first = addDiff(sb, first, "rne", oldRow, rne);
         first = addDiffNum(sb, first, "capital", oldRow, capital);
+        first = addDiffBool(sb, first, "assujettiTva", oldRow, assujetti);
         first = addDiff(sb, first, "adresse", oldRow, adresse);
         first = addDiff(sb, first, "codePostal", oldRow, codePostal);
         first = addDiff(sb, first, "ville", oldRow, ville);
@@ -350,6 +407,54 @@ public class CompanyProfileService {
         audit.log("COMPANY_PROFILE_UPDATED", "company_profile", orgId, sb.toString());
     }
 
+    /**
+     * FIX 2e: detect whether any field actually changed.
+     * - capital compared with BigDecimal.compareTo (50000 == 50000.000)
+     * - assujettiTva compared too
+     * - Strings compared with Objects.equals after trim/null normalization
+     */
+    private boolean hasChanges(Map<String, Object> old, String pays, String raisonSociale,
+                                String nomCommercial, String formeJuridique, String mf, String rne,
+                                BigDecimal capital, boolean assujetti, String adresse, String codePostal,
+                                String ville, String gouvernorat, String telephone, String email,
+                                String siteWeb, String banque, String rib) {
+        if (!strEq((String) old.get("pays"), pays)) return true;
+        if (!strEq((String) old.get("raison_sociale"), raisonSociale)) return true;
+        if (!strEq((String) old.get("nom_commercial"), nomCommercial)) return true;
+        if (!strEq((String) old.get("forme_juridique"), formeJuridique)) return true;
+        if (!strEq((String) old.get("matricule_fiscal"), mf)) return true;
+        if (!strEq((String) old.get("rne"), rne)) return true;
+        if (!numEq(old.get("capital"), capital)) return true;
+        if (!boolEq(old.get("assujetti_tva"), assujetti)) return true;
+        if (!strEq((String) old.get("adresse"), adresse)) return true;
+        if (!strEq((String) old.get("code_postal"), codePostal)) return true;
+        if (!strEq((String) old.get("ville"), ville)) return true;
+        if (!strEq((String) old.get("gouvernorat"), gouvernorat)) return true;
+        if (!strEq((String) old.get("telephone"), telephone)) return true;
+        if (!strEq((String) old.get("email"), email)) return true;
+        if (!strEq((String) old.get("site_web"), siteWeb)) return true;
+        if (!strEq((String) old.get("banque"), banque)) return true;
+        if (!strEq((String) old.get("rib"), rib)) return true;
+        return false;
+    }
+
+    private static boolean strEq(String a, String b) { return Objects.equals(a, b); }
+
+    /** BigDecimal compareTo equality (50000 == 50000.000), null-safe. */
+    private static boolean numEq(Object oldVal, BigDecimal newVal) {
+        if (oldVal == null && newVal == null) return true;
+        if (oldVal == null || newVal == null) return false;
+        BigDecimal oldBd = oldVal instanceof BigDecimal bd ? bd
+                : oldVal instanceof Number n ? new BigDecimal(n.toString()) : null;
+        if (oldBd == null) return false;
+        return oldBd.compareTo(newVal) == 0;
+    }
+
+    private static boolean boolEq(Object oldVal, boolean newVal) {
+        boolean old = Boolean.TRUE.equals(oldVal);
+        return old == newVal;
+    }
+
     private boolean addDiff(StringBuilder sb, boolean first, String field, Map<String, Object> old, String newVal) {
         String oldVal = old == null ? null : (String) old.get(snake(field));
         if (Objects.equals(oldVal, newVal)) return first;
@@ -362,17 +467,42 @@ public class CompanyProfileService {
         return false;
     }
 
+    /**
+     * FIX 2e: compare capital with BigDecimal.compareTo (50000 == 50000.000)
+     * so no audit row is written for a same-value, different-scale save.
+     */
     private boolean addDiffNum(StringBuilder sb, boolean first, String field, Map<String, Object> old, BigDecimal newVal) {
         Object oldVal = old == null ? null : old.get(snake(field));
-        String oldStr = oldVal == null ? null : oldVal.toString();
-        String newStr = newVal == null ? null : newVal.toPlainString();
-        if (Objects.equals(oldStr, newStr)) return first;
+        BigDecimal oldBd = oldVal instanceof BigDecimal bd ? bd
+                : oldVal instanceof Number n ? new BigDecimal(n.toString()) : null;
+        if (oldBd == null && newVal == null) return first;
+        boolean changed;
+        String oldStr, newStr;
+        if (oldBd == null || newVal == null) {
+            changed = true;
+            oldStr = oldBd == null ? null : oldBd.toPlainString();
+            newStr = newVal == null ? null : newVal.toPlainString();
+        } else {
+            changed = oldBd.compareTo(newVal) != 0;
+            oldStr = oldBd.toPlainString();
+            newStr = newVal.toPlainString();
+        }
+        if (!changed) return first;
         if (!first) sb.append(",");
         sb.append("\"").append(field).append("\":{\"old\":")
           .append(oldStr == null ? "null" : "\"" + oldStr + "\"")
           .append(",\"new\":")
           .append(newStr == null ? "null" : "\"" + newStr + "\"")
           .append("}");
+        return false;
+    }
+
+    private boolean addDiffBool(StringBuilder sb, boolean first, String field, Map<String, Object> oldRow, boolean newVal) {
+        boolean oldVal = oldRow == null ? false : Boolean.TRUE.equals(oldRow.get(snake(field)));
+        if (oldVal == newVal) return first;
+        if (!first) sb.append(",");
+        sb.append("\"").append(field).append("\":{\"old\":").append(oldVal)
+          .append(",\"new\":").append(newVal).append("}");
         return false;
     }
 

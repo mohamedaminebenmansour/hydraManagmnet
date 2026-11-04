@@ -12,18 +12,24 @@ import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.test.annotation.Rollback;
 import org.springframework.transaction.annotation.Transactional;
-import tn.hydra.common.BusinessRuleException;
 import tn.hydra.exception.ResourceNotFoundException;
 
 import java.math.BigDecimal;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
- * GroupementServiceTest — CO-08..CO-11, CO-14.
+ * GroupementServiceTest — CO-08..CO-11, CO-14, CO-15.
+ *
+ * After FIX 2b, validateInput collects ALL field errors in a LinkedHashMap
+ * and throws CompanyProfileService.ValidationException("VALIDATION", fields).
+ * The structural checks that previously threw BusinessRuleException with codes
+ * MEMBERS_MIN / SELF_REQUIRED / MANDATAIRE_REQUIRED / SHARES_NOT_100 are now
+ * field errors under the "membres" or "parts" keys.
  */
 @SpringBootTest
 @Transactional
@@ -76,12 +82,18 @@ class GroupementServiceTest {
                         new GroupementService.MemberInput("Partenaire SA", "7654321/B/A/M/000", "TN", "MEMBRE", share2, "Fourniture", false)));
     }
 
-    // CO-08: Shares 60 + 30 → SHARES_NOT_100, no row
+    // CO-08: Shares 60 + 30 → "parts" field error, no rows saved
     @Test
     void shares60plus30_rejected_noRowsSaved() {
         assertThatThrownBy(() -> service.create(ownerAuth, validInput(BigDecimal.valueOf(60), BigDecimal.valueOf(30))))
-                .isInstanceOf(BusinessRuleException.class)
-                .hasFieldOrPropertyWithValue("code", "SHARES_NOT_100");
+                .isInstanceOf(CompanyProfileService.ValidationException.class)
+                .hasFieldOrPropertyWithValue("code", "VALIDATION")
+                .satisfies(ex -> {
+                    @SuppressWarnings("unchecked")
+                    Map<String, String> fields = ((CompanyProfileService.ValidationException) ex).getFields();
+                    assertThat(fields).containsKey("parts");
+                    assertThat(fields.get("parts")).contains("100 %");
+                });
 
         Integer grpCount = jdbc.queryForObject("select count(*) from groupement where org_id = ?", Integer.class, orgId);
         assertThat(grpCount).isZero();
@@ -89,7 +101,10 @@ class GroupementServiceTest {
         assertThat(memberCount).isZero();
     }
 
-    // CO-09: Two mandataires → MANDATAIRE_REQUIRED; no isSelf → SELF_REQUIRED; one member → MEMBERS_MIN
+    // CO-09: structural errors under the "membres" key:
+    //   - two mandataires → "membres" = "Choisissez un seul mandataire."
+    //   - no isSelf       → "membres" = "Indiquez quelle ligne est notre entreprise."
+    //   - one member      → "membres" = "Un groupement compte au moins deux membres."
     @Test
     void validationErrors_twoMandataires_noSelf_oneMember() {
         // Two mandataires
@@ -99,8 +114,13 @@ class GroupementServiceTest {
                         new GroupementService.MemberInput("A", null, "TN", "MANDATAIRE", BigDecimal.valueOf(50), null, true),
                         new GroupementService.MemberInput("B", null, "TN", "MANDATAIRE", BigDecimal.valueOf(50), null, false)));
         assertThatThrownBy(() -> service.create(ownerAuth, twoMandataires))
-                .isInstanceOf(BusinessRuleException.class)
-                .hasFieldOrPropertyWithValue("code", "MANDATAIRE_REQUIRED");
+                .isInstanceOf(CompanyProfileService.ValidationException.class)
+                .hasFieldOrPropertyWithValue("code", "VALIDATION")
+                .satisfies(ex -> {
+                    @SuppressWarnings("unchecked")
+                    Map<String, String> fields = ((CompanyProfileService.ValidationException) ex).getFields();
+                    assertThat(fields.get("membres")).contains("mandataire");
+                });
 
         // No isSelf
         var noSelf = new GroupementService.GroupementInput(
@@ -109,8 +129,13 @@ class GroupementServiceTest {
                         new GroupementService.MemberInput("A", null, "TN", "MANDATAIRE", BigDecimal.valueOf(50), null, false),
                         new GroupementService.MemberInput("B", null, "TN", "MEMBRE", BigDecimal.valueOf(50), null, false)));
         assertThatThrownBy(() -> service.create(ownerAuth, noSelf))
-                .isInstanceOf(BusinessRuleException.class)
-                .hasFieldOrPropertyWithValue("code", "SELF_REQUIRED");
+                .isInstanceOf(CompanyProfileService.ValidationException.class)
+                .hasFieldOrPropertyWithValue("code", "VALIDATION")
+                .satisfies(ex -> {
+                    @SuppressWarnings("unchecked")
+                    Map<String, String> fields = ((CompanyProfileService.ValidationException) ex).getFields();
+                    assertThat(fields.get("membres")).contains("notre entreprise");
+                });
 
         // One member
         var oneMember = new GroupementService.GroupementInput(
@@ -118,11 +143,16 @@ class GroupementServiceTest {
                 List.of(
                         new GroupementService.MemberInput("A", null, "TN", "MANDATAIRE", BigDecimal.valueOf(100), null, true)));
         assertThatThrownBy(() -> service.create(ownerAuth, oneMember))
-                .isInstanceOf(BusinessRuleException.class)
-                .hasFieldOrPropertyWithValue("code", "MEMBERS_MIN");
+                .isInstanceOf(CompanyProfileService.ValidationException.class)
+                .hasFieldOrPropertyWithValue("code", "VALIDATION")
+                .satisfies(ex -> {
+                    @SuppressWarnings("unchecked")
+                    Map<String, String> fields = ((CompanyProfileService.ValidationException) ex).getFields();
+                    assertThat(fields.get("membres")).contains("deux membres");
+                });
     }
 
-    // CO-10: Valid groupement saved; PUT with invalid list → old members still there
+    // CO-10: Valid groupement saved; PUT with invalid list → "parts" field error, old members still there
     @Test
     void putWithInvalidList_oldMembersPreserved() {
         var created = service.create(ownerAuth, validInput(BigDecimal.valueOf(60), BigDecimal.valueOf(40)));
@@ -135,8 +165,13 @@ class GroupementServiceTest {
                         new GroupementService.MemberInput("C", null, "TN", "MANDATAIRE", BigDecimal.valueOf(50), null, true),
                         new GroupementService.MemberInput("D", null, "TN", "MEMBRE", BigDecimal.valueOf(40), null, false)));
         assertThatThrownBy(() -> service.update(ownerAuth, created.id(), badInput))
-                .isInstanceOf(BusinessRuleException.class)
-                .hasFieldOrPropertyWithValue("code", "SHARES_NOT_100");
+                .isInstanceOf(CompanyProfileService.ValidationException.class)
+                .hasFieldOrPropertyWithValue("code", "VALIDATION")
+                .satisfies(ex -> {
+                    @SuppressWarnings("unchecked")
+                    Map<String, String> fields = ((CompanyProfileService.ValidationException) ex).getFields();
+                    assertThat(fields).containsKey("parts");
+                });
 
         // Old members still there
         var current = service.getOne(ownerAuth, created.id());
@@ -200,5 +235,39 @@ class GroupementServiceTest {
         var selfMember = created.membres().stream().filter(MemberResponse -> MemberResponse.isSelf()).findFirst().orElseThrow();
         assertThat(selfMember.raisonSociale()).isEqualTo("HYDRA Test SARL"); // from profile, not "Faux Nom"
         assertThat(selfMember.matriculeFiscal()).isEqualTo("1234567AAM000"); // from profile, normalized
+    }
+
+    // CO-15: groupement with nom null + a member with empty name + role "BOSS"
+    // → one 400 with the 3 keys (nom, membres[1].raisonSociale, membres[1].role), nothing saved.
+    @Test
+    void multiError_nomNull_emptyName_invalidRole_one400threeKeys_nothingSaved() {
+        var input = new GroupementService.GroupementInput(
+                null, "SOLIDAIRE", null, null, null, 0,
+                List.of(
+                        // Row 0: isSelf true, role MANDATAIRE (valid), share 60.00
+                        new GroupementService.MemberInput("Whatever self name", null, "TN", "MANDATAIRE",
+                                new BigDecimal("60.00"), null, true),
+                        // Row 1: isSelf false, empty name → "membres[1].raisonSociale" error,
+                        //        role "BOSS" → "membres[1].role" error, share 40.00 (valid)
+                        new GroupementService.MemberInput("", null, "TN", "BOSS",
+                                new BigDecimal("40.00"), null, false)));
+
+        assertThatThrownBy(() -> service.create(ownerAuth, input))
+                .isInstanceOf(CompanyProfileService.ValidationException.class)
+                .hasFieldOrPropertyWithValue("code", "VALIDATION")
+                .satisfies(ex -> {
+                    @SuppressWarnings("unchecked")
+                    Map<String, String> fields = ((CompanyProfileService.ValidationException) ex).getFields();
+                    // Exactly the 3 keys expected
+                    assertThat(fields).containsOnlyKeys("nom", "membres[1].raisonSociale", "membres[1].role");
+                    assertThat(fields.get("nom")).contains("nom du groupement");
+                    assertThat(fields.get("membres[1].raisonSociale")).contains("raison sociale");
+                    assertThat(fields.get("membres[1].role")).contains("Rôle invalide");
+                });
+
+        Integer grpCount = jdbc.queryForObject("select count(*) from groupement where org_id = ?", Integer.class, orgId);
+        assertThat(grpCount).isZero();
+        Integer memberCount = jdbc.queryForObject("select count(*) from groupement_member where org_id = ?", Integer.class, orgId);
+        assertThat(memberCount).isZero();
     }
 }

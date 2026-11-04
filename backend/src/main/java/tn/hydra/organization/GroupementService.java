@@ -14,7 +14,12 @@ import java.math.BigDecimal;
 import java.util.*;
 
 /**
- * Groupement service (S1-5 step 4): joint ventures with members and shares.
+ * Groupement service (S1-5 step 4 + FIX 2): joint ventures with members and shares.
+ *
+ * validateInput collects ALL field errors into a LinkedHashMap and throws
+ * CompanyProfileService.ValidationException("VALIDATION", fields) — exactly
+ * like the profile. The controller catches it and returns 400
+ * {"code":"VALIDATION","fields":{...}}.
  */
 @Service
 public class GroupementService {
@@ -73,6 +78,7 @@ public class GroupementService {
         validateInput(body, me.getOrgId(), null);
 
         UUID id = UUID.randomUUID();
+        // After validation, nom is guaranteed non-null and non-blank
         jdbc.update("""
                 insert into groupement (id, org_id, nom, type, project_id, reference_marche, notes, version, created_by, updated_by)
                 values (?, ?, ?, ?, ?, ?, ?, 0, ?, ?)
@@ -133,55 +139,120 @@ public class GroupementService {
     }
 
     // ── validation ──────────────────────────────────────────────────────
-
+    //
+    // Collects ALL field errors into a LinkedHashMap (insertion order preserved)
+    // and throws CompanyProfileService.ValidationException("VALIDATION", fields).
+    // Never calls body.nom().trim() before this method returns successfully:
+    // null nom is reported as the "nom" field error and the method throws before
+    // any trim is attempted in create/update.
     private void validateInput(GroupementInput body, UUID orgId, UUID existingId) {
-        if (body.membres() == null || body.membres().size() < 2) {
-            throw new BusinessRuleException("MEMBERS_MIN", "Un groupement compte au moins deux membres.");
+        Map<String, String> errors = new LinkedHashMap<>();
+
+        // nom
+        if (body.nom() == null || body.nom().trim().isEmpty()) {
+            errors.put("nom", "Le nom du groupement est obligatoire.");
         }
-        long selfCount = body.membres().stream().filter(m -> Boolean.TRUE.equals(m.isSelf())).count();
-        if (selfCount != 1) {
-            throw new BusinessRuleException("SELF_REQUIRED", "Indiquez quelle ligne est notre entreprise.");
+
+        // type
+        if (!"CONJOINT".equals(body.type()) && !"SOLIDAIRE".equals(body.type())) {
+            errors.put("type", "Choisissez Conjoint ou Solidaire.");
         }
-        long mandataireCount = body.membres().stream().filter(m -> "MANDATAIRE".equals(m.role())).count();
-        if (mandataireCount != 1) {
-            throw new BusinessRuleException("MANDATAIRE_REQUIRED", "Choisissez un seul mandataire.");
-        }
-        // Sum of parts = 100
-        BigDecimal total = BigDecimal.ZERO;
-        for (MemberInput m : body.membres()) {
-            if (m.partPct() == null || m.partPct().compareTo(BigDecimal.ZERO) <= 0) {
-                throw new BusinessRuleException("INVALID_SHARE", "Chaque part doit être supérieure à 0.");
+
+        // membres structural checks (members min / self / mandataire)
+        boolean enoughMembers = body.membres() != null && body.membres().size() >= 2;
+        if (!enoughMembers) {
+            errors.put("membres", "Un groupement compte au moins deux membres.");
+        } else {
+            long selfCount = body.membres().stream().filter(m -> Boolean.TRUE.equals(m.isSelf())).count();
+            if (selfCount != 1) {
+                errors.put("membres", "Indiquez quelle ligne est notre entreprise.");
             }
-            total = total.add(m.partPct());
+            long mandataireCount = body.membres().stream().filter(m -> "MANDATAIRE".equals(m.role())).count();
+            if (mandataireCount != 1) {
+                errors.put("membres", "Choisissez un seul mandataire.");
+            }
         }
-        if (total.compareTo(BigDecimal.valueOf(100)) != 0) {
-            throw new BusinessRuleException("SHARES_NOT_100",
-                    "Le total des parts doit faire 100 % (actuellement " + total.toPlainString() + " %).");
+
+        // parts: sum to 100 — only compute when we have ≥ 2 members, otherwise the
+        // structural error already covers it.
+        if (enoughMembers) {
+            BigDecimal total = BigDecimal.ZERO;
+            for (MemberInput m : body.membres()) {
+                if (m.partPct() != null && m.partPct().compareTo(BigDecimal.ZERO) > 0) {
+                    total = total.add(m.partPct());
+                }
+            }
+            if (total.compareTo(BigDecimal.valueOf(100)) != 0) {
+                errors.put("parts", "Le total des parts doit faire 100 % (actuellement "
+                        + formatShare(total) + " %).");
+            }
         }
-        // Validate member MF when pays = TN
-        for (MemberInput m : body.membres()) {
-            String pays = m.pays() == null ? "TN" : m.pays();
-            if ("TN".equals(pays) && m.matriculeFiscal() != null && !m.matriculeFiscal().isBlank()) {
-                var err = TunisianIds.validateMf(m.matriculeFiscal());
-                if (err.isPresent()) {
-                    throw new BusinessRuleException("INVALID_MF", err.get());
+
+        // Per-member field errors (indexed by 0-based position in the list sent).
+        if (body.membres() != null) {
+            for (int i = 0; i < body.membres().size(); i++) {
+                MemberInput m = body.membres().get(i);
+                String prefix = "membres[" + i + "]";
+
+                // raisonSociale (non-self only)
+                if (!Boolean.TRUE.equals(m.isSelf())) {
+                    if (m.raisonSociale() == null || m.raisonSociale().trim().isEmpty()) {
+                        errors.put(prefix + ".raisonSociale",
+                                "La raison sociale du membre est obligatoire.");
+                    }
+                }
+
+                // role
+                if (!"MANDATAIRE".equals(m.role()) && !"MEMBRE".equals(m.role())) {
+                    errors.put(prefix + ".role", "Rôle invalide.");
+                }
+
+                // partPct > 0, scale ≤ 2
+                if (m.partPct() == null || m.partPct().compareTo(BigDecimal.ZERO) <= 0) {
+                    errors.put(prefix + ".partPct",
+                            "La part doit être supérieure à 0, avec 2 décimales au plus.");
+                } else if (m.partPct().scale() > 2) {
+                    errors.put(prefix + ".partPct",
+                            "La part doit être supérieure à 0, avec 2 décimales au plus.");
+                }
+
+                // matriculeFiscal when pays = TN
+                String pays = m.pays() == null ? "TN" : m.pays();
+                if ("TN".equals(pays) && m.matriculeFiscal() != null && !m.matriculeFiscal().isBlank()) {
+                    var err = TunisianIds.validateMf(m.matriculeFiscal());
+                    if (err.isPresent()) {
+                        errors.put(prefix + ".matriculeFiscal", err.get());
+                    }
                 }
             }
         }
-        // Validate project belongs to org
+
+        // Project not in my org stays 404 (separate from field errors).
         if (body.projectId() != null) {
             Integer projectExists = jdbc.queryForObject(
-                    "select count(*) from project where id = ? and org_id = ?", Integer.class, body.projectId(), orgId);
+                    "select count(*) from project where id = ? and org_id = ?",
+                    Integer.class, body.projectId(), orgId);
             if (projectExists == null || projectExists == 0) {
                 throw new ResourceNotFoundException("PROJECT_NOT_FOUND", "Chantier introuvable");
             }
         }
+
+        if (!errors.isEmpty()) {
+            throw new CompanyProfileService.ValidationException("VALIDATION", errors);
+        }
+    }
+
+    /** Format a share for the error message: 90.00 → "90", 33.33 → "33,33". */
+    private static String formatShare(BigDecimal v) {
+        BigDecimal stripped = v.stripTrailingZeros();
+        String s = stripped.scale() < 0 ? stripped.setScale(0).toPlainString() : stripped.toPlainString();
+        return s.replace('.', ',');
     }
 
     // ── save members ────────────────────────────────────────────────────
 
     private void saveMembers(UUID groupementId, UUID orgId, List<MemberInput> membres, AppUser me) {
-        // Get company profile for isSelf member
+        // Get company profile for isSelf member (used for both the saved name and the audit)
         String selfRaison = null;
         String selfMf = null;
         List<Map<String, Object>> profileRows = jdbc.queryForList(
@@ -197,6 +268,7 @@ public class GroupementService {
         int ordre = 1;
         for (MemberInput m : membres) {
             boolean isSelf = Boolean.TRUE.equals(m.isSelf());
+            // FIX 2b: for isSelf, write the name actually saved (from the profile), not the client value.
             String raison = isSelf ? selfRaison : (m.raisonSociale() != null ? m.raisonSociale().trim() : "");
             String mf = isSelf ? selfMf : trim(m.matriculeFiscal());
             if ("TN".equals(m.pays() == null ? "TN" : m.pays()) && mf != null) {
@@ -243,10 +315,17 @@ public class GroupementService {
     private void auditGroupement(UUID orgId, AppUser me, String action, UUID id,
                                   GroupementInput body, List<MemberInput> membres) {
         StringBuilder sb = new StringBuilder("{\"nom\":\"" + jsonEscape(body.nom()) + "\",\"type\":\"" + body.type() + "\",\"membres\":[");
+        // FIX 2b: for the isSelf member write the name actually saved (from the profile),
+        // not the client value. For non-self, write the client value as before.
+        String selfRaison = jdbc.queryForObject(
+                "select coalesce((select raison_sociale from company_profile where org_id = ?), "
+                        + "(select name from organization where id = ?))",
+                String.class, orgId, orgId);
         for (int i = 0; i < membres.size(); i++) {
             MemberInput m = membres.get(i);
             if (i > 0) sb.append(",");
-            sb.append("{\"nom\":\"").append(jsonEscape(m.raisonSociale() == null ? "" : m.raisonSociale()))
+            String name = Boolean.TRUE.equals(m.isSelf()) ? selfRaison : m.raisonSociale();
+            sb.append("{\"nom\":\"").append(jsonEscape(name == null ? "" : name))
               .append("\",\"part\":").append(m.partPct()).append("}");
         }
         sb.append("]}");
