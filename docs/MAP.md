@@ -18,6 +18,7 @@ section (grep the method, then read around it).
 | `security` | `PermissionService`, `FolderAccessService`, `ToxicPairService`, `HydraUserDetailsService`, `SessionRevoker`, `PasswordPolicy` (U1), `TemporaryPasswordGenerator` (U1), `PasswordChangeRequiredFilter` (U1) | Permissions, folder ACL, segregation of duties, password policy (min 12, blocklist, personal info), temp password generation, forced change at first login |
 | `audit` | `EventLogService`, `AuditService`, `AuditController` | Append-only event log |
 | `event` | `DomainEventService`, `EventType`, `DomainEventController` | Domain events (table domain_event, V47): one row per business action, written in the action's transaction by `DomainEventService.publish` (payment submitted, cash posted, step completed, BC created, BL received, facture recorded, bordereau imported / activated, document uploaded). Nothing consumes them yet. `GET /api/events` (owner) feeds the "Journal des événements" page. Not the audit log |
+| `organization` | `TunisianIds` (pure Java MF/RIB validators), `CompanyProfileService`, `CompanyProfileController`, `GroupementService`, `GroupementController` | Company profile (legal identity, bank, logo) + groupements (joint ventures with members and shares). `GET/PUT /api/company`, `POST/GET/DELETE /api/company/logo`, `GET/POST/PUT /api/company/groupements`. Permission `ORG_SETTINGS` (OWNER only). Migration V54. |
 | `ticket` | `TicketService` (~1070), `TicketController` (~260), `TicketPhotoService` (~340, photos + deliverable files), `TicketType`, `TicketWorkflow` | Signalements: 5 types (PROBLEME/RESERVE/DEMANDE/TACHE/VISA_DOCUMENT), categories, origine (RESERVE), ouvrage/party links; universal lifecycle OPEN→IN_PROGRESS→RESOLVED→CLOSED (+CANCELLED) for the first four; VISA keeps DRAFT→…→AS_BUILT. TACHE = office task, project optional (null = « Bureau »), is_private (creator+assignee only). Central visibility rule `canRead` + `readVisibilityFragment` (A4) used by get/list/search/summary/actions/timeline/comments/photos/files. Deliverable files (POST /{id}/files, phase DELIVERABLE) filed by category. `GET /api/tickets/catalog` / `/search` / `/summary` / `/{id}/actions` / `/{id}/timeline` / `/{id}/photos` / `/{id}/files`. |
 | `mail` | `MailService` (interface), `MailServiceSmtp`, `MailServiceDisabled`, `MailConfig` | Optional email: SMTP when `HYDRA_MAIL_HOST` + `HYDRA_MAIL_FROM` set, disabled otherwise. `sendAfterCommit` defers to after-commit. 3 templates (reset/invite/changed). |
 | `security` | `PermissionService`, `FolderAccessService`, `ToxicPairService`, `HydraUserDetailsService`, `SessionRevoker`, `PasswordPolicy` (U1), `TemporaryPasswordGenerator` (U1), `PasswordChangeRequiredFilter` (U1) | Permissions, folder ACL, segregation of duties, password policy (min 12, blocklist, personal info), temp password generation, forced change at first login |
@@ -25,8 +26,8 @@ section (grep the method, then read around it).
 | `config` | `SecurityConfig`, `CorsConfig`, `BootstrapRunner`, `DemoDataRunner` (off by default since T9), `DevDataSeedRunner`, `config/demo/` (`DemoScenarioRunner`, `DemoTachesScenario`, `DemoScenario`, `InMemoryMultipartFile`) | Security, CORS, seeding. `@Profile("demo")` demo pack creates the « HYDRA Démo » company + 9 users + 1 chantier + 11 signalements; never touches the real company. See `docs/DEMO.md`. |
 | `common`, `exception` | `GlobalExceptionHandler`, `BusinessRuleException` | Errors → HTTP |
 
-Migrations: `backend/src/main/resources/db/migration/`, last = **V53__user_profile_security.sql**.
-Never edit an existing migration; the next one is V54.
+Migrations: `backend/src/main/resources/db/migration/`, last = **V54__company_profile.sql**.
+Never edit an existing migration; the next one is V55.
 Recent ones: V38 rule columns · V39 FINANCE_ONLY rule · V40 step approvals (ALL mode) ·
 V41 project_member default · V42 role substitute · V43 opt-out seed · V44 absences ·
 V45 bordereau_version.source_document_id / source_revision · V46 two-level folder tree
@@ -43,7 +44,9 @@ V51 ticket TACHE type (type+status check add TACHE; is_private boolean;
 ticket_attachment phase DELIVERABLE; project_id already nullable — no change) ·
 V52 password_token (id/org_id/user_id/purpose RESET|INVITE/token_hash unique/expires_at/used_at/created_ip;
 index user_id+purpose where used_at is null) ·
-V53 user_profile_security (app_user: phone, job_title, last_login_at, password_changed_at, first_login_at).
+V53 user_profile_security (app_user: phone, job_title, last_login_at, password_changed_at, first_login_at) ·
+V54 company_profile (company_profile: legal identity, bank, logo; groupement + groupement_member with shares;
+ORG_SETTINGS permission granted to OWNER; RLS enabled on all 3 tables).
 
 Key behaviours to remember:
 - A rule is enabled on a chantier unless `project_process_template.enabled = false` (opt-out).
