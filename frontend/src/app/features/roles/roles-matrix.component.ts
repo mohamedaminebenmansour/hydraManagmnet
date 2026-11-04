@@ -6,10 +6,10 @@ import { ButtonModule } from 'primeng/button';
 import { InputTextModule } from 'primeng/inputtext';
 import { SelectModule } from 'primeng/select';
 import { TooltipModule } from 'primeng/tooltip';
-import { PERM_GROUPS, PERM_SENTENCES } from '../../core/permissions';
-import { roleVisual, type RoleVisual } from '../../shared/hydra-design';
-import { EmptyStateComponent } from '../../shared/empty-state.component';
-import { LoadErrorComponent } from '../../shared/load-error.component';
+import { PERM_GROUPS, PERM_SENTENCES } from '@app/core/permissions';
+import { roleVisual, type RoleVisual } from '@app/shared/hydra-design';
+import { EmptyStateComponent } from '@app/shared/empty-state.component';
+import { LoadErrorComponent } from '@app/shared/load-error.component';
 
 interface RoleRow {
   id: string;
@@ -84,129 +84,133 @@ interface SelectOption { label: string; value: string; }
 
       @if (loading()) {
         <div class="state"><i class="pi pi-spin pi-spinner"></i> Chargement…</div>
-      } @else if (loadError()) {
-        <app-load-error message="Impossible de charger la matrice." (retry)="load()" />
-      } @else if (sortedRoles().length === 0) {
-        <app-empty-state icon="pi pi-th-large" message="Aucun rôle à afficher." />
       } @else {
-        <!-- Desktop view -->
-        <div class="desktop-view">
-          <div class="matrix-scroll">
-            <table class="matrix-table">
-              <thead>
-                <tr>
-                  <th class="corner">Permission</th>
-                  @for (r of sortedRoles(); track r.id) {
-                    <th class="role-col">
-                      <div class="role-head">
-                        <span class="role-dot" [style.background]="visual(r.code).color"
-                              [pTooltip]="r.isSystem ? 'Rôle système' : 'Rôle personnalisé'"></span>
-                        <span class="role-head-label" [pTooltip]="r.label">{{ r.label }}</span>
-                        @if (r.isSystem) {
-                          <i class="pi pi-lock tiny"></i>
-                        }
-                      </div>
-                    </th>
-                  }
-                </tr>
-              </thead>
-              <tbody>
-                @for (row of rows(); track row.type + (row.code ?? row.group?.key ?? '')) {
-                  @if (row.type === 'header' && row.group) {
-                    <tr class="module-row" (click)="toggleModule(row.group!.key)">
-                      <th class="module-header">
-                        <i [className]="row.group!.icon"></i>
-                        <span>{{ row.group!.title }}</span>
-                        <span class="module-count">{{ row.group!.ids.length }}</span>
-                        <i class="pi {{ collapsedModules().has(row.group!.key) ? 'pi-chevron-right' : 'pi-chevron-down' }} chev"></i>
-                      </th>
-                      <td [attr.colspan]="sortedRoles().length" class="module-spacer"></td>
-                    </tr>
-                  } @else if (row.type === 'perm' && row.code) {
+        @if (loadError()) {
+          <app-load-error message="Impossible de charger la matrice. Vérifiez que le serveur est accessible." (retry)="load()" />
+        } @else {
+          @if (sortedRoles().length === 0) {
+            <app-empty-state icon="pi pi-th-large" message="Aucun rôle à afficher. Créez d'abord des rôles depuis la page Rôles." />
+          } @else {
+            <!-- Desktop view -->
+            <div class="desktop-view">
+              <div class="matrix-scroll">
+                <table class="matrix-table">
+                  <thead>
                     <tr>
-                      <th class="perm-name">
-                        <span class="perm-sentence">{{ sentence(row.code!) }}</span>
-                        <span class="perm-code">{{ row.code! }}</span>
-                      </th>
+                      <th class="corner">Permission</th>
                       @for (r of sortedRoles(); track r.id) {
-                        <td class="cell">
-                          @if (hasPerm(r, row.code!)) {
-                            <i class="pi pi-check-circle check" aria-label="Accordé"></i>
-                          }
-                        </td>
+                        <th class="role-col">
+                          <div class="role-head">
+                            <span class="role-dot" [style.background]="visual(r.code).color"
+                                  [pTooltip]="r.isSystem ? 'Rôle système' : 'Rôle personnalisé'"></span>
+                            <span class="role-head-label" [pTooltip]="r.label">{{ r.label }}</span>
+                            @if (r.isSystem) {
+                              <i class="pi pi-lock tiny"></i>
+                            }
+                          </div>
+                        </th>
                       }
                     </tr>
-                  }
-                } @empty {
-                  <tr>
-                    <th class="perm-name empty">Aucune permission ne correspond.</th>
-                    <td [attr.colspan]="sortedRoles().length"></td>
-                  </tr>
-                }
-              </tbody>
-            </table>
-          </div>
-        </div>
-
-        <!-- Mobile view (< 768px) -->
-        <div class="mobile-view">
-          <div class="mobile-picker">
-            <label class="field-label">Rôle</label>
-            <p-select [options]="mobileRoleOptions()" [ngModel]="mobileRoleId()"
-                      (ngModelChange)="mobileRoleId.set($event)"
-                      optionLabel="label" optionValue="value"
-                      placeholder="Choisir un rôle"
-                      [style]="{ 'width': '100%' }" />
-          </div>
-          @if (mobileRole(); as mr) {
-            <div class="matrix-scroll">
-              <table class="matrix-table mobile">
-                <thead>
-                  <tr>
-                    <th class="corner">Permission</th>
-                    <th class="role-col">
-                      <div class="role-head">
-                        <span class="role-dot" [style.background]="visual(mr.code).color"></span>
-                        <span class="role-head-label">{{ mr.label }}</span>
-                      </div>
-                    </th>
-                  </tr>
-                </thead>
-                <tbody>
-                  @for (row of rows(); track row.type + (row.code ?? row.group?.key ?? '')) {
-                    @if (row.type === 'header' && row.group) {
-                      <tr class="module-row">
-                        <th class="module-header">
-                          <i [className]="row.group!.icon"></i>
-                          <span>{{ row.group!.title }}</span>
-                          <span class="module-count">{{ row.group!.ids.length }}</span>
-                        </th>
-                        <td class="module-spacer"></td>
-                      </tr>
-                    } @else if (row.type === 'perm' && row.code) {
-                      <tr>
-                        <th class="perm-name">
-                          <span class="perm-sentence">{{ sentence(row.code!) }}</span>
-                          <span class="perm-code">{{ row.code! }}</span>
-                        </th>
-                        <td class="cell">
-                          @if (hasPerm(mr, row.code!)) {
-                            <i class="pi pi-check-circle check" aria-label="Accordé"></i>
+                  </thead>
+                  <tbody>
+                    @for (row of rows(); track row.type + (row.code ?? row.group?.key ?? '')) {
+                      @if (row.type === 'header' && row.group) {
+                        <tr class="module-row" (click)="toggleModule(row.group!.key)">
+                          <th class="module-header">
+                            <i [className]="row.group!.icon"></i>
+                            <span>{{ row.group!.title }}</span>
+                            <span class="module-count">{{ row.group!.ids.length }}</span>
+                            <i class="pi {{ collapsedModules().has(row.group!.key) ? 'pi-chevron-right' : 'pi-chevron-down' }} chev"></i>
+                          </th>
+                          <td [attr.colspan]="sortedRoles().length" class="module-spacer"></td>
+                        </tr>
+                      } @else if (row.type === 'perm' && row.code) {
+                        <tr>
+                          <th class="perm-name">
+                            <span class="perm-sentence">{{ sentence(row.code!) }}</span>
+                            <span class="perm-code">{{ row.code! }}</span>
+                          </th>
+                          @for (r of sortedRoles(); track r.id) {
+                            <td class="cell">
+                              @if (hasPerm(r, row.code!)) {
+                                <i class="pi pi-check-circle check" aria-label="Accordé"></i>
+                              }
+                            </td>
                           }
-                        </td>
+                        </tr>
+                      }
+                    } @empty {
+                      <tr>
+                        <th class="perm-name empty">Aucune permission ne correspond à votre recherche.</th>
+                        <td [attr.colspan]="sortedRoles().length"></td>
                       </tr>
                     }
-                  } @empty {
-                    <tr>
-                      <th class="perm-name empty">Aucune permission ne correspond.</th>
-                      <td></td>
-                    </tr>
-                  }
-                </tbody>
-              </table>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            <!-- Mobile view (< 768px) -->
+            <div class="mobile-view">
+              <div class="mobile-picker">
+                <label class="field-label">Rôle</label>
+                <p-select [options]="mobileRoleOptions()" [ngModel]="mobileRoleId()"
+                          (ngModelChange)="mobileRoleId.set($event)"
+                          optionLabel="label" optionValue="value"
+                          placeholder="Choisir un rôle"
+                          [style]="{ 'width': '100%' }" />
+              </div>
+              @if (mobileRole(); as mr) {
+                <div class="matrix-scroll">
+                  <table class="matrix-table mobile">
+                    <thead>
+                      <tr>
+                        <th class="corner">Permission</th>
+                        <th class="role-col">
+                          <div class="role-head">
+                            <span class="role-dot" [style.background]="visual(mr.code).color"></span>
+                            <span class="role-head-label">{{ mr.label }}</span>
+                          </div>
+                        </th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      @for (row of rows(); track row.type + (row.code ?? row.group?.key ?? '')) {
+                        @if (row.type === 'header' && row.group) {
+                          <tr class="module-row">
+                            <th class="module-header">
+                              <i [className]="row.group!.icon"></i>
+                              <span>{{ row.group!.title }}</span>
+                              <span class="module-count">{{ row.group!.ids.length }}</span>
+                            </th>
+                            <td class="module-spacer"></td>
+                          </tr>
+                        } @else if (row.type === 'perm' && row.code) {
+                          <tr>
+                            <th class="perm-name">
+                              <span class="perm-sentence">{{ sentence(row.code!) }}</span>
+                              <span class="perm-code">{{ row.code! }}</span>
+                            </th>
+                            <td class="cell">
+                              @if (hasPerm(mr, row.code!)) {
+                                <i class="pi pi-check-circle check" aria-label="Accordé"></i>
+                              }
+                            </td>
+                          </tr>
+                        }
+                      } @empty {
+                        <tr>
+                          <th class="perm-name empty">Aucune permission ne correspond.</th>
+                          <td></td>
+                        </tr>
+                      }
+                    </tbody>
+                  </table>
+                </div>
+              }
             </div>
           }
-        </div>
+        }
       }
     </div>
   `,
@@ -331,9 +335,11 @@ export class RolesMatrixComponent implements OnInit {
   readonly mobileRoleId = signal<string | null>(null);
 
   readonly sortedRoles = computed<RoleRow[]>(() => {
-    return [...this.roles()].sort((a, b) => {
+    const list = this.roles();
+    if (!list || list.length === 0) return [];
+    return [...list].sort((a, b) => {
       if (a.isSystem !== b.isSystem) return a.isSystem ? -1 : 1;
-      return a.label.localeCompare(b.label, 'fr');
+      return (a.label ?? '').localeCompare(b.label ?? '', 'fr');
     });
   });
 
@@ -377,13 +383,14 @@ export class RolesMatrixComponent implements OnInit {
     this.loading.set(true);
     this.loadError.set(false);
     this.http.get<RoleRow[]>('/api/roles').subscribe({
-      next: list => {
+      next: (list) => {
         this.roles.set(list ?? []);
         const first = this.sortedRoles()[0];
         if (first) this.mobileRoleId.set(first.id);
         this.loading.set(false);
       },
-      error: () => {
+      error: (err) => {
+        console.error('[RolesMatrix] Failed to load roles:', err);
         this.loadError.set(true);
         this.loading.set(false);
       },
@@ -392,10 +399,12 @@ export class RolesMatrixComponent implements OnInit {
 
   visual(code: string): RoleVisual { return roleVisual(code); }
 
-  sentence(code: string): string { return PERM_SENTENCES[code] ?? code; }
+  sentence(code: string): string {
+    return PERM_SENTENCES[code] ?? code;
+  }
 
   hasPerm(r: RoleRow, code: string): boolean {
-    return r.permissions?.includes(code) ?? false;
+    return (r.permissions ?? []).includes(code);
   }
 
   toggleModule(key: string): void {
