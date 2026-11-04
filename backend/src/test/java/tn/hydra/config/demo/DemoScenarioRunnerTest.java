@@ -53,7 +53,8 @@ class DemoScenarioRunnerTest {
 
         Integer userCount = jdbc.queryForObject("select count(*) from app_user where org_id = ?",
                 Integer.class, DEMO_ORG_ID);
-        assertThat(userCount).isEqualTo(9);
+        // 9 original demo cast + 6 DemoComptesScenario users = 15
+        assertThat(userCount).isEqualTo(15);
 
         Integer projectCount = jdbc.queryForObject(
                 "select count(*) from project where org_id = ? and code = 'DEMO-01'",
@@ -78,7 +79,8 @@ class DemoScenarioRunnerTest {
         runner.run();
         Integer userCount = jdbc.queryForObject("select count(*) from app_user where org_id = ?",
                 Integer.class, DEMO_ORG_ID);
-        assertThat(userCount).isEqualTo(9);
+        // 9 original demo cast + 6 DemoComptesScenario users = 15
+        assertThat(userCount).isEqualTo(15);
         Integer ticketCount = jdbc.queryForObject(
                 "select count(*) from ticket where org_id = ? and title like '[Démo]%'",
                 Integer.class, DEMO_ORG_ID);
@@ -149,6 +151,9 @@ class DemoScenarioRunnerTest {
         jdbc.update("delete from ouvrage where org_id = ? and project_id in (select id from project where org_id = ?)", DEMO_ORG_ID, DEMO_ORG_ID);
         jdbc.update("delete from project where org_id = ?", DEMO_ORG_ID);
         jdbc.update("delete from user_role where user_id in (select id from app_user where org_id = ?)", DEMO_ORG_ID);
+        jdbc.update("delete from toxic_pair_override where org_id = ?", DEMO_ORG_ID);
+        jdbc.update("delete from role_permission where role_id in (select id from role where org_id = ?)", DEMO_ORG_ID);
+        jdbc.update("delete from role where org_id = ?", DEMO_ORG_ID);
         jdbc.update("delete from app_user where org_id = ?", DEMO_ORG_ID);
         jdbc.update("delete from organization where id = ?", DEMO_ORG_ID);
     }

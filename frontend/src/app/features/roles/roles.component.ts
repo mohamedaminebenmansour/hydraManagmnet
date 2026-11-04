@@ -1,18 +1,13 @@
-import { Component, OnInit, computed, inject } from '@angular/core';
-import { Router } from '@angular/router';
-import { FormsModule } from '@angular/forms';
+import { Component, OnInit, inject, signal } from '@angular/core';
+import { Router, RouterLink } from '@angular/router';
 import { HttpClient } from '@angular/common/http';
+import { TableModule } from 'primeng/table';
 import { ButtonModule } from 'primeng/button';
-import { InputTextModule } from 'primeng/inputtext';
-import { ToggleSwitchModule } from 'primeng/toggleswitch';
-import { TagModule } from 'primeng/tag';
-import { ChipModule } from 'primeng/chip';
-import { DividerModule } from 'primeng/divider';
+import { TooltipModule } from 'primeng/tooltip';
 import { MessageService } from 'primeng/api';
-import { AuthService } from '../../core/auth.service';
-import { PERM } from '../../core/permissions';
-import { PERM_GROUPS, PERM_LABELS } from '../../core/permissions';
+import { roleVisual, type RoleVisual } from '../../shared/hydra-design';
 import { EmptyStateComponent } from '../../shared/empty-state.component';
+import { LoadErrorComponent } from '../../shared/load-error.component';
 
 interface RoleRow {
   id: string;
@@ -20,187 +15,256 @@ interface RoleRow {
   label: string;
   isSystem: boolean;
   permissions: string[];
+  userCount: number;
+  moduleKeys: string[];
 }
 
-interface PermRow { id: string; description: string | null; }
+interface ModuleIcon { icon: string; label: string; }
+
+const MODULE_ICONS: Record<string, ModuleIcon> = {
+  tickets:   { icon: 'pi-exclamation-triangle', label: 'Signalements' },
+  projects:  { icon: 'pi-briefcase',             label: 'Chantiers' },
+  documents: { icon: 'pi-file',                  label: 'Documents' },
+  cash:      { icon: 'pi-wallet',                label: 'Trésorerie' },
+  stock:     { icon: 'pi-box',                   label: 'Stock et achats' },
+  process:   { icon: 'pi-sitemap',               label: 'Processus' },
+  admin:     { icon: 'pi-shield',                label: 'Administration' },
+};
 
 @Component({
   selector: 'app-roles',
   standalone: true,
   imports: [
-    FormsModule,
+    TableModule,
     ButtonModule,
-    InputTextModule,
-    ToggleSwitchModule,
-    TagModule,
-    ChipModule,
-    DividerModule,
-    EmptyStateComponent
+    RouterLink,
+    TooltipModule,
+    EmptyStateComponent,
+    LoadErrorComponent,
   ],
   template: `
-    <div class="head">
-      <h2><i class="pi pi-id-card"></i> Rôles</h2>
-      @if (canManage()) {
-        <p-button icon="pi pi-plus" label="Nouveau" (onClick)="showForm = !showForm" />
-      }
-    </div>
+    <div class="page">
+      <header class="head">
+        <div class="head-text">
+          <h1>Rôles</h1>
+          <p class="sub">Gérez les rôles et leurs permissions</p>
+        </div>
+        <div class="head-actions">
+          <a routerLink="/roles/matrice" class="ghost-btn" pTooltip="Vue croisée permissions × rôles">
+            <i class="pi pi-th-large"></i> Vue matrice
+          </a>
+          <button class="primary-btn" disabled pTooltip="Création de rôle non disponible ici — ouvrez un rôle existant et dupliquez-le.">
+            <i class="pi pi-plus"></i> Nouveau rôle
+          </button>
+        </div>
+      </header>
 
-    @if (showForm && canManage()) {
-      <div class="form">
-        <input pInputText placeholder="Nom du rôle (ex. : Lecture seule)" [(ngModel)]="formLabel"
-               (keyup.enter)="create()" />
-
-        <div class="rb-title">Permissions</div>
-        @for (g of groups; track g.key) {
-          @if (!$first) { <p-divider /> }
-          <div class="grp">
-            <div class="grp-head"><i [className]="g.icon"></i> {{ g.title }}</div>
-            @for (pid of g.ids; track pid) {
-              @if (hasPerm(pid)) {
-                <div class="perm-row" (click)="onRowClick($event, pid)">
-                  <span class="perm-label">{{ permLabel(pid) }}</span>
-                  <p-toggleswitch [ngModel]="selectedPerms.has(pid)"
-                                  (onChange)="toggle(pid, $event.checked)" />
+      @if (loading()) {
+        <div class="state"><i class="pi pi-spin pi-spinner"></i> Chargement…</div>
+      } @else if (loadError()) {
+        <app-load-error message="Impossible de charger les rôles." (retry)="load()" />
+      } @else if (roles().length === 0) {
+        <app-empty-state icon="pi pi-id-card" message="Aucun rôle." />
+      } @else {
+        <p-table [value]="roles()" styleClass="roles-table" [tableStyle]="{ 'min-width': '860px' }">
+          <ng-template #header>
+            <tr>
+              <th>Rôle</th>
+              <th>Type</th>
+              <th class="num">Personnes</th>
+              <th class="num">Permissions</th>
+              <th>Modules</th>
+              <th class="actions-col">Actions</th>
+            </tr>
+          </ng-template>
+          <ng-template #body let-r>
+            <tr>
+              <td>
+                <div class="role-cell">
+                  <span class="role-dot" [style.background]="visual(r.code).color"></span>
+                  <i class="pi {{ visual(r.code).icon }}" [style.color]="visual(r.code).color"></i>
+                  <span class="role-label">{{ r.label }}</span>
                 </div>
-              }
-            }
-          </div>
-        }
-
-        <div class="form-actions">
-          <p-button label="Annuler" [text]="true" (onClick)="showForm = false" />
-          <p-button label="Créer" icon="pi pi-check" (onClick)="create()"
-                    [disabled]="!formLabel.trim()" />
-        </div>
-      </div>
-    }
-
-    <div class="grid">
-      @for (r of roles; track r.id) {
-        <div class="rcard" (click)="openDetail(r)" (keyup.enter)="openDetail(r)"
-             role="button" tabindex="0" [attr.aria-label]="'Voir le rôle ' + r.label">
-          <div class="rhead">
-            <span class="rname">{{ r.label }}</span>
-            <div class="rbadges">
-              @if (r.isSystem) {
-                <p-tag value="Système" severity="secondary" icon="pi pi-lock" />
-              } @else {
-                <p-tag value="Perso" severity="info" />
-              }
-            </div>
-          </div>
-          <div class="ptags">
-            @for (p of firstPerms(r.permissions); track p) {
-              <p-chip [label]="permLabel(p)" />
-            } @empty {
-              <span class="norole">Aucune permission</span>
-            }
-            @if (extraPerms(r.permissions) > 0) {
-              <span class="ptag more">+{{ extraPerms(r.permissions) }}</span>
-            }
-          </div>
-          <div class="ractions">
-            <p-button label="Détail" icon="pi pi-pencil" size="small" severity="secondary"
-                      (onClick)="openDetail(r); $event.stopPropagation()" />
-          </div>
-        </div>
-      } @empty {
-        <app-empty-state icon="pi pi-id-card" message="Aucun rôle."></app-empty-state>
+              </td>
+              <td>
+                @if (r.isSystem) {
+                  <span class="type-tag system"><i class="pi pi-lock"></i> Système</span>
+                } @else {
+                  <span class="type-tag custom">Personnalisé</span>
+                }
+              </td>
+              <td class="num">
+                <a [routerLink]="['/users']" [queryParams]="{ role: r.code }" class="count-link"
+                   [class.zero]="r.userCount === 0">
+                  {{ r.userCount }}
+                </a>
+              </td>
+              <td class="num">{{ r.permissions.length }}</td>
+              <td>
+                <div class="modules">
+                  @for (m of r.moduleKeys; track m) {
+                    @if (moduleIcon(m)) {
+                      <i class="pi {{ moduleIcon(m)!.icon }}"
+                         [pTooltip]="moduleIcon(m)!.label"
+                         [style.color]="'#475569'"></i>
+                    }
+                  }
+                  @if (!r.moduleKeys || r.moduleKeys.length === 0) {
+                    <span class="no-mod">—</span>
+                  }
+                </div>
+              </td>
+              <td>
+                <div class="actions">
+                  <a [routerLink]="['/roles', r.id]" class="act-btn">
+                    <i class="pi pi-folder-open"></i> Ouvrir
+                  </a>
+                  <button class="act-btn ghost" (click)="duplicate(r)"
+                          [disabled]="duplicatingId() === r.id"
+                          aria-label="Dupliquer le rôle">
+                    @if (duplicatingId() === r.id) {
+                      <i class="pi pi-spin pi-spinner"></i>
+                    } @else {
+                      <i class="pi pi-copy"></i>
+                    }
+                    Dupliquer
+                  </button>
+                </div>
+              </td>
+            </tr>
+          </ng-template>
+        </p-table>
       }
     </div>
   `,
   styles: [`
-    .head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 18px; }
-    .head h2 { margin: 0; display: flex; gap: 10px; align-items: center; }
-    .form { display: flex; flex-direction: column; gap: 10px; max-width: 560px; margin-bottom: 24px;
-      background: #fff; padding: 18px; border-radius: 12px; border: 1px solid #e2e8f0; }
-    .form input { font-size: 17px; }
-    .rb-title { font-weight: 700; margin-top: 4px; }
-    .grp-head { display: flex; align-items: center; gap: 8px; margin: 8px 0 2px;
-      font-size: 13px; font-weight: 700; color: #475569; text-transform: uppercase;
-      letter-spacing: 0.03em; }
-    .perm-row { display: flex; justify-content: space-between; align-items: center; gap: 12px;
-      min-height: 44px; padding: 4px 8px; border-radius: 8px; cursor: pointer; }
-    .perm-row:hover { background: #f8fafc; }
-    .perm-label { font-size: 15px; color: #1e293b; }
-    .form-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 10px; }
-    .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 14px; }
-    .rcard { background: #fff; border: 1px solid #e2e8f0; border-radius: 12px; padding: 16px;
-      display: flex; flex-direction: column; gap: 10px; align-items: flex-start;
-      cursor: pointer; transition: box-shadow .15s; }
-    .rcard:hover { box-shadow: 0 6px 20px rgba(15,23,42,.12); }
-    .rhead { display: flex; justify-content: space-between; width: 100%; align-items: center; gap: 8px; }
-    .rname { font-size: 18px; font-weight: 700; }
-    .rbadges { display: flex; align-items: center; gap: 6px; }
-    .ptags { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; font-size: 12px; }
-    .ptag { background: #f1f5f9; color: #334155; font-size: 12px; font-weight: 600;
-      padding: 3px 10px; border-radius: 999px; }
-    .norole { color: #94a3b8; font-size: 12px; font-style: italic; }
-    .ractions { width: 100%; display: flex; justify-content: flex-end; }
-  `]
+    .page { display: flex; flex-direction: column; gap: 18px; }
+    .head { display: flex; justify-content: space-between; align-items: flex-end;
+      gap: 16px; flex-wrap: wrap; }
+    .head-text h1 { margin: 0; font-size: 24px; font-weight: 700; color: #0f172a; }
+    .sub { margin: 4px 0 0; color: #64748b; font-size: 14px; }
+    .head-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+
+    .ghost-btn, .primary-btn, .act-btn {
+      display: inline-flex; align-items: center; gap: 6px;
+      padding: 8px 14px; border-radius: 8px; font-size: 14px; font-weight: 600;
+      cursor: pointer; text-decoration: none; border: 1px solid transparent;
+      font-family: inherit;
+    }
+    .ghost-btn { background: #fff; color: #334155; border-color: #cbd5e1; }
+    .ghost-btn:hover { background: #f8fafc; }
+    .primary-btn { background: #0f172a; color: #fff; }
+    .primary-btn:disabled { opacity: .5; cursor: not-allowed; }
+
+    .state { padding: 40px; text-align: center; color: #64748b; font-size: 15px; }
+    .state i { margin-right: 6px; }
+
+    :host ::ng-deep .roles-table {
+      .p-datatable-table { border-collapse: separate; border-spacing: 0; }
+      thead th {
+        background: #f8fafc; color: #475569; font-size: 12px; font-weight: 700;
+        text-transform: uppercase; letter-spacing: .04em;
+        text-align: left; padding: 10px 14px;
+        border-bottom: 1px solid #e2e8f0;
+      }
+      thead th.num { text-align: right; }
+      thead th.actions-col { text-align: right; }
+      tbody td {
+        padding: 12px 14px; border-bottom: 1px solid #f1f5f9;
+        font-size: 14px; color: #1e293b; vertical-align: middle;
+      }
+      tbody td.num { text-align: right; font-variant-numeric: tabular-nums; }
+      tbody tr:hover td { background: #fafbfc; }
+    }
+
+    .role-cell { display: inline-flex; align-items: center; gap: 10px; }
+    .role-dot { width: 10px; height: 10px; border-radius: 999px; flex: none; }
+    .role-cell .pi { font-size: 14px; }
+    .role-label { font-weight: 600; color: #0f172a; }
+
+    .type-tag {
+      display: inline-flex; align-items: center; gap: 4px;
+      padding: 3px 10px; border-radius: 999px; font-size: 12px; font-weight: 600;
+    }
+    .type-tag.system { background: #f1f5f9; color: #475569; }
+    .type-tag.custom { background: #ecfeff; color: #0891b2; }
+
+    .count-link { color: #0ea5e9; font-weight: 700; text-decoration: none; }
+    .count-link:hover { text-decoration: underline; }
+    .count-link.zero { color: #94a3b8; font-weight: 600; }
+
+    .modules { display: inline-flex; gap: 10px; align-items: center; }
+    .modules .pi { font-size: 14px; }
+    .no-mod { color: #cbd5e1; }
+
+    .actions { display: inline-flex; gap: 8px; justify-content: flex-end; }
+    .act-btn {
+      display: inline-flex; align-items: center; gap: 6px;
+      padding: 6px 12px; border-radius: 8px; font-size: 13px; font-weight: 600;
+      cursor: pointer; text-decoration: none; border: 1px solid transparent;
+      background: #0f172a; color: #fff;
+    }
+    .act-btn:hover { background: #1e293b; }
+    .act-btn.ghost { background: #fff; color: #334155; border-color: #cbd5e1; }
+    .act-btn.ghost:hover { background: #f8fafc; }
+    .act-btn.ghost:disabled { opacity: .6; cursor: wait; }
+    .act-btn .pi { font-size: 12px; }
+  `],
 })
 export class RolesComponent implements OnInit {
   private http = inject(HttpClient);
   private router = inject(Router);
-  private auth = inject(AuthService);
   private msgs = inject(MessageService);
 
-  roles: RoleRow[] = [];
-  readonly groups = PERM_GROUPS;
+  readonly roles = signal<RoleRow[]>([]);
+  readonly loading = signal<boolean>(true);
+  readonly loadError = signal<boolean>(false);
+  readonly duplicatingId = signal<string | null>(null);
 
-  showForm = false;
-  formLabel = '';
-  selectedPerms = new Set<string>();
-
-  private permIds = new Set<string>();
-
-  canManage = computed(() => this.auth.can(PERM.ROLE_MANAGE));
+  readonly moduleIcons = MODULE_ICONS;
 
   ngOnInit(): void {
     this.load();
-    this.http.get<PermRow[]>('/api/roles/permissions').subscribe({
-      next: p => { this.permIds = new Set((p ?? []).map(x => x.id)); },
-      error: () => { /* catalog optional: show all group ids */ }
-    });
-  }
-
-  permLabel(id: string): string { return PERM_LABELS[id] ?? id; }
-
-  hasPerm(id: string): boolean { return this.permIds.size === 0 || this.permIds.has(id); }
-
-  toggle(id: string, on: boolean): void {
-    if (on) { this.selectedPerms.add(id); } else { this.selectedPerms.delete(id); }
-  }
-
-  onRowClick(ev: Event, id: string): void {
-    const target = ev.target as HTMLElement | null;
-    if (target && target.closest('p-toggleswitch')) { return; }
-    this.toggle(id, !this.selectedPerms.has(id));
-  }
-
-  firstPerms(perms: string[]): string[] { return perms.slice(0, 8); }
-
-  extraPerms(perms: string[]): number { return Math.max(0, perms.length - 8); }
-
-  openDetail(r: RoleRow): void { this.router.navigate(['/roles', r.id]); }
-
-  create(): void {
-    if (!this.formLabel.trim()) { return; }
-    const body = { label: this.formLabel.trim(), permissionCodes: Array.from(this.selectedPerms) };
-    this.http.post('/api/roles', body).subscribe({
-      next: () => {
-        this.msgs.add({ severity: 'success', summary: 'Rôle créé' });
-        this.formLabel = '';
-        this.selectedPerms.clear();
-        this.showForm = false;
-        this.load();
-      },
-      error: (err) => this.msgs.add({ severity: 'error', summary: 'Erreur',
-        detail: err.error?.message ?? 'Création impossible' })
-    });
   }
 
   load(): void {
-    this.http.get<RoleRow[]>('/api/roles').subscribe(r => this.roles = r ?? []);
+    this.loading.set(true);
+    this.loadError.set(false);
+    this.http.get<RoleRow[]>('/api/roles').subscribe({
+      next: r => { this.roles.set(r ?? []); this.loading.set(false); },
+      error: () => { this.loadError.set(true); this.loading.set(false); },
+    });
+  }
+
+  visual(code: string): RoleVisual { return roleVisual(code); }
+
+  moduleIcon(key: string): ModuleIcon | null {
+    return MODULE_ICONS[key] ?? null;
+  }
+
+  duplicate(r: RoleRow): void {
+    const suggestion = r.label + ' (copie)';
+    const label = window.prompt("Libellé du nouveau rôle :", suggestion);
+    if (label === null) { return; }
+    const trimmed = label.trim();
+    if (!trimmed) {
+      this.msgs.add({ severity: 'warn', summary: 'Libellé requis' });
+      return;
+    }
+    this.duplicatingId.set(r.id);
+    this.http.post<RoleRow>(`/api/roles/${r.id}/duplicate`, { label: trimmed }).subscribe({
+      next: created => {
+        this.duplicatingId.set(null);
+        this.msgs.add({ severity: 'success', summary: 'Rôle dupliqué' });
+        this.router.navigate(['/roles', created.id]);
+      },
+      error: err => {
+        this.duplicatingId.set(null);
+        this.msgs.add({
+          severity: 'error', summary: 'Erreur',
+          detail: err?.error?.message ?? 'Duplication impossible',
+        });
+      },
+    });
   }
 }

@@ -22,7 +22,8 @@ public class UserController {
     }
 
     public record CreateUserRequest(String fullName, String email, String password,
-                                    List<String> roleCodes, String overrideReason) {}
+                                    List<String> roleCodes, String overrideReason,
+                                    Boolean sendInvitation) {}
     public record ChangePasswordRequest(String oldPassword, String newPassword) {}
     public record ResetPasswordRequest(String newPassword) {}
     public record UpdateUserRequest(String fullName, String password) {}
@@ -61,7 +62,8 @@ public class UserController {
     @PreAuthorize("hasAuthority('PERM_USER_CREATE')")
     public UserService.UserResponse create(@RequestBody CreateUserRequest body, Authentication auth) {
         return service.createUser(auth, body.fullName(), body.email(),
-                body.password(), body.roleCodes(), body.overrideReason());
+                body.password(), body.roleCodes(), body.overrideReason(),
+                Boolean.TRUE.equals(body.sendInvitation()));
     }
 
     @PostMapping("/{id}/deactivate")
@@ -91,12 +93,30 @@ public class UserController {
     public ResponseEntity<?> resetPassword(@PathVariable UUID id,
                                            @RequestBody ResetPasswordRequest body,
                                            Authentication auth) {
-        service.resetPassword(auth, id, body.newPassword());
+        String tempPw = service.resetPassword(auth, id, body.newPassword());
+        if (tempPw != null) {
+            return ResponseEntity.ok(java.util.Map.of("temporaryPassword", tempPw));
+        }
         return ResponseEntity.ok().build();
     }
 
-    /**
-     * PUT /api/users/{id}/absence — set or clear the absence (absentUntil = null
+    /** POST /api/users/{id}/send-reset-link — admin-triggered RESET email (U2). */
+    @PostMapping("/{id}/send-reset-link")
+    @PreAuthorize("hasAuthority('PERM_USER_UPDATE')")
+    public ResponseEntity<?> sendResetLink(@PathVariable UUID id, Authentication auth) {
+        service.sendResetLink(auth, id);
+        return ResponseEntity.ok().build();
+    }
+
+    /** POST /api/users/{id}/resend-invitation — resend the INVITE email for a PENDING user (U2). */
+    @PostMapping("/{id}/resend-invitation")
+    @PreAuthorize("hasAuthority('PERM_USER_UPDATE')")
+    public ResponseEntity<?> resendInvitation(@PathVariable UUID id, Authentication auth) {
+        service.resendInvitation(auth, id);
+        return ResponseEntity.ok().build();
+    }
+
+    /** PUT /api/users/{id}/absence — set or clear the absence (absentUntil = null
      * ends the absence). Allowed for the org owner, or the user for himself.
      */
     @PutMapping("/{id}/absence")
@@ -104,5 +124,23 @@ public class UserController {
                                           Authentication auth) {
         service.setAbsence(auth, id, body.absentUntil());
         return ResponseEntity.ok().build();
+    }
+
+    // ── U4: admin reads ────────────────────────────────────────────────
+
+    /** GET /api/users/{id}/activity?limit=20 — last audit events of that user. */
+    @GetMapping("/{id}/activity")
+    @PreAuthorize("hasAnyAuthority('PERM_USER_CREATE','PERM_USER_UPDATE')")
+    public List<UserService.ActivityEntry> activity(@PathVariable UUID id,
+                                                     @RequestParam(value = "limit", required = false, defaultValue = "20") int limit,
+                                                     Authentication auth) {
+        return service.activity(auth, id, limit);
+    }
+
+    /** GET /api/users/summary — counters for the header. */
+    @GetMapping("/summary")
+    @PreAuthorize("hasAnyAuthority('PERM_USER_CREATE','PERM_USER_UPDATE','PERM_ROLE_ASSIGN')")
+    public UserService.UserSummary summary(Authentication auth) {
+        return service.summary(auth);
     }
 }
