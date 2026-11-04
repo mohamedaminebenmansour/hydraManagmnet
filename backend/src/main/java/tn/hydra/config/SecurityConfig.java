@@ -19,6 +19,7 @@ import org.springframework.security.config.Customizer;
 import org.springframework.security.web.header.writers.ReferrerPolicyHeaderWriter;
 import org.springframework.web.cors.CorsConfigurationSource;
 import tn.hydra.security.HydraUserDetailsService;
+import tn.hydra.security.PasswordChangeRequiredFilter;
 
 @Configuration
 @EnableWebSecurity
@@ -26,9 +27,12 @@ import tn.hydra.security.HydraUserDetailsService;
 public class SecurityConfig {
 
     private final CorsConfigurationSource corsConfigurationSource;
+    private final PasswordChangeRequiredFilter passwordChangeRequiredFilter;
 
-    public SecurityConfig(CorsConfigurationSource corsConfigurationSource) {
+    public SecurityConfig(CorsConfigurationSource corsConfigurationSource,
+                          PasswordChangeRequiredFilter passwordChangeRequiredFilter) {
         this.corsConfigurationSource = corsConfigurationSource;
+        this.passwordChangeRequiredFilter = passwordChangeRequiredFilter;
     }
 
     @Bean
@@ -42,6 +46,7 @@ public class SecurityConfig {
                     .csrfTokenRequestHandler(new CsrfTokenRequestAttributeHandler()))
             .authorizeHttpRequests(auth -> auth
                     .requestMatchers("/api/auth/login").permitAll()
+                    .requestMatchers("/api/auth/password-policy").permitAll()
                     .requestMatchers("/error").permitAll()
                     .requestMatchers("/health").permitAll()
                     .anyRequest().authenticated())
@@ -59,6 +64,8 @@ public class SecurityConfig {
             .exceptionHandling(e -> e.authenticationEntryPoint(
                     (request, response, ex) -> response.sendError(HttpServletResponse.SC_UNAUTHORIZED)));
         http.addFilterAfter(new CsrfCookieFilter(), BasicAuthenticationFilter.class);
+        // U1: force password change at first login (after authentication, before controllers)
+        http.addFilterAfter(passwordChangeRequiredFilter, BasicAuthenticationFilter.class);
         return http.build();
     }
 

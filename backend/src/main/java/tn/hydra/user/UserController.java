@@ -91,7 +91,10 @@ public class UserController {
     public ResponseEntity<?> resetPassword(@PathVariable UUID id,
                                            @RequestBody ResetPasswordRequest body,
                                            Authentication auth) {
-        service.resetPassword(auth, id, body.newPassword());
+        String tempPw = service.resetPassword(auth, id, body.newPassword());
+        if (tempPw != null) {
+            return ResponseEntity.ok(java.util.Map.of("temporaryPassword", tempPw));
+        }
         return ResponseEntity.ok().build();
     }
 
