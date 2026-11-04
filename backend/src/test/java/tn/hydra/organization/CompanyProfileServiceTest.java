@@ -22,9 +22,14 @@ import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 
 /**
- * CompanyProfileServiceTest — CO-03..CO-07, CO-12.
+ * CompanyProfileServiceTest — CO-03..CO-07, CO-12, CO-16, CO-17.
+ *
+ * CO-03 and CO-06 call the CONTROLLER beans (autowired) so the Spring proxy
+ * applies @PreAuthorize. CO-06b/CO-06c (which require commits) live in a
+ * separate non-@Transactional test class: CompanyProfileLogoStorageTest.
  */
 @SpringBootTest
 @Transactional
@@ -32,6 +37,8 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 class CompanyProfileServiceTest {
 
     @Autowired private CompanyProfileService service;
+    @Autowired private CompanyProfileController controller;
+    @Autowired private GroupementController groupementController;
     @Autowired private JdbcTemplate jdbc;
 
     private UUID orgId;
@@ -59,7 +66,7 @@ class CompanyProfileServiceTest {
         UUID ownerRoleId = jdbc.queryForObject("select id from role where code = 'OWNER'", UUID.class);
         jdbc.update("insert into user_role (user_id, role_id, assigned_by) values (?, ?, ?)", ownerId, ownerRoleId, ownerId);
 
-        // non-owner user (no ORG_SETTINGS)
+        // non-owner user (no ORG_SETTINGS — only BUREAU which has no ORG_SETTINGS permission)
         jdbc.update("""
                 insert into app_user (id, org_id, email, password_hash, full_name, is_owner, is_active, must_change_password)
                 values (?, ?, ?, ?, 'Non Owner', false, true, false)
@@ -77,19 +84,57 @@ class CompanyProfileServiceTest {
     @AfterEach
     void clearContext() { SecurityContextHolder.clearContext(); }
 
-    // CO-03: user without ORG_SETTINGS → AccessDeniedException
+    // ── Real 1×1 PNG bytes (67 bytes) ────────────────────────────────────
+    private static final byte[] REAL_PNG = new byte[] {
+            (byte) 0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A,
+            0x00, 0x00, 0x00, 0x0D, 0x49, 0x48, 0x44, 0x52,
+            0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01,
+            0x08, 0x06, 0x00, 0x00, 0x00, 0x1F, 0x15, (byte) 0xC4,
+            (byte) 0x89, 0x00, 0x00, 0x00, 0x0D, 0x49, 0x44, 0x41,
+            0x54, 0x08, (byte) 0xD7, 0x63, (byte) 0xF8, (byte) 0xCF, (byte) 0xC0, 0x00,
+            0x00, 0x00, 0x03, 0x00, 0x01, 0x5B, (byte) 0x6E, 0x0A,
+            0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4E, 0x44,
+            (byte) 0xAE, 0x42, 0x60, (byte) 0x82
+    };
+
+    // CO-03: user without PERM_ORG_SETTINGS → AccessDeniedException; profile row unchanged.
+    // Then with the owner, the same call works. We also exercise GroupementController.create.
     @Test
-    void update_withoutPermission_denied() {
+    void update_withoutPermission_denied_then_ownerWorks() {
         SecurityContextHolder.getContext().setAuthentication(nonOwnerAuth);
-        // The @PreAuthorize is on the controller, not the service. We call the controller
-        // through Spring by calling the service method directly — but @PreAuthorize won't
-        // apply. So we test that the service doesn't crash for a non-owner; the actual
-        // enforcement is via the @PreAuthorize annotation on the controller.
-        // Instead, we verify the profile is unchanged after a call that would succeed
-        // at the service level but would be blocked at the controller level.
-        var profile = service.get(nonOwnerAuth);
-        assertThat(profile).isNotNull();
-        // The profile should be readable (GET has no permission requirement)
+        var body = new CompanyProfileService.UpdateRequest(
+                "TN", "Hacked SARL", null, "SARL", null, null,
+                null, true, "Hacked address", "1000", "Tunis", "Tunis",
+                "+216 71 000 000", "hacked@hydra.test", null,
+                null, null, 0);
+
+        // Calling the controller bean through the Spring proxy applies @PreAuthorize.
+        assertThrows(AccessDeniedException.class, () -> controller.update(body, nonOwnerAuth));
+
+        // Profile row unchanged: nothing was inserted.
+        Integer n = jdbc.queryForObject("select count(*) from company_profile where org_id = ?", Integer.class, orgId);
+        assertThat(n).isZero();
+
+        // Now the owner calls the same endpoint: it works and a row is created.
+        SecurityContextHolder.getContext().setAuthentication(ownerAuth);
+        var saved = controller.update(body, ownerAuth);
+        assertThat(saved.getStatusCode().is2xxSuccessful()).isTrue();
+        var savedBody = (CompanyProfileService.CompanyProfileResponse) saved.getBody();
+        assertThat(savedBody.raisonSociale()).isEqualTo("Hacked SARL");
+        assertThat(savedBody.version()).isEqualTo(1);
+
+        // Same gate on GroupementController.create
+        SecurityContextHolder.getContext().setAuthentication(nonOwnerAuth);
+        var grpBody = new GroupementService.GroupementInput(
+                "Hacked groupement", "SOLIDAIRE", null, null, null, 0,
+                List.of(new GroupementService.MemberInput("A", null, "TN", "MANDATAIRE",
+                                BigDecimal.valueOf(50), null, true),
+                        new GroupementService.MemberInput("B", null, "TN", "MEMBRE",
+                                BigDecimal.valueOf(50), null, false)));
+        assertThrows(AccessDeniedException.class, () -> groupementController.create(grpBody, nonOwnerAuth));
+
+        Integer g = jdbc.queryForObject("select count(*) from groupement where org_id = ?", Integer.class, orgId);
+        assertThat(g).isZero();
     }
 
     // CO-04: optimistic lock — two updates with same version
@@ -142,44 +187,48 @@ class CompanyProfileServiceTest {
         assertThat(details).contains("9653");
     }
 
-    // CO-06: logo validation
+    // CO-06: logo validation through the controller (real @PreAuthorize + magic bytes + size).
+    // The controller returns 400 with body code LOGO_TOO_LARGE / LOGO_TYPE; 200 for a real PNG.
     @Test
     void logo_svgRefused_textRenamedPngRefused_tooLargeRefused_realPngAccepted() {
-        // SVG content (text)
-        byte[] svg = "<svg></svg>".getBytes();
-        assertThat(CompanyProfileController.detectImageType(svg)).isNull();
+        SecurityContextHolder.getContext().setAuthentication(ownerAuth);
 
-        // Text file renamed .png
-        byte[] text = "not an image".getBytes();
-        assertThat(CompanyProfileController.detectImageType(text)).isNull();
+        // 1) 1 MB + 1 byte of PNG header + zeros → 400 LOGO_TOO_LARGE
+        byte[] tooLarge = new byte[1_048_577];
+        tooLarge[0] = (byte) 0x89; tooLarge[1] = 0x50; tooLarge[2] = 0x4E; tooLarge[3] = 0x47;
+        tooLarge[4] = 0x0D; tooLarge[5] = 0x0A; tooLarge[6] = 0x1A; tooLarge[7] = 0x0A;
+        var tooLargeFile = new MockMultipartFile("file", "logo.png", "image/png", tooLarge);
+        var r1 = controller.uploadLogo(tooLargeFile, ownerAuth);
+        assertThat(r1.getStatusCode().value()).isEqualTo(400);
+        @SuppressWarnings("unchecked")
+        var b1 = (java.util.Map<String, Object>) r1.getBody();
+        assertThat(b1.get("code")).isEqualTo("LOGO_TOO_LARGE");
 
-        // 1 MB + 1 byte → too large (controller check, not service)
-        // We verify the constant
-        assertThat(1_048_576).isEqualTo(1_048_576); // 1 MB
+        // 2) SVG content named logo.svg → 400 LOGO_TYPE
+        var svgFile = new MockMultipartFile("file", "logo.svg", "image/svg+xml",
+                "<svg></svg>".getBytes());
+        var r2 = controller.uploadLogo(svgFile, ownerAuth);
+        assertThat(r2.getStatusCode().value()).isEqualTo(400);
+        @SuppressWarnings("unchecked")
+        var b2 = (java.util.Map<String, Object>) r2.getBody();
+        assertThat(b2.get("code")).isEqualTo("LOGO_TYPE");
 
-        // Real 1x1 PNG
-        byte[] png = new byte[] {
-            (byte) 0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A,
-            0x00, 0x00, 0x00, 0x0D, 0x49, 0x48, 0x44, 0x52,
-            0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01,
-            0x08, 0x06, 0x00, 0x00, 0x00, 0x1F, 0x15, (byte) 0xC4,
-            (byte) 0x89, 0x00, 0x00, 0x00, 0x0D, 0x49, 0x44, 0x41,
-            0x54, 0x08, (byte) 0xD7, 0x63, (byte) 0xF8, (byte) 0xCF, (byte) 0xC0, 0x00,
-            0x00, 0x00, 0x03, 0x00, 0x01, 0x5B, (byte) 0x6E, 0x0A,
-            0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4E, 0x44,
-            (byte) 0xAE, 0x42, 0x60, (byte) 0x82
-        };
-        assertThat(CompanyProfileController.detectImageType(png)).isEqualTo("image/png");
+        // 3) Text content "not an image" named logo.png with content type image/png → 400 LOGO_TYPE
+        var textFile = new MockMultipartFile("file", "logo.png", "image/png",
+                "not an image".getBytes());
+        var r3 = controller.uploadLogo(textFile, ownerAuth);
+        assertThat(r3.getStatusCode().value()).isEqualTo(400);
+        @SuppressWarnings("unchecked")
+        var b3 = (java.util.Map<String, Object>) r3.getBody();
+        assertThat(b3.get("code")).isEqualTo("LOGO_TYPE");
 
-        // Upload the PNG
-        service.uploadLogo(ownerAuth, png, "image/png");
+        // 4) Real 1×1 PNG → 200 (logo saved)
+        var pngFile = new MockMultipartFile("file", "logo.png", "image/png", REAL_PNG);
+        var r4 = controller.uploadLogo(pngFile, ownerAuth);
+        assertThat(r4.getStatusCode().is2xxSuccessful()).isTrue();
+
         var profile = service.get(ownerAuth);
         assertThat(profile.hasLogo()).isTrue();
-
-        // Upload a second PNG — should replace the first
-        service.uploadLogo(ownerAuth, png, "image/png");
-        // After commit (which @Rollback prevents), the old file would be deleted.
-        // In the test (rollback), the old file delete is registered but never fires.
     }
 
     // CO-07: org isolation
@@ -232,5 +281,66 @@ class CompanyProfileServiceTest {
         // No Tunisian formatting applied
         assertThat(profile.mfFormate()).isNull();
         assertThat(profile.iban()).isNull();
+    }
+
+    // CO-16: saving the profile twice with the same values → only one audit row, version unchanged.
+    @Test
+    void saveTwice_sameValues_oneAuditRow_versionUnchanged() {
+        var req = new CompanyProfileService.UpdateRequest(
+                "TN", "Same SARL", null, "SARL", "1234567/A/A/M/000", null,
+                new BigDecimal("50000"), true, "Zone industrielle", "1000", "Tunis", "Tunis",
+                "+216 71 000 000", "test@hydra.test", null,
+                "Banque Démo", "07040005810111129653", 0);
+
+        var first = service.update(ownerAuth, req);
+        assertThat(first.version()).isEqualTo(1);
+
+        long auditAfterFirst = jdbc.queryForObject(
+                "select count(*) from event_log where entity_id = ? and action = 'COMPANY_PROFILE_UPDATED'",
+                Long.class, orgId);
+        assertThat(auditAfterFirst).isEqualTo(1L);
+
+        // Second save with the SAME values, using the bumped version
+        var second = service.update(ownerAuth, new CompanyProfileService.UpdateRequest(
+                "TN", "Same SARL", null, "SARL", "1234567/A/A/M/000", null,
+                new BigDecimal("50000"), true, "Zone industrielle", "1000", "Tunis", "Tunis",
+                "+216 71 000 000", "test@hydra.test", null,
+                "Banque Démo", "07040005810111129653", 1));
+
+        // Version unchanged (no bump), no new audit row.
+        assertThat(second.version()).isEqualTo(1);
+        long auditAfterSecond = jdbc.queryForObject(
+                "select count(*) from event_log where entity_id = ? and action = 'COMPANY_PROFILE_UPDATED'",
+                Long.class, orgId);
+        assertThat(auditAfterSecond).isEqualTo(1L);
+    }
+
+    // CO-17: capital 50000 then 50000.000 → no audit row for capital (BigDecimal.compareTo equality).
+    // The second save with compareTo-equal capital must NOT create a new audit row at all.
+    @Test
+    void capital_50000_then_50000_000_noAuditRowForCapital() {
+        service.update(ownerAuth, new CompanyProfileService.UpdateRequest(
+                "TN", "Capital SARL", null, null, null, null,
+                new BigDecimal("50000"), true, null, null, null, null,
+                null, null, null, null, null, 0));
+
+        long auditAfterFirst = jdbc.queryForObject(
+                "select count(*) from event_log where entity_id = ? and action = 'COMPANY_PROFILE_UPDATED'",
+                Long.class, orgId);
+        assertThat(auditAfterFirst).isEqualTo(1L);
+
+        // Save with the same value as a different scale: 50000.000 == 50000 (compareTo)
+        var second = service.update(ownerAuth, new CompanyProfileService.UpdateRequest(
+                "TN", "Capital SARL", null, null, null, null,
+                new BigDecimal("50000.000"), true, null, null, null, null,
+                null, null, null, null, null, 1));
+
+        // No new audit row was written — the count is still 1.
+        long auditAfterSecond = jdbc.queryForObject(
+                "select count(*) from event_log where entity_id = ? and action = 'COMPANY_PROFILE_UPDATED'",
+                Long.class, orgId);
+        assertThat(auditAfterSecond).isEqualTo(1L);
+        // Version was NOT bumped.
+        assertThat(second.version()).isEqualTo(1);
     }
 }
