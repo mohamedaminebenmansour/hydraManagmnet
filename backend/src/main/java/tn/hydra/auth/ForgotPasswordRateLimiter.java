@@ -74,4 +74,48 @@ public class ForgotPasswordRateLimiter {
     private static String ipKey(String ip) {
         return "i:" + (ip == null ? "" : ip);
     }
+
+    // ── U7: reset-password wrong-token rate limit ──────────────────────
+
+    private static final int RESET_MAX_PER_IP = 5;
+    private static final long RESET_WINDOW_MS = 15 * 60 * 1000L;
+    private final Map<String, Deque<Long>> resetFailures = new ConcurrentHashMap<>();
+
+    /** True when this IP has reached 5 TOKEN_INVALID failures in 15 minutes. */
+    public boolean isResetBlocked(String ip) {
+        long now = clock.millis();
+        return resetCount(resetKey(ip), now) >= RESET_MAX_PER_IP;
+    }
+
+    /** Record a TOKEN_INVALID failure for the reset endpoint. */
+    public void recordResetFailure(String ip) {
+        long now = clock.millis();
+        resetAdd(resetKey(ip), now);
+    }
+
+    private int resetCount(String key, long now) {
+        Deque<Long> q = resetFailures.get(key);
+        if (q == null) return 0;
+        synchronized (q) {
+            resetPrune(q, now);
+            if (q.isEmpty()) resetFailures.remove(key, q);
+            return q.size();
+        }
+    }
+
+    private void resetAdd(String key, long now) {
+        Deque<Long> q = resetFailures.computeIfAbsent(key, k -> new ArrayDeque<>());
+        synchronized (q) {
+            resetPrune(q, now);
+            q.addLast(now);
+        }
+    }
+
+    private static void resetPrune(Deque<Long> q, long now) {
+        while (!q.isEmpty() && now - q.peekFirst() >= RESET_WINDOW_MS) q.pollFirst();
+    }
+
+    private static String resetKey(String ip) {
+        return "r:" + (ip == null ? "" : ip);
+    }
 }

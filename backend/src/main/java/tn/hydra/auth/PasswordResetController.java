@@ -123,13 +123,17 @@ public class PasswordResetController {
     public record ResetPasswordRequest(String token, String newPassword) {}
 
     @PostMapping("/reset-password")
-    @Transactional
     public ResponseEntity<?> resetPassword(@RequestBody ResetPasswordRequest body,
                                            HttpServletRequest request) {
-        // 5 wrong tokens per IP per 15 min -> 429. A "wrong" token is any
-        // attempt that results in TOKEN_INVALID.
-        // (Simple in-memory guard, reusing the LoginRateLimiter pattern.)
-        // Not enforced here for simplicity; the consume() rejects invalid tokens.
+        String ip = request.getRemoteAddr();
+
+        // U7: 6th wrong token (TOKEN_INVALID) from one IP within 15 min → 429
+        if (rateLimiter.isResetBlocked(ip)) {
+            return ResponseEntity.status(HttpStatus.TOO_MANY_REQUESTS)
+                    .header("Referrer-Policy", "no-referrer")
+                    .body(Map.of("code", "TOO_MANY_ATTEMPTS",
+                            "message", "Trop de tentatives. Réessayez dans 15 minutes."));
+        }
 
         try {
             tokens.consume(body == null ? null : body.token(), body == null ? null : body.newPassword());
@@ -139,17 +143,13 @@ public class PasswordResetController {
                         .header("Referrer-Policy", "no-referrer")
                         .body(Map.of("code", "WEAK_PASSWORD", "message", e.getMessage()));
             }
-            // TOKEN_INVALID
+            // TOKEN_INVALID — record the failure for rate limiting
+            rateLimiter.recordResetFailure(ip);
             return ResponseEntity.badRequest()
                     .header("Referrer-Policy", "no-referrer")
                     .body(Map.of("code", "TOKEN_INVALID",
                             "message", "Ce lien n'est plus valide. Demandez-en un nouveau."));
         }
-
-        // Send the « changed » email (after commit) if we can find the user.
-        // The token was consumed; we look up the user by the token hash to get the email.
-        // But we don't have the raw token anymore (it was consumed). So we send the
-        // « changed » email from within consume() — see PasswordTokenService.
 
         return ResponseEntity.ok()
                 .header("Referrer-Policy", "no-referrer")

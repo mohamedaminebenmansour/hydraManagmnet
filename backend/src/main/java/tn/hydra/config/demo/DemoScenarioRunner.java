@@ -80,15 +80,15 @@ public class DemoScenarioRunner implements CommandLineRunner {
     static final UUID EXT_ID     = UUID.fromString("dddddddd-0000-0000-0000-000000000017");
     static final UUID DOC_ID     = UUID.fromString("dddddddd-0000-0000-0000-000000000018");
 
-    static final String GERANT_EMAIL  = "gerant.demo@hydra.demo";
-    static final String ACHATS_EMAIL  = "achats.demo@hydra.demo";
-    static final String METRE_EMAIL   = "metre.demo@hydra.demo";
-    static final String FINANCE_EMAIL = "finance.demo@hydra.demo";
-    static final String TRAVAUX_EMAIL = "travaux.demo@hydra.demo";
-    static final String CHEF_EMAIL    = "chef.demo@hydra.demo";
-    static final String QUANT_EMAIL   = "quantites.demo@hydra.demo";
-    static final String EXT_EMAIL     = "externe.demo@hydra.demo";
-    static final String DOC_EMAIL     = "doc.demo@hydra.demo";
+    static final String GERANT_EMAIL  = "gerant.demo@demo.hydra.tn";
+    static final String ACHATS_EMAIL  = "achats.demo@demo.hydra.tn";
+    static final String METRE_EMAIL   = "metre.demo@demo.hydra.tn";
+    static final String FINANCE_EMAIL = "finance.demo@demo.hydra.tn";
+    static final String TRAVAUX_EMAIL = "travaux.demo@demo.hydra.tn";
+    static final String CHEF_EMAIL    = "chef.demo@demo.hydra.tn";
+    static final String QUANT_EMAIL   = "quantites.demo@demo.hydra.tn";
+    static final String EXT_EMAIL     = "externe.demo@demo.hydra.tn";
+    static final String DOC_EMAIL     = "doc.demo@demo.hydra.tn";
     private static final List<Cast> CAST = List.of(
             new Cast(GERANT_ID,  GERANT_EMAIL,  "Gérant Démo",             "OWNER",      true,  "MANAGER"),
             new Cast(ACHATS_ID,  ACHATS_EMAIL,  "Responsable Achats",      "BUREAU",     false, "ENGINEER"),
@@ -121,7 +121,16 @@ public class DemoScenarioRunner implements CommandLineRunner {
         for (Cast c : CAST) {
             Integer userExists = jdbc.queryForObject(
                     "select count(*) from app_user where id = ?", Integer.class, c.id());
-            if (userExists != null && userExists > 0) continue;
+            if (userExists != null && userExists > 0) {
+                // U7: idempotent email update — if the user exists with an old @hydra.demo email, update it
+                String currentEmail = jdbc.queryForObject(
+                        "select email from app_user where id = ?", String.class, c.id());
+                if (currentEmail != null && !currentEmail.equals(c.email())) {
+                    jdbc.update("update app_user set email = ? where id = ?", c.email(), c.id());
+                    log.info("[DemoScenarioRunner] updated email for {} → {}", c.fullName(), c.email());
+                }
+                continue;
+            }
             jdbc.update("""
                     insert into app_user (id, org_id, email, password_hash, full_name, is_owner, is_active, must_change_password)
                     values (?, ?, ?, ?, ?, ?, true, false)

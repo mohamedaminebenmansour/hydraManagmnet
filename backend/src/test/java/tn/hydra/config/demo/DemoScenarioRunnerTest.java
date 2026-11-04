@@ -104,6 +104,15 @@ class DemoScenarioRunnerTest {
     }
 
     @Test
+    void allDemoEmailsEndWithDemoDomain() {
+        // U7: every demo account email ends with @demo.hydra.tn
+        Integer nonDemoDomain = jdbc.queryForObject(
+                "select count(*) from app_user where org_id = ? and email not like '%@demo.hydra.tn'",
+                Integer.class, DEMO_ORG_ID);
+        assertThat(nonDemoDomain).isZero();
+    }
+
+    @Test
     void blankPassword_createsNothing() {
         Integer beforeUsers = jdbc.queryForObject("select count(*) from app_user where org_id = ?",
                 Integer.class, DEMO_ORG_ID);

@@ -25,15 +25,15 @@ Cochez « OK » ou « KO » après chaque étape.
 
 | Email | Nom | Rôle | Statut attendu |
 |-------|-----|------|----------------|
-| `gerant.demo@hydra.demo` | Gérant Démo | OWNER | OWNER |
+| `gerant.demo@demo.hydra.tn` | Gérant Démo | OWNER | OWNER |
 | `nouveau@demo.hydra.tn` | Nadia Nouveau | ACHAT | PENDING (1re connexion) |
 | `reinit@demo.hydra.tn` | Rami Réinit | CONDUCTEUR | PENDING (admin reset) |
 | `dormant@demo.hydra.tn` | Dali Dormant | INGENIEUR | Sans connexion 30 j |
 | `inactif@demo.hydra.tn` | Ines Inactive | BUREAU | INACTIVE |
 | `absent@demo.hydra.tn` | Amel Absente | BUREAU | ABSENT (jusqu'à +7 j) |
 | `exception@demo.hydra.tn` | Elyes Exception | ACHAT + FINANCE | ACTIVE (exception signée) |
-| `chef.demo@hydra.demo` | Chef Chantier | CONDUCTEUR + Magasinier | ACTIVE |
-| `travaux.demo@hydra.demo` | Conducteur Travaux | CONDUCTEUR + Magasinier | ACTIVE |
+| `chef.demo@demo.hydra.tn` | Chef Chantier | CONDUCTEUR + Magasinier | ACTIVE |
+| `travaux.demo@demo.hydra.tn` | Conducteur Travaux | CONDUCTEUR + Magasinier | ACTIVE |
 
 **Note** : `reinit@demo.hydra.tn` a eu son mot de passe réinitialisé par l'admin.
 Son mot de passe temporaire a été remplacé par `HYDRA_DEMO_PASSWORD` pour que

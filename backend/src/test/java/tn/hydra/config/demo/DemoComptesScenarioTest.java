@@ -71,8 +71,8 @@ class DemoComptesScenarioTest {
         assertThat(hasPermission("MAGASINIER_DEMO", "STOCK_MOVE")).isTrue();
 
         // assigned to chef + travaux
-        assertThat(hasRole("chef.demo@hydra.demo", "MAGASINIER_DEMO")).isTrue();
-        assertThat(hasRole("travaux.demo@hydra.demo", "MAGASINIER_DEMO")).isTrue();
+        assertThat(hasRole("chef.demo@demo.hydra.tn", "MAGASINIER_DEMO")).isTrue();
+        assertThat(hasRole("travaux.demo@demo.hydra.tn", "MAGASINIER_DEMO")).isTrue();
     }
 
     @Test
