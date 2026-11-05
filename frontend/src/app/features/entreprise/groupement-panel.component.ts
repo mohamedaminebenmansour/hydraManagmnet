@@ -188,10 +188,10 @@ interface ProjectOption { id: string; name: string; }
           </div>
 
           <!-- Live total footer -->
-          <div class="total-footer" [class.ok]="totalState() === 'ok'" [class.under]="totalState() === 'under'" [class.over]="totalState() === 'over'">
+          <div class="total-footer" [class.ok]="totalState() === 'ok'" [class.under]="totalState() === 'under' || totalState() === 'empty'" [class.over]="totalState() === 'over'">
             @if (totalState() === 'ok') {
               <i class="pi pi-check-circle"></i> Total des parts : 100 %
-            } @else if (totalState() === 'under') {
+            } @else if (totalState() === 'under' || totalState() === 'empty') {
               <i class="pi pi-exclamation-triangle"></i> Total des parts : {{ totalPct() }} % — il manque {{ formatHundredths(10000 - totalHundredths()) }} %
             } @else {
               <i class="pi pi-exclamation-triangle"></i> Total des parts : {{ totalPct() }} % — {{ formatHundredths(totalHundredths() - 10000) }} % de trop
