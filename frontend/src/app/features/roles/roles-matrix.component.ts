@@ -1,4 +1,4 @@
-import { Component, OnInit, computed, inject, signal } from '@angular/core';
+import { Component, OnInit, computed, inject, signal, effect } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { Router } from '@angular/router';
 import { HttpClient } from '@angular/common/http';
@@ -48,96 +48,147 @@ interface PermGroup {
         <p-button label="Retour" icon="pi pi-arrow-left" [text]="true" size="small" (onClick)="back()" />
       </header>
 
-      <!-- Role cards -->
-      <div class="role-cards">
-        @for (r of sortedRoles(); track r.id) {
-          <button class="role-card" [class.selected]="selectedRoleId() === r.id"
-                  [style.--rc]="visual(r.code).color"
-                  (click)="selectedRoleId.set(r.id)">
-            <span class="rc-dot" [style.background]="visual(r.code).color"></span>
-            <span class="rc-label">{{ r.label }}</span>
-            @if (r.isSystem) { <i class="pi pi-lock rc-lock"></i> }
-            <span class="rc-count">{{ r.permissions?.length ?? 0 }}</span>
+      <!-- DEBUG INFO — visible on screen -->
+      <div class="debug-info" style="background:#fef3c7;border:1px solid #f59e0b;padding:12px;border-radius:8px;font-size:13px;margin-bottom:12px;">
+        <strong>DEBUG:</strong> loading={{loading()}} | loadError={{loadError()}} | rolesCount={{roles().length}} | sortedCount={{sortedRoles().length}} | flatRowsCount={{flatRows().length}} | groups={{groups.length}}
+      </div>
+
+      <div class="toolbar">
+        <span class="p-input-icon-left search">
+          <i class="pi pi-search"></i>
+          <input pInputText type="text" [ngModel]="search()" (ngModelChange)="search.set($event)"
+                 placeholder="Rechercher une permission (libellé ou code)" />
+        </span>
+        <p-button label="Exporter (CSV)" icon="pi pi-download" [outlined]="true"
+                  (onClick)="exportCsv()" [disabled]="sortedRoles().length === 0" />
+      </div>
+
+      <div class="chips">
+        @for (g of groups; track g.key) {
+          <button class="chip" [class.active]="!collapsedModules().has(g.key)"
+                  (click)="toggleModule(g.key)">
+            <i [className]="g.icon"></i>
+            <span>{{ g.title }}</span>
           </button>
         }
       </div>
 
-      <!-- Selected role detail -->
-      @if (selectedRole(); as sr) {
-        <div class="detail-card" [style.--rc]="visual(sr.code).color">
-          <div class="detail-header" [style.border-left-color]="visual(sr.code).color">
-            <div class="detail-title">
-              <span class="detail-dot" [style.background]="visual(sr.code).color"></span>
-              <h2>{{ sr.label }}</h2>
-              @if (sr.isSystem) { <span class="badge sys">Système</span> }
-              @if (sr.userCount != null && sr.userCount > 0) {
-                <span class="badge users" pTooltip="Nombre d'utilisateurs actifs">{{ sr.userCount }} utilisateur(s)</span>
-              }
-            </div>
-            <div class="detail-stats">
-              <span class="stat"><strong>{{ sr.permissions?.length ?? 0 }}</strong> permissions</span>
-              <span class="stat"><strong>{{ totalPerms - (sr.permissions?.length ?? 0) }}</strong> non accordées</span>
-            </div>
-          </div>
-
-          <!-- Permission modules -->
-          <div class="modules">
-            @for (g of groups; track g.key) {
-              <div class="module" [class.collapsed]="collapsedModules().has(g.key)">
-                <div class="module-head" (click)="toggleModule(g.key)">
-                  <i [className]="g.icon"></i>
-                  <span class="module-title">{{ g.title }}</span>
-                  <span class="module-bar">
-                    @for (p of g.ids; track p) {
-                      <span class="bar-dot" [class.granted]="hasPerm(sr, p)"
-                            [pTooltip]="sentence(p)"></span>
-                    }
-                  </span>
-                  <span class="module-count-text">{{ countGranted(sr, g.ids) }}/{{ g.ids.length }}</span>
-                  <i class="pi {{ collapsedModules().has(g.key) ? 'pi-chevron-right' : 'pi-chevron-down' }} chev"></i>
-                </div>
-                @if (!collapsedModules().has(g.key)) {
-                  <div class="module-body">
-                    @for (p of g.ids; track p) {
-                      <div class="perm-row" [class.granted]="hasPerm(sr, p)">
-                        <span class="perm-check">
-                          @if (hasPerm(sr, p)) {
-                            <i class="pi pi-check-circle ok"></i>
-                          } @else {
-                            <i class="pi pi-circle deny"></i>
-                          }
-                        </span>
-                        <span class="perm-text">{{ sentence(p) }}</span>
-                        <span class="perm-code">{{ p }}</span>
-                      </div>
-                    }
-                  </div>
-                }
-              </div>
-            }
-          </div>
-        </div>
-      }
-
-      <!-- States -->
       @if (loading()) {
         <div class="state"><i class="pi pi-spin pi-spinner"></i> Chargement…</div>
       }
+
       @if (!loading() && loadError()) {
         <app-load-error message="Impossible de charger la matrice." (retry)="load()" />
       }
+
       @if (!loading() && !loadError() && sortedRoles().length === 0) {
-        <app-empty-state icon="pi pi-th-large" message="Aucun rôle à afficher." />
+        <app-empty-state icon="pi pi-th-large" message="Aucun rôle à afficher (sortedRoles est vide)." />
       }
 
-      <!-- Export + legend -->
       @if (!loading() && !loadError() && sortedRoles().length > 0) {
-        <div class="footer-bar">
-          <div class="legend">
-            <span><i class="pi pi-check-circle ok"></i> Accordé</span>
-            <span><i class="pi pi-circle deny"></i> Non accordé</span>
+        <div class="desktop-view">
+          <div class="matrix-scroll">
+            <table class="matrix-table">
+              <thead>
+                <tr>
+                  <th class="corner">Permission</th>
+                  @for (r of sortedRoles(); track r.id) {
+                    <th class="role-col">
+                      <div class="role-head">
+                        <span class="role-dot" [style.background]="visual(r.code).color"></span>
+                        <span class="role-head-label" [pTooltip]="r.label">{{ r.label }}</span>
+                        @if (r.isSystem) { <i class="pi pi-lock tiny"></i> }
+                      </div>
+                    </th>
+                  }
+                </tr>
+              </thead>
+              <tbody>
+                @for (row of flatRows(); track $index) {
+                  @if (row.isHeader) {
+                    <tr class="module-row" (click)="toggleModule(row.group!.key)">
+                      <th class="module-header">
+                        <i [className]="row.group!.icon"></i>
+                        <span>{{ row.group!.title }}</span>
+                        <span class="module-count">{{ row.group!.ids.length }}</span>
+                        <i class="pi {{ collapsedModules().has(row.group!.key) ? 'pi-chevron-right' : 'pi-chevron-down' }} chev"></i>
+                      </th>
+                      <td [attr.colspan]="sortedRoles().length" class="module-spacer"></td>
+                    </tr>
+                  }
+                  @if (!row.isHeader) {
+                    <tr>
+                      <th class="perm-name">
+                        <span class="perm-sentence">{{ sentence(row.code!) }}</span>
+                        <span class="perm-code">{{ row.code! }}</span>
+                      </th>
+                      @for (r of sortedRoles(); track r.id) {
+                        <td class="cell">
+                          @if (hasPerm(r, row.code!)) {
+                            <i class="pi pi-check-circle check" aria-label="Accordé"></i>
+                          }
+                        </td>
+                      }
+                    </tr>
+                  }
+                }
+              </tbody>
+            </table>
           </div>
-          <p-button label="Exporter (CSV)" icon="pi pi-download" [outlined]="true" size="small" (onClick)="exportCsv()" />
+        </div>
+
+        <div class="mobile-view">
+          <div class="mobile-picker">
+            <label class="field-label">Rôle</label>
+            <p-select [options]="mobileRoleOptions()" [ngModel]="mobileRoleId()"
+                      (ngModelChange)="mobileRoleId.set($event)"
+                      optionLabel="label" optionValue="value"
+                      placeholder="Choisir un rôle" [style]="{ 'width': '100%' }" />
+          </div>
+          @if (mobileRole(); as mr) {
+            <div class="matrix-scroll">
+              <table class="matrix-table mobile">
+                <thead>
+                  <tr>
+                    <th class="corner">Permission</th>
+                    <th class="role-col">
+                      <div class="role-head">
+                        <span class="role-dot" [style.background]="visual(mr.code).color"></span>
+                        <span class="role-head-label">{{ mr.label }}</span>
+                      </div>
+                    </th>
+                  </tr>
+                </thead>
+                <tbody>
+                  @for (row of flatRows(); track $index) {
+                    @if (row.isHeader) {
+                      <tr class="module-row">
+                        <th class="module-header">
+                          <i [className]="row.group!.icon"></i>
+                          <span>{{ row.group!.title }}</span>
+                          <span class="module-count">{{ row.group!.ids.length }}</span>
+                        </th>
+                        <td class="module-spacer"></td>
+                      </tr>
+                    }
+                    @if (!row.isHeader) {
+                      <tr>
+                        <th class="perm-name">
+                          <span class="perm-sentence">{{ sentence(row.code!) }}</span>
+                          <span class="perm-code">{{ row.code! }}</span>
+                        </th>
+                        <td class="cell">
+                          @if (hasPerm(mr, row.code!)) {
+                            <i class="pi pi-check-circle check" aria-label="Accordé"></i>
+                          }
+                        </td>
+                      </tr>
+                    }
+                  }
+                </tbody>
+              </table>
+            </div>
+          }
         </div>
       }
     </div>
@@ -242,35 +293,83 @@ export class RolesMatrixComponent implements OnInit {
 
   readonly sortedRoles = computed<RoleRow[]>(() => {
     const list = this.roles();
+    console.log('[RolesMatrix] sortedRoles() evaluating, roles count:', list?.length);
     if (!list || list.length === 0) return [];
-    return [...list].sort((a, b) => {
+    const sorted = [...list].sort((a, b) => {
       if (a.isSystem !== b.isSystem) return a.isSystem ? -1 : 1;
       return (a.label ?? '').localeCompare(b.label ?? '', 'fr');
     });
+    console.log('[RolesMatrix] sortedRoles() result:', sorted.length, 'roles, first:', sorted[0]?.code);
+    return sorted;
   });
 
-  readonly selectedRole = computed<RoleRow | null>(() => {
-    const id = this.selectedRoleId();
-    if (!id) return this.sortedRoles()[0] ?? null;
+  readonly flatRows = computed<FlatRow[]>(() => {
+    const q = this.search().trim().toLowerCase();
+    const collapsed = this.collapsedModules();
+    const out: FlatRow[] = [];
+    console.log('[RolesMatrix] flatRows() evaluating, groups:', this.groups?.length, 'search:', q);
+    for (const g of this.groups) {
+      const visiblePerms = q
+        ? g.ids.filter(p =>
+            p.toLowerCase().includes(q) ||
+            (PERM_SENTENCES[p] ?? '').toLowerCase().includes(q))
+        : g.ids;
+      if (visiblePerms.length === 0) continue;
+      out.push({ isHeader: true, group: g });
+      if (q || !collapsed.has(g.key)) {
+        visiblePerms.forEach(p => out.push({ isHeader: false, code: p }));
+      }
+    }
+    console.log('[RolesMatrix] flatRows() result:', out.length, 'rows');
+    return out;
+  });
+
+  readonly mobileRoleOptions = computed<SelectOption[]>(() => {
+    return this.sortedRoles().map(r => ({
+      label: r.label + (r.isSystem ? ' (système)' : ''),
+      value: r.id,
+    }));
+  });
+
+  readonly mobileRole = computed<RoleRow | null>(() => {
+    const id = this.mobileRoleId();
     return this.sortedRoles().find(r => r.id === id) ?? null;
   });
 
+  // Debug: log when any signal changes
+  constructor() {
+    effect(() => {
+      console.log('[RolesMatrix] SIGNAL CHANGE: loading=', this.loading(), 'loadError=', this.loadError(),
+        'roles=', this.roles().length, 'sortedRoles=', this.sortedRoles().length, 'flatRows=', this.flatRows().length);
+    });
+  }
+
   ngOnInit(): void {
+    console.log('[RolesMatrix] ngOnInit, groups:', this.groups?.length, 'PERM_SENTENCES keys:', Object.keys(PERM_SENTENCES ?? {}).length);
     this.load();
   }
 
   load(): void {
+    console.log('[RolesMatrix] load() called');
     this.loading.set(true);
     this.loadError.set(false);
     this.http.get<RoleRow[]>('/api/roles').subscribe({
       next: (list) => {
+        console.log('[RolesMatrix] API success, raw response:', list);
+        console.log('[RolesMatrix] API success, count:', list?.length);
+        if (list && list.length > 0) {
+          console.log('[RolesMatrix] First role:', JSON.stringify(list[0]));
+          console.log('[RolesMatrix] First role permissions:', list[0]?.permissions);
+        }
         this.roles.set(list ?? []);
+        console.log('[RolesMatrix] After roles.set, roles() count:', this.roles().length);
         const first = this.sortedRoles()[0];
         if (first) this.selectedRoleId.set(first.id);
         this.loading.set(false);
+        console.log('[RolesMatrix] After loading.set(false), loading:', this.loading());
       },
       error: (err) => {
-        console.error('[RolesMatrix] Failed to load roles:', err);
+        console.error('[RolesMatrix] API error:', err);
         this.loadError.set(true);
         this.loading.set(false);
       },
@@ -281,8 +380,13 @@ export class RolesMatrixComponent implements OnInit {
   sentence(code: string): string { return PERM_SENTENCES[code] ?? code; }
   hasPerm(r: RoleRow, code: string): boolean { return (r.permissions ?? []).includes(code); }
 
-  countGranted(r: RoleRow, ids: string[]): number {
-    return ids.filter(p => this.hasPerm(r, p)).length;
+  sentence(code: string): string {
+    const s = PERM_SENTENCES[code] ?? code;
+    return s;
+  }
+
+  hasPerm(r: RoleRow, code: string): boolean {
+    return (r.permissions ?? []).includes(code);
   }
 
   toggleModule(key: string): void {
@@ -295,6 +399,7 @@ export class RolesMatrixComponent implements OnInit {
 
   exportCsv(): void {
     const rs = this.sortedRoles();
+    console.log('[RolesMatrix] exportCsv, sortedRoles count:', rs.length);
     if (rs.length === 0) return;
     const lines: string[] = [];
     lines.push(['Permission', ...rs.map(r => r.label)].join(';'));
