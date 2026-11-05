@@ -40,6 +40,8 @@ export const routes: Routes = [
         loadComponent: () => import('./features/roles/roles-matrix.component').then(m => m.RolesMatrixComponent) },
       { path: 'roles/:id', canActivate: [permGuard(PERM.ROLE_MANAGE)],
         loadComponent: () => import('./features/roles/role-detail.component').then(m => m.RoleDetailComponent) },
+      { path: 'entreprise', canActivate: [permGuard(PERM.ORG_SETTINGS)],
+        loadComponent: () => import('./features/entreprise/entreprise.component').then(m => m.EntrepriseComponent) },
       { path: 'audit', canActivate: [permGuard(PERM.AUDIT_VIEW)],
         loadComponent: () => import('./features/audit/audit.component').then(m => m.AuditComponent) },
       { path: 'evenements', canActivate: [ownerGuard],

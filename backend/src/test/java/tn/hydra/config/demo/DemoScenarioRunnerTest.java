@@ -155,6 +155,10 @@ class DemoScenarioRunnerTest {
         jdbc.update("delete from ticket where org_id = ?", DEMO_ORG_ID);
         jdbc.update("delete from document_revision where document_id in (select id from document where org_id = ?)", DEMO_ORG_ID);
         jdbc.update("delete from document where org_id = ?", DEMO_ORG_ID);
+        // S1-5: delete groupement_member + groupement + company_profile before project (FK)
+        jdbc.update("delete from groupement_member where org_id = ?", DEMO_ORG_ID);
+        jdbc.update("delete from groupement where org_id = ?", DEMO_ORG_ID);
+        jdbc.update("delete from company_profile where org_id = ?", DEMO_ORG_ID);
         jdbc.update("delete from doc_folder where project_id in (select id from project where org_id = ?)", DEMO_ORG_ID);
         jdbc.update("delete from project_member where project_id in (select id from project where org_id = ?)", DEMO_ORG_ID);
         jdbc.update("delete from ouvrage where org_id = ? and project_id in (select id from project where org_id = ?)", DEMO_ORG_ID, DEMO_ORG_ID);

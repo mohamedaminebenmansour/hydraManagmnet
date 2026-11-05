@@ -47,6 +47,7 @@ const NAV: NavItem[] = [
   { label: 'Signalements', icon: 'pi-flag', path: '/tickets',   perm: PERM.TICKET_READ, color: '#d97706' },
   { label: 'Utilisateurs',   icon: 'pi-users',        path: '/users',       perm: PERM.USER_CREATE, color: '#2563eb' },
   { label: 'Rôles',          icon: 'pi-id-card',      path: '/roles',       perm: PERM.ROLE_MANAGE, color: '#0891b2' },
+  { label: 'Entreprise',     icon: 'pi-building',     path: '/entreprise',  perm: PERM.ORG_SETTINGS, color: '#0f766e' },
   { label: 'Journal',        icon: 'pi-history',       path: '/audit',       perm: PERM.AUDIT_VIEW, color: '#64748b' },
   // Business events (domain_event) — owner only, under Journal.
   { label: 'Journal des événements', icon: 'pi-bolt', path: '/evenements', perm: '', color: '#64748b', ownerOnly: true },
