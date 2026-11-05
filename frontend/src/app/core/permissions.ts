@@ -30,7 +30,8 @@ export const PERM = {
   // Stock & matériel (backend: V30__stock_virtual_v1.sql)
   STOCK_VIEW: 'STOCK_VIEW',
   STOCK_MOVE: 'STOCK_MOVE',
-  STOCK_ADMIN: 'STOCK_ADMIN'
+  STOCK_ADMIN: 'STOCK_ADMIN',
+  ORG_SETTINGS: 'ORG_SETTINGS'
 } as const;
 
 export const PERM_LABELS: Record<string, string> = {
@@ -64,6 +65,7 @@ export const PERM_LABELS: Record<string, string> = {
   STOCK_VIEW: 'Voir le stock',
   STOCK_MOVE: 'Saisir les mouvements de stock',
   STOCK_ADMIN: 'Administrer les articles et emplacements',
+  ORG_SETTINGS: 'Profil de l\'entreprise',
 };
 
 /**
@@ -101,6 +103,7 @@ export const PERM_SENTENCES: Record<string, string> = {
   STOCK_VIEW: 'Peut voir le stock',
   STOCK_MOVE: 'Peut saisir les mouvements de stock',
   STOCK_ADMIN: 'Peut administrer les articles et emplacements',
+  ORG_SETTINGS: 'Peut modifier le profil de l\'entreprise et les groupements',
 };
 
 export const PERM_GROUPS: { key: string; icon: string; title: string; ids: string[] }[] = [
@@ -115,7 +118,7 @@ export const PERM_GROUPS: { key: string; icon: string; title: string; ids: strin
   { key: 'stock',      icon: 'pi pi-box', title: 'Stock et achats',
     ids: ['STOCK_VIEW','STOCK_MOVE','STOCK_ADMIN'] },
   { key: 'admin',      icon: 'pi pi-shield', title: 'Administration',
-    ids: ['USER_CREATE','USER_UPDATE','USER_DEACTIVATE','ROLE_ASSIGN','ROLE_MANAGE','AUDIT_VIEW'] },
+    ids: ['USER_CREATE','USER_UPDATE','USER_DEACTIVATE','ROLE_ASSIGN','ROLE_MANAGE','AUDIT_VIEW','ORG_SETTINGS'] },
 ];
 
 /**

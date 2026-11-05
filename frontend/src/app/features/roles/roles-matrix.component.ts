@@ -4,10 +4,9 @@ import { Router } from '@angular/router';
 import { HttpClient } from '@angular/common/http';
 import { ButtonModule } from 'primeng/button';
 import { InputTextModule } from 'primeng/inputtext';
-import { SelectModule } from 'primeng/select';
 import { TooltipModule } from 'primeng/tooltip';
 import { PERM_GROUPS, PERM_SENTENCES } from '@app/core/permissions';
-import { roleVisual, type RoleVisual } from '@app/shared/hydra-design';
+import { roleVisual } from '@app/shared/hydra-design';
 import { EmptyStateComponent } from '@app/shared/empty-state.component';
 import { LoadErrorComponent } from '@app/shared/load-error.component';
 
@@ -28,14 +27,6 @@ interface PermGroup {
   ids: string[];
 }
 
-interface FlatRow {
-  isHeader: boolean;
-  group?: PermGroup;
-  code?: string;
-}
-
-interface SelectOption { label: string; value: string; }
-
 @Component({
   selector: 'app-roles-matrix',
   standalone: true,
@@ -43,7 +34,6 @@ interface SelectOption { label: string; value: string; }
     FormsModule,
     ButtonModule,
     InputTextModule,
-    SelectModule,
     TooltipModule,
     EmptyStateComponent,
     LoadErrorComponent,
@@ -51,11 +41,11 @@ interface SelectOption { label: string; value: string; }
   template: `
     <div class="page">
       <header class="head">
-        <div class="head-text">
-          <h1>Matrice des permissions</h1>
-          <p class="sub">Vue croisée permissions × rôles (lecture seule)</p>
+        <div>
+          <h1><i class="pi pi-th-large title-icon"></i> Matrice des permissions</h1>
+          <p class="sub">Cliquez sur un rôle pour voir ses permissions en détail.</p>
         </div>
-        <p-button label="Retour aux rôles" icon="pi pi-arrow-left" [text]="true" (onClick)="back()" />
+        <p-button label="Retour" icon="pi pi-arrow-left" [text]="true" size="small" (onClick)="back()" />
       </header>
 
       <!-- DEBUG INFO — visible on screen -->
@@ -204,57 +194,88 @@ interface SelectOption { label: string; value: string; }
     </div>
   `,
   styles: [`
-    .page { display: flex; flex-direction: column; gap: 14px; }
-    .head { display: flex; justify-content: space-between; align-items: flex-end; gap: 12px; flex-wrap: wrap; }
-    .head-text h1 { margin: 0; font-size: 22px; font-weight: 700; color: #0f172a; }
-    .sub { margin: 4px 0 0; color: #64748b; font-size: 13px; }
-    .toolbar { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
-    .search { flex: 1; min-width: 220px; }
-    .search input { width: 100%; padding-left: 32px; }
-    .chips { display: flex; flex-wrap: wrap; gap: 6px; }
-    .chip { display: inline-flex; align-items: center; gap: 6px; padding: 6px 12px; border-radius: 999px;
-      font-size: 13px; font-weight: 600; cursor: pointer; background: #fff; color: #475569; border: 1px solid #cbd5e1; font-family: inherit; }
-    .chip:hover { background: #f8fafc; }
-    .chip.active { background: #0f172a; color: #fff; border-color: #0f172a; }
-    .state { padding: 40px; text-align: center; color: #64748b; font-size: 15px; }
-    .desktop-view { display: block; }
-    .mobile-view { display: none; }
-    @media (max-width: 767px) { .desktop-view { display: none; } .mobile-view { display: block; } }
-    .matrix-scroll { overflow-x: auto; border: 1px solid #e2e8f0; border-radius: 10px; max-height: calc(100vh - 280px); overflow-y: auto; }
-    .matrix-table { border-collapse: separate; border-spacing: 0; width: 100%; font-size: 13px; }
-    .matrix-table thead th { position: sticky; top: 0; z-index: 2; background: #f8fafc; color: #475569;
-      padding: 10px 8px; font-weight: 700; font-size: 12px; text-transform: uppercase; letter-spacing: .03em;
-      border-bottom: 1px solid #e2e8f0; text-align: center; }
-    .matrix-table thead th.corner { position: sticky; top: 0; left: 0; z-index: 4; min-width: 240px; max-width: 280px; text-align: left; }
-    .matrix-table thead th.role-col { min-width: 70px; max-width: 110px; }
-    .role-head { display: flex; flex-direction: column; align-items: center; gap: 4px; }
-    .role-dot { width: 8px; height: 8px; border-radius: 999px; }
-    .role-head-label { font-size: 12px; font-weight: 600; color: #0f172a; text-transform: none; letter-spacing: 0;
-      max-width: 100px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    .role-head .tiny { font-size: 9px; color: #94a3b8; }
-    .matrix-table tbody .module-row { cursor: pointer; }
-    .matrix-table tbody .module-row:hover .module-header { background: #f1f5f9; }
-    .matrix-table tbody .module-header { position: sticky; left: 0; z-index: 1; background: #fff; padding: 8px 12px;
-      font-size: 12px; font-weight: 700; color: #475569; text-transform: uppercase; letter-spacing: .04em;
-      text-align: left; border-bottom: 1px solid #f1f5f9; display: flex; align-items: center; gap: 8px;
-      min-width: 240px; max-width: 280px; }
-    .module-header .module-count { background: #e2e8f0; color: #475569; font-size: 10px; font-weight: 700;
-      padding: 1px 6px; border-radius: 999px; text-transform: none; }
-    .module-header .chev { margin-left: auto; font-size: 11px; color: #94a3b8; }
-    .module-spacer { background: #fff; border-bottom: 1px solid #f1f5f9; }
-    .matrix-table tbody .perm-name { position: sticky; left: 0; z-index: 1; background: #fff; padding: 8px 12px;
-      text-align: left; border-bottom: 1px solid #f1f5f9; min-width: 240px; max-width: 280px; }
-    .matrix-table tbody tr:hover .perm-name { background: #f8fafc; }
-    .perm-sentence { display: block; font-size: 13px; font-weight: 500; color: #1e293b; }
-    .perm-code { display: block; font-size: 10px; color: #94a3b8; font-family: ui-monospace, SFMono-Regular, monospace; }
-    .matrix-table tbody td.cell { text-align: center; padding: 8px; border-bottom: 1px solid #f1f5f9; color: #1e293b; }
-    .matrix-table tbody tr:hover td.cell { background: #f8fafc; }
-    .check { color: #16a34a; font-size: 16px; }
-    .matrix-table.mobile thead th.corner { min-width: 180px; max-width: 220px; }
-    .matrix-table.mobile .perm-name { min-width: 180px; max-width: 220px; }
-    .matrix-table.mobile thead th.role-col { min-width: 80px; }
-    .mobile-picker { display: flex; flex-direction: column; gap: 6px; margin-bottom: 12px; }
-    .field-label { font-size: 12px; font-weight: 700; color: #475569; text-transform: uppercase; letter-spacing: .04em; }
+    .page { display: flex; flex-direction: column; gap: 16px; }
+
+    /* Header */
+    .head { display: flex; justify-content: space-between; align-items: flex-start; flex-wrap: wrap; gap: 12px; }
+    .head h1 { margin: 0; font-size: 24px; font-weight: 800; color: #0f172a; display: flex; align-items: center; gap: 10px; }
+    .title-icon { color: #0ea5e9; }
+    .sub { margin: 6px 0 0; color: #64748b; font-size: 14px; }
+
+    /* Role selector cards */
+    .role-cards { display: flex; flex-wrap: wrap; gap: 8px; }
+    .role-card { display: flex; align-items: center; gap: 8px; padding: 10px 16px; border-radius: 10px;
+      background: #fff; border: 2px solid #e2e8f0; cursor: pointer; font-family: inherit;
+      font-size: 14px; font-weight: 600; color: #475569; transition: all .15s; }
+    .role-card:hover { border-color: var(--rc, #0ea5e9); background: #f8fafc; }
+    .role-card.selected { border-color: var(--rc, #0ea5e9); background: color-mix(in srgb, var(--rc, #0ea5e9) 8%, white); color: #0f172a; }
+    .rc-dot { width: 10px; height: 10px; border-radius: 999px; flex-shrink: 0; }
+    .rc-label { white-space: nowrap; }
+    .rc-lock { font-size: 10px; color: #94a3b8; }
+    .rc-count { background: #f1f5f9; color: #64748b; font-size: 11px; padding: 2px 8px; border-radius: 999px; font-weight: 700; }
+    .role-card.selected .rc-count { background: var(--rc, #0ea5e9); color: #fff; }
+
+    /* Detail card */
+    .detail-card { background: #fff; border: 1px solid #e2e8f0; border-radius: 12px; overflow: hidden; }
+    .detail-header { padding: 16px 20px; border-bottom: 1px solid #e2e8f0; border-left: 4px solid var(--rc, #0ea5e9);
+      display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px; }
+    .detail-title { display: flex; align-items: center; gap: 10px; }
+    .detail-dot { width: 14px; height: 14px; border-radius: 999px; }
+    .detail-title h2 { margin: 0; font-size: 18px; font-weight: 700; color: #0f172a; }
+    .badge { font-size: 11px; padding: 2px 10px; border-radius: 999px; font-weight: 600; }
+    .badge.sys { background: #f1f5f9; color: #64748b; }
+    .badge.users { background: #eff6ff; color: #2563eb; }
+    .detail-stats { display: flex; gap: 16px; }
+    .stat { font-size: 13px; color: #64748b; }
+    .stat strong { color: #0f172a; font-weight: 700; font-size: 16px; }
+
+    /* Modules */
+    .modules { padding: 8px 0; }
+    .module { border-bottom: 1px solid #f1f5f9; }
+    .module:last-child { border-bottom: none; }
+    .module-head { display: flex; align-items: center; gap: 10px; padding: 12px 20px; cursor: pointer; transition: background .1s; }
+    .module-head:hover { background: #f8fafc; }
+    .module-head i:first-child { font-size: 16px; color: #0ea5e9; width: 20px; text-align: center; }
+    .module-title { font-size: 14px; font-weight: 700; color: #334155; flex-shrink: 0; }
+    .module-bar { display: flex; gap: 3px; flex: 1; justify-content: center; min-width: 0; }
+    .bar-dot { width: 8px; height: 8px; border-radius: 2px; background: #e2e8f0; flex-shrink: 0; }
+    .bar-dot.granted { background: #16a34a; }
+    .module-count-text { font-size: 12px; color: #64748b; font-weight: 600; flex-shrink: 0; min-width: 40px; text-align: right; }
+    .chev { color: #94a3b8; font-size: 12px; flex-shrink: 0; }
+
+    /* Permission rows */
+    .module-body { padding: 4px 20px 12px; }
+    .perm-row { display: flex; align-items: center; gap: 10px; padding: 8px 12px; border-radius: 8px; }
+    .perm-row:hover { background: #f8fafc; }
+    .perm-row.granted { background: #f0fdf4; }
+    .perm-row.granted:hover { background: #dcfce7; }
+    .perm-check { width: 20px; flex-shrink: 0; text-align: center; }
+    .ok { color: #16a34a; font-size: 18px; }
+    .deny { color: #d1d5db; font-size: 10px; }
+    .perm-text { font-size: 14px; color: #1e293b; flex: 1; }
+    .perm-row.granted .perm-text { font-weight: 500; }
+    .perm-code { font-size: 10px; color: #cbd5e1; font-family: ui-monospace, SFMono-Regular, monospace; }
+
+    /* Footer */
+    .footer-bar { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px; }
+    .legend { display: flex; gap: 16px; font-size: 13px; color: #64748b; }
+    .legend span { display: flex; align-items: center; gap: 6px; }
+    .legend .ok { font-size: 14px; }
+    .legend .deny { font-size: 8px; }
+
+    .state { padding: 60px; text-align: center; color: #64748b; font-size: 16px; }
+
+    /* Mobile */
+    @media (max-width: 640px) {
+      .role-cards { gap: 6px; }
+      .role-card { padding: 8px 12px; font-size: 13px; }
+      .rc-label { max-width: 100px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .detail-header { padding: 12px 16px; }
+      .detail-stats { flex-direction: column; gap: 4px; }
+      .module-head { padding: 10px 16px; }
+      .module-bar { display: none; }
+      .module-body { padding: 4px 16px 8px; }
+    }
   `],
 })
 export class RolesMatrixComponent implements OnInit {
@@ -262,14 +283,13 @@ export class RolesMatrixComponent implements OnInit {
   private router = inject(Router);
 
   readonly groups: PermGroup[] = PERM_GROUPS;
+  readonly totalPerms = PERM_GROUPS.reduce((sum, g) => sum + g.ids.length, 0);
 
   readonly roles = signal<RoleRow[]>([]);
   readonly loading = signal<boolean>(true);
   readonly loadError = signal<boolean>(false);
-
-  readonly search = signal<string>('');
   readonly collapsedModules = signal<Set<string>>(new Set());
-  readonly mobileRoleId = signal<string | null>(null);
+  readonly selectedRoleId = signal<string | null>(null);
 
   readonly sortedRoles = computed<RoleRow[]>(() => {
     const list = this.roles();
@@ -344,7 +364,7 @@ export class RolesMatrixComponent implements OnInit {
         this.roles.set(list ?? []);
         console.log('[RolesMatrix] After roles.set, roles() count:', this.roles().length);
         const first = this.sortedRoles()[0];
-        if (first) this.mobileRoleId.set(first.id);
+        if (first) this.selectedRoleId.set(first.id);
         this.loading.set(false);
         console.log('[RolesMatrix] After loading.set(false), loading:', this.loading());
       },
@@ -356,7 +376,9 @@ export class RolesMatrixComponent implements OnInit {
     });
   }
 
-  visual(code: string): RoleVisual { return roleVisual(code); }
+  visual(code: string) { return roleVisual(code); }
+  sentence(code: string): string { return PERM_SENTENCES[code] ?? code; }
+  hasPerm(r: RoleRow, code: string): boolean { return (r.permissions ?? []).includes(code); }
 
   sentence(code: string): string {
     const s = PERM_SENTENCES[code] ?? code;
@@ -373,33 +395,24 @@ export class RolesMatrixComponent implements OnInit {
     this.collapsedModules.set(next);
   }
 
-  back(): void {
-    this.router.navigate(['/roles']);
-  }
+  back(): void { this.router.navigate(['/roles']); }
 
   exportCsv(): void {
     const rs = this.sortedRoles();
     console.log('[RolesMatrix] exportCsv, sortedRoles count:', rs.length);
     if (rs.length === 0) return;
     const lines: string[] = [];
-    const header = ['Permission', ...rs.map(r => r.label)].join(';');
-    lines.push(header);
+    lines.push(['Permission', ...rs.map(r => r.label)].join(';'));
     for (const g of this.groups) {
       for (const p of g.ids) {
-        const sentence = PERM_SENTENCES[p] ?? p;
-        const cells = rs.map(r => (this.hasPerm(r, p) ? 'X' : ''));
-        lines.push([sentence, ...cells].join(';'));
+        lines.push([PERM_SENTENCES[p] ?? p, ...rs.map(r => this.hasPerm(r, p) ? 'X' : '')].join(';'));
       }
     }
-    const csv = '\uFEFF' + lines.join('\r\n');
-    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
+    const blob = new Blob(['\uFEFF' + lines.join('\r\n')], { type: 'text/csv;charset=utf-8' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
-    a.href = url;
-    a.download = 'matrice-permissions.csv';
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
+    a.href = url; a.download = 'matrice-permissions.csv';
+    document.body.appendChild(a); a.click(); document.body.removeChild(a);
     URL.revokeObjectURL(url);
   }
 }
