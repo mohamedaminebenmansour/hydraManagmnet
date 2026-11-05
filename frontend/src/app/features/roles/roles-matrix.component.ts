@@ -5,6 +5,7 @@ import { HttpClient } from '@angular/common/http';
 import { ButtonModule } from 'primeng/button';
 import { InputTextModule } from 'primeng/inputtext';
 import { TooltipModule } from 'primeng/tooltip';
+import { SelectModule } from 'primeng/select';
 import { PERM_GROUPS, PERM_SENTENCES } from '@app/core/permissions';
 import { roleVisual } from '@app/shared/hydra-design';
 import { EmptyStateComponent } from '@app/shared/empty-state.component';
@@ -27,6 +28,17 @@ interface PermGroup {
   ids: string[];
 }
 
+interface FlatRow {
+  isHeader: boolean;
+  code?: string;
+  group?: PermGroup;
+}
+
+interface SelectOption {
+  label: string;
+  value: string;
+}
+
 @Component({
   selector: 'app-roles-matrix',
   standalone: true,
@@ -35,6 +47,7 @@ interface PermGroup {
     ButtonModule,
     InputTextModule,
     TooltipModule,
+    SelectModule,
     EmptyStateComponent,
     LoadErrorComponent,
   ],
@@ -289,6 +302,7 @@ export class RolesMatrixComponent implements OnInit {
   readonly loading = signal<boolean>(true);
   readonly loadError = signal<boolean>(false);
   readonly collapsedModules = signal<Set<string>>(new Set());
+  readonly search = signal<string>('');
   readonly selectedRoleId = signal<string | null>(null);
 
   readonly sortedRoles = computed<RoleRow[]>(() => {
@@ -330,6 +344,9 @@ export class RolesMatrixComponent implements OnInit {
       value: r.id,
     }));
   });
+
+  // Selected role id in the mobile <p-select> dropdown
+  readonly mobileRoleId = signal<string | null>(null);
 
   readonly mobileRole = computed<RoleRow | null>(() => {
     const id = this.mobileRoleId();
@@ -377,8 +394,6 @@ export class RolesMatrixComponent implements OnInit {
   }
 
   visual(code: string) { return roleVisual(code); }
-  sentence(code: string): string { return PERM_SENTENCES[code] ?? code; }
-  hasPerm(r: RoleRow, code: string): boolean { return (r.permissions ?? []).includes(code); }
 
   sentence(code: string): string {
     const s = PERM_SENTENCES[code] ?? code;
