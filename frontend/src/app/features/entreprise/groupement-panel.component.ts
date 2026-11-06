@@ -188,13 +188,13 @@ interface ProjectOption { id: string; name: string; }
           </div>
 
           <!-- Live total footer -->
-          <div class="total-footer" [class.ok]="totalState() === 'ok'" [class.under]="totalState() === 'under'" [class.over]="totalState() === 'over'">
+          <div class="total-footer" [class.ok]="totalState() === 'ok'" [class.under]="totalState() === 'under' || totalState() === 'empty'" [class.over]="totalState() === 'over'">
             @if (totalState() === 'ok') {
               <i class="pi pi-check-circle"></i> Total des parts : 100 %
-            } @else if (totalState() === 'under') {
-              <i class="pi pi-exclamation-triangle"></i> Total des parts : {{ totalPct() }} % — il manque {{ 100 - totalHundredths() / 100 }} %
+            } @else if (totalState() === 'under' || totalState() === 'empty') {
+              <i class="pi pi-exclamation-triangle"></i> Total des parts : {{ totalPct() }} % — il manque {{ formatHundredths(10000 - totalHundredths()) }} %
             } @else {
-              <i class="pi pi-exclamation-triangle"></i> Total des parts : {{ totalPct() }} % — {{ totalHundredths() / 100 - 100 }} % de trop
+              <i class="pi pi-exclamation-triangle"></i> Total des parts : {{ totalPct() }} % — {{ formatHundredths(totalHundredths() - 10000) }} % de trop
             }
           </div>
           @if (fieldErrors()['parts']) { <small class="field-error">{{ fieldErrors()['parts'] }}</small> }
@@ -450,9 +450,25 @@ export class GroupementPanelComponent {
     return sum;
   });
 
+  /**
+   * Format an integer number of hundredths as a French decimal string.
+   *   9000  -> "90"
+   *   9010  -> "90,1"
+   *   9005  -> "90,05"
+   * Uses only integer arithmetic (Math.floor + modulo), never float division,
+   * so 90.1 % never shows "9.900000000000006 %".
+   */
+  formatHundredths(h: number): string {
+    const intPart = Math.floor(h / 100);
+    const cents = h % 100;
+    if (cents === 0) return String(intPart);
+    if (cents % 10 === 0) return `${intPart},${cents / 10}`;
+    return `${intPart},${cents.toString().padStart(2, '0')}`;
+  }
+
   totalPct = computed(() => {
     const h = this.totalHundredths();
-    return (h / 100).toString().replace('.', ',');
+    return this.formatHundredths(h);
   });
 
   totalState = computed<'ok' | 'under' | 'over' | 'empty'>(() => {
