@@ -84,10 +84,11 @@ export type CtlValidStatut = 'none' | 'valide' | 'a-revoir' | 'conteste';
 export interface CtlValid {
   key: string;
   statut: CtlValidStatut;
-  solde: number | null;
+  agreedBalance: number | null;
   note: string | null;
   version: number;
   updatedBy: string | null;
+  updatedByName: string | null;
   updatedAt: string | null;
 }
 
@@ -135,7 +136,7 @@ export interface JustifBody {
 
 export interface ValidBody {
   statut: CtlValidStatut;
-  solde: number | null;
+  agreedBalance: number | null;
   note: string | null;
   version: number;
 }
