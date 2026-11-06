@@ -90,6 +90,8 @@ export const routes: Routes = [
         children: [
           { path: '', canActivate: [permGuard(PERM.CTL_READ)],
             loadComponent: () => import('./features/controle/controle-home.component').then(m => m.ControleHomeComponent) },
+          { path: 'synthese', canActivate: [permGuard(PERM.CTL_READ)],
+            loadComponent: () => import('./features/controle/controle-synthese.component').then(m => m.ControleSyntheseComponent) },
           { path: 'comptes', canActivate: [permGuard(PERM.CTL_READ)],
             loadComponent: () => import('./features/controle/controle-comptes.component').then(m => m.ControleComptesComponent) },
           { path: 'comptes/:id', canActivate: [permGuard(PERM.CTL_READ)],
