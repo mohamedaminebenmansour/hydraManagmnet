@@ -93,7 +93,8 @@ Tests: `backend/src/test/java/tn/hydra/<package>/`. Test DB: `hydra_test` on
 ## Tools — `tools/controle/`
 - `convert.py` — converts the company's cash Excel to the import JSON (line ids = sha1 of sheet|date|e|d|designation)
 - `analyse.py` — reference for Contrôle business rules; the app must give the same numbers
-- `README.md` — how to run both scripts
+- `compare.py` — compares convert.py's JSON with the Java reader's (`ControleExcelDumpTest`, local only, skipped in CI)
+- `README.md` — how to run the scripts and the Java/Python comparison
 
 ## Never read
 `frontend/node_modules`, `frontend/dist`, `frontend/.angular`, `backend/target`,
