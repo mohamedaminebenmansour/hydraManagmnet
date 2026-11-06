@@ -6,8 +6,8 @@ import { ControleStore } from './controle.store';
 import { LinesTableComponent } from './lines-table.component';
 import { csvAmount, downloadCsv, money, pct } from './controle-format';
 import {
-  DEFAULT_GROUPEMENT, FACTURE_LEVELS, FactureLevel, GROUPEMENTS, GroupementKey, SOURCES,
-  factureLevel, groupementOf, isFacturee, projectsOf, sourceOf,
+  DEFAULT_GROUPEMENT, FACTURE_LEVELS, FAMILLES_PAR_PROJET, FAMILLE_ORDER, FactureLevel, GROUPEMENTS,
+  GroupementKey, MOUVEMENTS_INTERNES, SOURCES, factureLevel, groupementOf, isFacturee, projectsOf, sourceOf,
 } from './controle-groups';
 
 type Tab = 'synthese' | 'recap';
@@ -26,6 +26,27 @@ export interface SynthTotals {
 
 interface Card { acct: CtlAccount; t: SynthTotals; }
 interface SourceGroup { source: string; cards: Card[]; }
+
+/** One row of the « Dépenses par famille » table (level 1 famille, 2 rubrique, 3 project). */
+interface TreeRow {
+  level: 1 | 2 | 3;
+  key: string;
+  label: string;
+  famille: string;
+  rubrique: string;
+  proj: string;
+  t: SynthTotals;
+  expandable: boolean;
+  open: boolean;
+  internal: boolean;
+}
+
+interface ProjNode { proj: string; t: SynthTotals; }
+interface RubNode { rubrique: string; t: SynthTotals; projs: ProjNode[]; }
+interface FamNode { famille: string; t: SynthTotals; rubs: RubNode[]; }
+
+const famOf = (l: CtlLine) => l.famille || 'Non classé';
+const rubOf = (l: CtlLine) => l.rubrique || l.article || '(sans rubrique)';
 
 /** The lines panel under the tables (one existing lines table, filtered). */
 interface Panel {
@@ -127,6 +148,64 @@ const LEVEL_CLASS: Record<FactureLevel, string> = {
           </span>
         </p>
       </section>
+
+      <!-- Dépenses par famille -->
+      <section class="ctl-card">
+        <div class="head">
+          <h2>Dépenses par famille</h2>
+          <button class="ctl-btn" type="button" (click)="exportTree()">Exporter (Excel)</button>
+        </div>
+        <div class="tw">
+          <table>
+            <thead>
+              <tr>
+                <th>Famille · rubrique · projet</th>
+                <th class="num">Entrées</th>
+                <th class="num">Sorties</th>
+                <th class="num">Facturée</th>
+                <th class="num">Non facturée</th>
+                <th class="num">Lignes</th>
+              </tr>
+            </thead>
+            <tbody>
+              @for (r of treeRows(); track r.key) {
+                <tr [class]="'lv' + r.level" [class.internal]="r.internal">
+                  <td>
+                    @if (r.expandable) {
+                      <button type="button" class="tog" [attr.aria-expanded]="r.open" (click)="toggle(r.key)">
+                        <span aria-hidden="true">{{ r.open ? '▾' : '▸' }}</span>
+                        @if (r.level === 1) { {{ r.label }} }
+                      </button>
+                    }
+                    @if (r.level > 1) {
+                      <button type="button" class="link" (click)="openRubrique(r)"
+                              [attr.aria-label]="'Voir les lignes : ' + r.label">{{ r.label }}</button>
+                    }
+                  </td>
+                  <td class="num">{{ m(r.t.e) }}</td>
+                  <td class="num">{{ m(r.t.d) }}</td>
+                  <td class="num">{{ m(r.t.fact) }}</td>
+                  <td class="num">{{ m(r.t.nonFact) }}</td>
+                  <td class="num">{{ r.t.n.toLocaleString('fr-FR') }}</td>
+                </tr>
+              }
+            </tbody>
+            <tfoot>
+              <tr>
+                <th>Total (sans les mouvements internes)</th>
+                <th class="num">{{ m(treeTotal().e) }}</th>
+                <th class="num">{{ m(treeTotal().d) }}</th>
+                <th class="num">{{ m(treeTotal().fact) }}</th>
+                <th class="num">{{ m(treeTotal().nonFact) }}</th>
+                <th class="num">{{ treeTotal().n.toLocaleString('fr-FR') }}</th>
+              </tr>
+            </tfoot>
+          </table>
+        </div>
+        <p class="note">« Mouvements internes » (alimentations de caisse, encaissements des décomptes) est en gris,
+          à la fin, et n'entre pas dans le total. Cliquez ▸ pour ouvrir une ligne, ▾ pour la fermer,
+          et un nom de rubrique ou de projet pour voir ses lignes.</p>
+      </section>
     }
 
     <!-- Lines panel -->
@@ -185,6 +264,20 @@ const LEVEL_CLASS: Record<FactureLevel, string> = {
     .muted { color: var(--ctl-muted, #58656f); }
     .ctl-empty { padding: 24px; text-align: center; color: var(--ctl-muted, #58656f); }
     .panel-head { display: flex; justify-content: flex-end; margin-bottom: 8px; }
+    .tw { overflow-x: auto; border: 1px solid var(--ctl-line, #dbe1df); border-radius: var(--ctl-radius, 10px); }
+    table { border-collapse: collapse; width: 100%; font-size: 13px; }
+    th { text-align: left; font-weight: 600; color: var(--ctl-muted, #58656f); font-size: 12px; padding: 8px 10px;
+      border-bottom: 1px solid var(--ctl-line, #dbe1df); background: var(--ctl-panel-2, #eef2f1); white-space: nowrap; }
+    td { padding: 6px 10px; border-bottom: 1px solid var(--ctl-line, #dbe1df); vertical-align: top; }
+    th.num, td.num { text-align: right; font-family: var(--ctl-font-num); font-variant-numeric: tabular-nums; white-space: nowrap; }
+    tfoot th { border-bottom: 0; border-top: 2px solid var(--ctl-line, #dbe1df); color: var(--ctl-ink, #16212b); }
+    tr.lv1 td { font-weight: 600; background: var(--ctl-panel-2, #eef2f1); }
+    tr.lv2 td:first-child { padding-left: 26px; }
+    tr.lv3 td:first-child { padding-left: 52px; }
+    tr.internal td { color: var(--ctl-muted, #58656f); opacity: .7; }
+    .tog { font: inherit; font-weight: inherit; border: 0; background: none; padding: 0 4px 0 0; cursor: pointer; color: inherit; }
+    .link { font: inherit; border: 0; background: none; padding: 0; cursor: pointer; text-align: left;
+      color: var(--ctl-accent, #0d5c6e); text-decoration: underline; text-underline-offset: 2px; }
   `]
 })
 export class ControleSyntheseComponent {
@@ -282,6 +375,105 @@ export class ControleSyntheseComponent {
     }
     return SOURCES.filter(s => groups.has(s)).map(s => ({ source: s, cards: groups.get(s)! }));
   });
+
+  // ── Dépenses par famille ─────────────────────────────────────────────────
+  private openKeys = signal<Set<string>>(new Set());
+
+  toggle(key: string): void {
+    this.openKeys.update(s => {
+      const n = new Set(s);
+      if (n.has(key)) n.delete(key); else n.add(key);
+      return n;
+    });
+  }
+
+  private famNodes = computed<FamNode[]>(() => {
+    const fam = new Map<string, Map<string, Map<string, CtlLine[]>>>();
+    for (const l of this.selLines()) {
+      const f = famOf(l), r = rubOf(l);
+      if (!fam.has(f)) fam.set(f, new Map());
+      const rubs = fam.get(f)!;
+      if (!rubs.has(r)) rubs.set(r, new Map());
+      const projs = rubs.get(r)!;
+      const list = projs.get(l.proj) ?? [];
+      list.push(l);
+      projs.set(l.proj, list);
+    }
+    const order = (f: string) => {
+      if (f === MOUVEMENTS_INTERNES) return 999;
+      const i = FAMILLE_ORDER.indexOf(f);
+      return i < 0 ? 900 : i;
+    };
+    return [...fam.entries()]
+      .sort((a, b) => order(a[0]) - order(b[0]) || a[0].localeCompare(b[0], 'fr'))
+      .map(([famille, rubs]) => {
+        const famLines: CtlLine[] = [];
+        const rubNodes: RubNode[] = [...rubs.entries()].map(([rubrique, projs]) => {
+          const rubLines = [...projs.values()].flat();
+          famLines.push(...rubLines);
+          const projNodes = [...projs.entries()]
+            .map(([proj, rows]) => ({ proj, t: this.totalsOf(rows) }))
+            .sort((a, b) => b.t.d - a.t.d || a.proj.localeCompare(b.proj, 'fr'));
+          return { rubrique, t: this.totalsOf(rubLines), projs: projNodes };
+        }).sort((a, b) => b.t.d - a.t.d || a.rubrique.localeCompare(b.rubrique, 'fr'));
+        return { famille, t: this.totalsOf(famLines), rubs: rubNodes };
+      });
+  });
+
+  treeRows = computed<TreeRow[]>(() => {
+    const open = this.openKeys();
+    const rows: TreeRow[] = [];
+    for (const f of this.famNodes()) {
+      const fk = 'f:' + f.famille;
+      const internal = f.famille === MOUVEMENTS_INTERNES;
+      rows.push({ level: 1, key: fk, label: f.famille, famille: f.famille, rubrique: '', proj: '', t: f.t,
+        expandable: true, open: open.has(fk), internal });
+      if (!open.has(fk)) continue;
+      const perProj = FAMILLES_PAR_PROJET.has(f.famille);
+      for (const r of f.rubs) {
+        const rk = 'r:' + f.famille + '|' + r.rubrique;
+        rows.push({ level: 2, key: rk, label: r.rubrique, famille: f.famille, rubrique: r.rubrique, proj: '', t: r.t,
+          expandable: perProj, open: open.has(rk), internal });
+        if (!perProj || !open.has(rk)) continue;
+        for (const p of r.projs) {
+          rows.push({ level: 3, key: rk + '|' + p.proj, label: p.proj, famille: f.famille, rubrique: r.rubrique,
+            proj: p.proj, t: p.t, expandable: false, open: false, internal });
+        }
+      }
+    }
+    return rows;
+  });
+
+  /** Totals row: Mouvements internes left out. */
+  treeTotal = computed(() => this.totalsOf(this.selLines().filter(l => famOf(l) !== MOUVEMENTS_INTERNES)));
+
+  openRubrique(r: TreeRow): void {
+    const s = this.shownSet();
+    const { famille, rubrique, proj } = r;
+    this.openPanel({
+      key: 'rub:' + r.key,
+      title: `Lignes — ${rubrique} — ${proj || this.selLabel()}`,
+      preset: l => famOf(l) === famille && rubOf(l) === rubrique && (proj ? l.proj === proj : s.has(l.proj)),
+    });
+  }
+
+  exportTree(): void {
+    const rows: unknown[][] = [];
+    const add = (niveau: string, f: string, r: string, p: string, t: SynthTotals) =>
+      rows.push([niveau, f, r, p, csvAmount(t.e), csvAmount(t.d), csvAmount(t.fact), csvAmount(t.nonFact), t.n]);
+    for (const f of this.famNodes()) {
+      add('Famille', f.famille, '', '', f.t);
+      for (const r of f.rubs) {
+        add('Rubrique', f.famille, r.rubrique, '', r.t);
+        if (FAMILLES_PAR_PROJET.has(f.famille)) {
+          for (const p of r.projs) add('Projet', f.famille, r.rubrique, p.proj, p.t);
+        }
+      }
+    }
+    add('Total (sans les mouvements internes)', '', '', '', this.treeTotal());
+    downloadCsv('synthese-familles-' + this.selLabel(),
+      ['Niveau', 'Famille', 'Rubrique', 'Projet', 'Entrées', 'Sorties', 'Facturée', 'Non facturée', 'Lignes'], rows);
+  }
 
   // ── Lines panel ──────────────────────────────────────────────────────────
   private openPanel(pn: Panel): void {
