@@ -27,7 +27,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
 /**
- * ControleImportServiceTest — CI-01..CI-08.
+ * ControleImportServiceTest — CI-01..CI-09.
  *
  * Own orgs per test (same pattern as {@code CompanyProfileServiceTest}):
  * each test provisions a fresh organization + owner + (for CI-07) a non-owner
@@ -339,5 +339,47 @@ class ControleImportServiceTest {
         // Nothing saved
         assertThat(jdbc.queryForObject("select count(*) from ctl_import where org_id = ?", Integer.class, orgId))
                 .isZero();
+    }
+
+    // ── CI-09 ──────────────────────────────────────────────────────────────
+    // Negative amounts are corrections (cancelled payments) and must be accepted.
+
+    @Test
+    void negativeAmounts_accepted_asCorrections() throws Exception {
+        // Copy sample.json, set one line's d to -250.0 and one stLine's paye to -100.0
+        byte[] json = sampleJsonModified(root -> {
+            // Set line t0000000003 d to -250.0
+            var lines = (tools.jackson.databind.node.ArrayNode) root.get("lines");
+            for (JsonNode ln : lines) {
+                if ("t0000000003".equals(ln.get("id").asText())) {
+                    ((tools.jackson.databind.node.ObjectNode) ln).put("d", -250.0);
+                    break;
+                }
+            }
+            // Set stLine st-line-2 paye to -100.0
+            var stLines = (tools.jackson.databind.node.ArrayNode) root.get("stLines");
+            for (JsonNode sn : stLines) {
+                if ("st-line-2".equals(sn.get("id").asText())) {
+                    ((tools.jackson.databind.node.ObjectNode) sn).put("paye", -100.0);
+                    break;
+                }
+            }
+        });
+
+        var result = service.importFile(ownerAuth, json);
+        assertThat(result.lines()).isEqualTo(5);
+        assertThat(result.stLines()).isEqualTo(3);
+
+        // ctl_line.amount_out for t0000000003 = -250.000
+        java.math.BigDecimal amountOut = jdbc.queryForObject(
+                "select amount_out from ctl_line where org_id = ? and line_key = 't0000000003'",
+                java.math.BigDecimal.class, orgId);
+        assertThat(amountOut).isEqualByComparingTo(new java.math.BigDecimal("-250.000"));
+
+        // ctl_st_line.paye for st-line-2 = -100.000
+        java.math.BigDecimal paye = jdbc.queryForObject(
+                "select paye from ctl_st_line where org_id = ? and line_key = 'st-line-2'",
+                java.math.BigDecimal.class, orgId);
+        assertThat(paye).isEqualByComparingTo(new java.math.BigDecimal("-100.000"));
     }
 }

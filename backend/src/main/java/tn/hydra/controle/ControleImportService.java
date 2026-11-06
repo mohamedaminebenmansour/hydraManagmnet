@@ -186,12 +186,8 @@ public class ControleImportService {
                 problems.add("La ligne « " + lid + " » a un type invalide : "
                         + (l.kind() == null ? "(manquant)" : l.kind()) + ".");
             }
-            if (l.e() < 0) {
-                problems.add("La ligne « " + lid + " » a un montant entrée négatif (" + l.e() + ").");
-            }
-            if (l.d() < 0) {
-                problems.add("La ligne « " + lid + " » a un montant sortie négatif (" + l.d() + ").");
-            }
+            // Negative amounts are accepted: they are corrections (a cancelled payment
+            // written as a negative amount). The real company file has ~11 such lines.
             if (problems.size() >= MAX_PROBLEMS) break;
         }
 
@@ -222,12 +218,7 @@ public class ControleImportService {
                 problems.add("La ligne sous-traitant « " + sid
                         + " » référence un sous-traitant inconnu : « " + (s.st() == null ? "(manquant)" : s.st()) + " ».");
             }
-            if (s.travaux() < 0) {
-                problems.add("La ligne sous-traitant « " + sid + " » a un montant travaux négatif (" + s.travaux() + ").");
-            }
-            if (s.paye() < 0) {
-                problems.add("La ligne sous-traitant « " + sid + " » a un montant payé négatif (" + s.paye() + ").");
-            }
+            // Negative travaux/paye are accepted: they are corrections.
             if (problems.size() >= MAX_PROBLEMS) break;
         }
 
