@@ -87,6 +87,31 @@ export function dfmt(s: string | null | undefined): string {
   return s ? s.slice(8, 10) + '/' + s.slice(5, 7) + '/' + s.slice(0, 4) : '—';
 }
 
+/** Amount for the CSV export: 3 decimals with a decimal comma; '' for empty or zero. */
+export function csvAmount(v: number | null | undefined): string {
+  return v ? Number(v).toFixed(3).replace('.', ',') : '';
+}
+
+/**
+ * Download a CSV that opens correctly in French Excel: UTF-8 with BOM, « ; » separator,
+ * file name SIGAT_<page>_<yyyy-mm-dd>.csv. (Phase 3 replaces it with a real .xlsx export.)
+ */
+export function downloadCsv(page: string, head: string[], rows: unknown[][]): void {
+  const q = (v: unknown) => '"' + String(v ?? '').replace(/"/g, '""') + '"';
+  const lines = [head.map(q).join(';'), ...rows.map(r => r.map(q).join(';'))];
+  const blob = new Blob(['﻿' + lines.join('\r\n')], { type: 'text/csv;charset=utf-8;' });
+  const now = new Date();
+  const day = now.getFullYear() + '-' + String(now.getMonth() + 1).padStart(2, '0') + '-'
+    + String(now.getDate()).padStart(2, '0');
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'SIGAT_' + slug(page) + '_' + day + '.csv';
+  document.body.append(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(a.href);
+}
+
 /** Slug: lowercase, strip accents, non-alphanumeric → '-', trim leading/trailing '-'. */
 export function slug(s: string): string {
   return s.toLowerCase().normalize('NFD')

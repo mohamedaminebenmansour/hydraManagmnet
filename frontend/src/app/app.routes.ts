@@ -106,6 +106,8 @@ export const routes: Routes = [
             loadComponent: () => import('./features/controle/controle-ngnet.component').then(m => m.ControleNgnetComponent) },
           { path: 'justificatifs', canActivate: [permGuard(PERM.CTL_READ)],
             loadComponent: () => import('./features/controle/controle-justif.component').then(m => m.ControleJustifComponent) },
+          { path: 'articles-regroupement', canActivate: [permGuard(PERM.CTL_READ), permGuard(PERM.CTL_JUSTIFY)],
+            loadComponent: () => import('./features/controle/controle-articles.component').then(m => m.ControleArticlesComponent) },
           { path: 'import', canActivate: [permGuard(PERM.CTL_READ), permGuard(PERM.CTL_IMPORT)],
             loadComponent: () => import('./features/controle/controle-import.component').then(m => m.ControleImportComponent) },
         ] },

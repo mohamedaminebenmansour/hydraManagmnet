@@ -143,6 +143,21 @@ export interface ValidBody {
   version: number;
 }
 
+/** GET /api/controle/articles row. version = alias version, 0 when the article comes from the rule. */
+export interface CtlArticleRow {
+  rawKey: string;
+  sampleText: string;
+  article: string;
+  lineCount: number;
+  version: number;
+}
+
+export interface ArticleAliasBody {
+  rawKey: string;
+  article: string;
+  version: number;
+}
+
 // ── Service ──────────────────────────────────────────────────────────────────
 
 @Injectable({ providedIn: 'root' })
@@ -174,5 +189,15 @@ export class ControleService {
   /** PUT /api/controle/validations/{key} — create or update a validation. */
   putValidation(key: string, body: ValidBody): Observable<CtlValid> {
     return this.http.put<CtlValid>(`/api/controle/validations/${encodeURIComponent(key)}`, body);
+  }
+
+  /** GET /api/controle/articles — raw Excel texts with their article and line count. */
+  getArticles(): Observable<CtlArticleRow[]> {
+    return this.http.get<CtlArticleRow[]>('/api/controle/articles');
+  }
+
+  /** PUT /api/controle/articles/aliases — rawKey in the body (texts may contain « / »). */
+  putArticleAlias(body: ArticleAliasBody): Observable<CtlArticleRow> {
+    return this.http.put<CtlArticleRow>('/api/controle/articles/aliases', body);
   }
 }

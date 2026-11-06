@@ -42,6 +42,9 @@ import { dfmt } from './controle-format';
         <a routerLink="sous-traitants" routerLinkActive="active">Sous-traitants</a>
         <a routerLink="ngnet" routerLinkActive="active">Réunion NGNET</a>
         <a routerLink="justificatifs" routerLinkActive="active">Justificatifs</a>
+        @if (auth.can('CTL_JUSTIFY')) {
+          <a routerLink="articles-regroupement" routerLinkActive="active">Regroupement des articles</a>
+        }
         @if (auth.can('CTL_IMPORT')) {
           <a routerLink="import" routerLinkActive="active">Importer</a>
         }
