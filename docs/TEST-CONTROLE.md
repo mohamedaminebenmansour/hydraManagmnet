@@ -9,7 +9,7 @@ FAKE fichier (noms et montants fictifs) produit par `tools/controle/convert.py`.
 | # | Action | Résultat attendu | OK / KO |
 |---|--------|------------------|---------|
 | 1 | Ouvrir **Contrôle caisse** depuis le menu | La page affiche « Aucun fichier importé » avec un bouton « Importer le fichier ». | |
-| 2 | Cliquer « Importer le fichier » → onglet **Importer** | La page affiche les étapes et le bouton « Choisir le fichier JSON ». | |
+| 2 | Cliquer « Importer le fichier » → onglet **Importer** | La page affiche les étapes (« Choisissez le fichier Excel Caisse des projets (.xlsx). ») et le bouton « Choisir le fichier ». | |
 | 3 | Choisir `docs/controle/sample.json` → cliquer « Importer » | Boîte de dialogue « Remplacer les lignes actuelles par ce fichier ? ». Cliquer « Oui, importer ». | |
 | 4 | Vérifier le résultat | « Import réussi » avec 5 lignes de caisse, 3 lignes sous-traitants, 3 comptes. | |
 | 5 | Vérifier l'historique | Une ligne dans l'historique : date du jour, fichier « exemple-fictif.xlsx », par « Gérant Démo ». | |
@@ -95,3 +95,13 @@ FAKE fichier (noms et montants fictifs) produit par `tools/controle/convert.py`.
 | # | Action | Résultat attendu | OK / KO |
 |---|--------|------------------|---------|
 | 37 | Réduire la fenêtre à 400 px de large | Aucun scroll horizontal sur la page. Les tableaux larges scrollent dans leur propre boîte. Les cartes vont une par ligne. | |
+
+## Import direct de l'Excel (Phase 1)
+
+Avec le vrai fichier « Caisse des projets.xlsx » (sur votre PC, jamais dans le dépôt).
+
+| # | Action | Résultat attendu | OK / KO |
+|---|--------|------------------|---------|
+| 38 | Onglet **Importer** → « Choisir le fichier » → choisir « Caisse des projets.xlsx » → « Importer » → « Oui, importer » | « Import réussi » avec 8 520 lignes de caisse et 1 870 lignes sous-traitants. L'historique montre le nom du fichier .xlsx. | |
+| 39 | Saisir un justificatif sur une ligne, puis ré-importer le même .xlsx | Le justificatif est toujours là : les identifiants des lignes ne changent pas. | |
+| 40 | Faire une copie de l'Excel, renommer la feuille « Caisse Chantier Zaghdoud », importer la copie | « Échec de l'import » avec le message « La feuille « Caisse Chantier Zaghdoud » est absente du fichier Excel. » Les lignes déjà importées ne changent pas. | |

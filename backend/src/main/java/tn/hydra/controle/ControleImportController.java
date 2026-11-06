@@ -27,9 +27,11 @@ public class ControleImportController {
     private static final long MAX_IMPORT_BYTES = 20L * 1024 * 1024;
 
     private final ControleImportService service;
+    private final ControleExcelReader excelReader;
 
-    public ControleImportController(ControleImportService service) {
+    public ControleImportController(ControleImportService service, ControleExcelReader excelReader) {
         this.service = service;
+        this.excelReader = excelReader;
     }
 
     // ── POST /api/controle/import ──────────────────────────────────────────
@@ -59,6 +61,14 @@ public class ControleImportController {
         }
 
         try {
+            // .xlsx → read like convert.py; anything else → the convert.py JSON as before
+            String name = file.getOriginalFilename() == null ? "" : file.getOriginalFilename();
+            if (name.toLowerCase(java.util.Locale.ROOT).endsWith(".xlsx")) {
+                ControleImportFile.ImportFile parsed = excelReader.read(
+                        new java.io.ByteArrayInputStream(content), name,
+                        java.time.LocalDate.now(), java.time.LocalDateTime.now());
+                return ResponseEntity.ok(service.importParsed(auth, parsed));
+            }
             return ResponseEntity.ok(service.importFile(auth, content));
         } catch (ControleImportService.ImportInvalidException e) {
             // 400 with the list of French problems
