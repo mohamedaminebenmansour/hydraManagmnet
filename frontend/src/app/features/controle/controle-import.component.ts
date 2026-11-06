@@ -1,22 +1,19 @@
 import { Component, OnDestroy, OnInit, inject, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
-import { ButtonModule } from 'primeng/button';
-import { ConfirmDialogModule } from 'primeng/confirmdialog';
-import { ConfirmationService, MessageService } from 'primeng/api';
+import { MessageService } from 'primeng/api';
 import { ControleService, ImportResult, CtlImport } from '@app/core/services/controle.service';
 import { ControleStore } from './controle.store';
 
 /**
  * ControleImportComponent — CTL_IMPORT only (route guard handles permission).
  *
- * Explanation, file input (accept .xlsx and .json), « Importer » button with ConfirmDialog,
- * result display, errors, last 10 imports, store.reload() after success.
+ * Explanation, plain native file input (accept .xlsx and .json), « Importer » button with
+ * window.confirm, result display, errors, last 10 imports, store.reload() after success.
  */
 @Component({
   selector: 'app-controle-import',
   standalone: true,
-  imports: [FormsModule, ButtonModule, ConfirmDialogModule],
-  providers: [ConfirmationService],
+  imports: [FormsModule],
   template: `
     <div>
       <h1>Importer le fichier de caisse</h1>
@@ -32,21 +29,19 @@ import { ControleStore } from './controle.store';
       <p class="muted">Un export JSON de <code>convert.py</code> est aussi accepté. Les justificatifs et validations déjà saisis sont gardés.</p>
 
       <div class="upload">
-        <label class="pick-btn" (click)="onLabelClick()">
-          <input type="file" accept=".json,.xlsx" (change)="onFilePick($event)" hidden />
-          <i class="pi pi-upload" aria-hidden="true"></i> Choisir le fichier (.json ou .xlsx)
-        </label>
+        <label for="ctl-file" (click)="onLabelClick()">Fichier à importer (.json ou .xlsx)</label>
+        <input id="ctl-file" type="file" accept=".json,.xlsx" (change)="onFilePick($event)" />
         @if (selectedFile()) {
           <span class="filename">{{ selectedFile()!.name }} ({{ (selectedFile()!.size / 1024).toFixed(0) }} Ko)</span>
         }
       </div>
-      <div class="backup-pick">
-        <p class="muted">Si le bouton ne marche pas, utilisez ce champ :</p>
-        <input type="file" accept=".json,.xlsx" (change)="onFilePick($event)" />
-      </div>
 
       @if (selectedFile()) {
-        <p-button label="Importer" icon="pi pi-check" severity="success" [loading]="importing()" (onClick)="confirmImport()" />
+        <div>
+          <button type="button" class="ctl-btn primary" [disabled]="importing()" (click)="confirmImport()">
+            {{ importing() ? 'Import en cours…' : 'Importer' }}
+          </button>
+        </div>
       }
     </div>
 
@@ -112,14 +107,14 @@ import { ControleStore } from './controle.store';
         </div>
       }
     </div>
-
-    <p-confirmdialog />
   `,
   styles: [`
-    .pick-btn { display: inline-flex; align-items: center; gap: 8px; padding: 8px 16px; border-radius: 6px;
-      background: var(--p-primary-color); color: #fff; cursor: pointer; font-weight: 500; }
-    .backup-pick p { margin: 0 0 4px; font-size: 13px; }
-    .backup-pick input { position: relative; z-index: 10; }
+    .upload label { font-size: 14px; font-weight: 600; }
+    .ctl-btn { font: inherit; font-size: 13px; font-weight: 600; border-radius: 8px;
+      padding: 7px 14px; border: 1px solid var(--ctl-line, #dbe1df);
+      background: var(--ctl-panel, #fff); color: var(--ctl-ink, #16212b); cursor: pointer; }
+    .ctl-btn.primary { background: var(--ctl-accent, #0d5c6e); color: #fff; border-color: var(--ctl-accent, #0d5c6e); }
+    .ctl-btn:disabled { opacity: .5; cursor: default; }
     h1 { font-size: 22px; margin: 0 0 4px; color: var(--ctl-ink, #16212b); letter-spacing: -.015em; }
     .lead { color: var(--ctl-muted, #58656f); max-width: 80ch; font-size: 14px; margin: 0; }
     .muted { color: var(--ctl-muted, #58656f); }
@@ -160,7 +155,6 @@ import { ControleStore } from './controle.store';
 export class ControleImportComponent implements OnInit, OnDestroy {
   private api = inject(ControleService);
   private store = inject(ControleStore);
-  private confirm = inject(ConfirmationService);
   private msgs = inject(MessageService);
 
   protected selectedFile = signal<File | null>(null);
@@ -222,16 +216,13 @@ export class ControleImportComponent implements OnInit, OnDestroy {
   confirmImport(): void {
     const file = this.selectedFile();
     if (!file) return;
-    this.confirm.confirm({
-      header: "Confirmer l'import",
-      message: "Remplacer les lignes actuelles par ce fichier ?",
-      acceptLabel: "Oui, importer",
-      rejectLabel: "Annuler",
-      accept: () => {
-        console.log('[CTL-IMPORT] confirm accepted');
-        this.doImport(file);
-      },
-    });
+    console.log('[CTL-IMPORT] confirm shown');
+    const ok = window.confirm('Remplacer les lignes actuelles par ce fichier ? Les justificatifs sont gardés.');
+    console.log('[CTL-IMPORT] confirm result', ok);
+    if (ok) {
+      console.log('[CTL-IMPORT] confirm accepted');
+      this.doImport(file);
+    }
   }
 
   private doImport(file: File): void {
