@@ -96,8 +96,10 @@ public class ControleArticleService {
                     "Quelqu'un d'autre a modifié ce regroupement. Rechargez.");
         }
 
-        int lines = jdbc.update("update ctl_line set article = ? where org_id = ? and raw_key = ?",
-                article, orgId, rawKey);
+        String rubrique = ControleRubriques.rubrique(article, rawKey);
+        int lines = jdbc.update(
+                "update ctl_line set article = ?, rubrique = ?, famille = ? where org_id = ? and raw_key = ?",
+                article, rubrique, ControleRubriques.famille(rubrique), orgId, rawKey);
 
         audit.log("CONTROLE_ARTICLE_CHANGED", "ctl_article_alias", null,
                 "{\"rawKey\":\"" + jsonEscape(rawKey) + "\",\"article\":\"" + jsonEscape(article)

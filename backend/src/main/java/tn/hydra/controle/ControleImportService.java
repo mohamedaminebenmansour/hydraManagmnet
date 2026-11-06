@@ -108,6 +108,7 @@ public class ControleImportService {
         jdbc.update("delete from ctl_st_line    where org_id = ?", orgId);
         jdbc.update("delete from ctl_account    where org_id = ?", orgId);
         jdbc.update("delete from ctl_st_account where org_id = ?", orgId);
+        jdbc.update("delete from ctl_recap      where org_id = ?", orgId);
 
         insertAccounts(orgId, file.accounts());
         insertStAccounts(orgId, file.stAccounts());
@@ -117,6 +118,7 @@ public class ControleImportService {
                 rs -> { aliases.put(rs.getString("raw_key"), rs.getString("article")); }, orgId);
         insertLines(orgId, file.lines(), aliases);
         insertStLines(orgId, file.stLines());
+        insertRecap(orgId, file.recap() == null ? List.of() : file.recap());
 
         UUID importId = UUID.randomUUID();
         jdbc.update("""
@@ -317,8 +319,8 @@ public class ControleImportService {
                 insert into ctl_line (org_id, line_key, sheet, excel_row, line_date, account_id,
                     project, amount_in, amount_out, pay_mode, bon, fct, category_excel,
                     designation, party, poste, kind, obs, flags, st_line_key,
-                    raw_key, article, piece)
-                values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    raw_key, article, piece, rubrique, famille)
+                values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """, new org.springframework.jdbc.core.BatchPreparedStatementSetter() {
             @Override public int getBatchSize() { return batch.size(); }
             @Override public void setValues(java.sql.PreparedStatement ps, int i) throws java.sql.SQLException {
@@ -347,9 +349,13 @@ public class ControleImportService {
                 // Article = the org's alias for raw_key, else the analyse.py rule.
                 String rawKey = ControleArticleRules.plain(l.cat());
                 String alias = aliases.get(rawKey);
+                String article = alias != null ? alias : ControleArticleRules.article(l.cat(), l.party());
+                String rubrique = ControleRubriques.rubrique(article, rawKey);
                 ps.setString(21, rawKey);
-                ps.setString(22, alias != null ? alias : ControleArticleRules.article(l.cat(), l.party()));
+                ps.setString(22, article);
                 ps.setString(23, ControleArticleRules.piece(l.fct(), l.bon()));
+                ps.setString(24, rubrique);
+                ps.setString(25, ControleRubriques.famille(rubrique));
             }
         });
     }
@@ -388,6 +394,13 @@ public class ControleImportService {
                         (s.flags() == null || s.flags().isEmpty()) ? new String[0] : s.flags().toArray()));
             }
         });
+    }
+
+    /** The Excel table « Récap des dépenses par projet », replaced at each import. */
+    private void insertRecap(UUID orgId, List<ControleImportFile.Recap> recap) {
+        if (recap.isEmpty()) return;
+        jdbc.batchUpdate("insert into ctl_recap (org_id, project, rubrique, amount) values (?, ?, ?, ?)",
+                recap.stream().map(r -> new Object[]{orgId, nz(r.proj()), nz(r.rubrique()), toBd(r.amount())}).toList());
     }
 
     // ════════════════════════════════════════════════════════════════════════

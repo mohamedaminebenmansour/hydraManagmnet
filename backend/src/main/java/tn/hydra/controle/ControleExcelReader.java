@@ -65,6 +65,7 @@ public class ControleExcelReader {
     private static final Set<Integer> INTERNAL = Set.of(606, 607, 962, 963, 1647, 1648);
 
     static final String ECHEANCE = "Caisse à échéance";
+    static final String RECAP_SHEET = "Récap T.d.B dépenses";
 
     private static final Map<String, String> ACCTS = Map.of(
             "UIB SIGAT", "uib-sigat", "UIB OMAR", "uib-omar", "UIB NGNET", "uib-ngnet",
@@ -169,6 +170,7 @@ public class ControleExcelReader {
         private final List<ControleImportFile.Account> accounts = new ArrayList<>();
         private final List<ControleImportFile.StAccount> stAccounts = new ArrayList<>();
         private final List<S> stLines = new ArrayList<>();
+        private final List<ControleImportFile.Recap> recap = new ArrayList<>();
 
         Run(XSSFWorkbook wb, LocalDate today) {
             this.wb = wb;
@@ -199,6 +201,8 @@ public class ControleExcelReader {
             if (echeanceSheet != null) echeance(echeanceSheet);
             rapprochement();
             flags();
+            Sheet recapSheet = sheetOrNull(RECAP_SHEET);
+            if (recapSheet != null) recap(recapSheet);
 
             String source = sourceName == null ? "" : sourceName.substring(sourceName.lastIndexOf('/') + 1);
             source = source.substring(source.lastIndexOf('\\') + 1);
@@ -206,7 +210,8 @@ public class ControleExcelReader {
                     lines.size(), stLines.size());
             return new ControleImportFile.ImportFile(meta, accounts, stAccounts,
                     lines.stream().map(L::toRecord).toList(),
-                    stLines.stream().map(S::toRecord).toList());
+                    stLines.stream().map(S::toRecord).toList(),
+                    List.copyOf(recap));
         }
 
         // ── make_id ───────────────────────────────────────────────────────
@@ -424,6 +429,36 @@ public class ControleExcelReader {
                 if (s.paye > 0 && s.link.isEmpty()) s.flags.add("non-retrouve");
                 if (!s.date.isEmpty() && (s.date.compareTo(todayIso) > 0 || s.date.compareTo("2023-01-01") < 0)) {
                     s.flags.add("date");
+                }
+            }
+        }
+
+        // ── « Récap des dépenses par projet » ─────────────────────────────
+
+        void recap(Sheet ws) {
+            int maxCol = maxColumn(ws);
+            Integer top = null;
+            for (int r = 1; r <= maxRow(ws) && top == null; r++) {
+                for (int c = 1; c <= maxCol; c++) {
+                    if (txt(value(ws, r, c)).equals("Récap des dépenses par projet")) { top = r; break; }
+                }
+            }
+            if (top == null) return;
+            int h = top + 1;
+            List<Integer> headCols = new ArrayList<>();
+            List<String> heads = new ArrayList<>();
+            for (int c = 3; c <= maxCol; c++) {
+                String t = txt(value(ws, h, c));
+                if (t.equals("Total par Projet")) break;
+                if (!t.isEmpty()) { headCols.add(c); heads.add(t); }
+            }
+            for (int r = h + 1; r <= maxRow(ws); r++) {
+                String name = txt(value(ws, r, 2));
+                if (name.equals("Total par Dést.")) break;
+                if (name.isEmpty()) continue;
+                for (int i = 0; i < heads.size(); i++) {
+                    Double a = num(value(ws, r, headCols.get(i)));
+                    if (truthy(a)) recap.add(new ControleImportFile.Recap(projOf(name), heads.get(i), round3(a)));
                 }
             }
         }

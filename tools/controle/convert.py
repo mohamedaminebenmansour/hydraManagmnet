@@ -266,9 +266,35 @@ for s in stLines:
     if s['paye'] > 0 and not s['link']: s['flags'].append('non-retrouve')
     if s['date'] and (s['date'] > TODAY.isoformat() or s['date'] < '2023-01-01'): s['flags'].append('date')
 
+# --- « Récap des dépenses par projet » (feuille « Récap T.d.B dépenses ») : montants de l'Excel par projet et rubrique
+RECAP_SHEET = 'Récap T.d.B dépenses'
+recap = []
+def load_recap():
+    ws = wb[RECAP_SHEET]
+    top = None
+    for r in range(1, ws.max_row + 1):
+        for c in range(1, ws.max_column + 1):
+            if txt(ws.cell(r, c).value) == 'Récap des dépenses par projet': top = r; break
+        if top: break
+    if not top: return
+    h = top + 1
+    heads = []
+    for c in range(3, ws.max_column + 1):
+        t = txt(ws.cell(h, c).value)
+        if t == 'Total par Projet': break
+        if t: heads.append((c, t))
+    for r in range(h + 1, ws.max_row + 1):
+        name = txt(ws.cell(r, 2).value)
+        if name == 'Total par Dést.': break
+        if not name: continue
+        for c, t in heads:
+            a = num(ws.cell(r, c).value)
+            if a: recap.append(dict(proj=proj_of(name), rubrique=t, amount=round(a, 3)))
+if RECAP_SHEET in wb.sheetnames: load_recap()
+
 data = dict(meta=dict(source=SRC.split('/')[-1], generated=dt.datetime.now().isoformat(timespec='minutes'),
                       lines=len(lines), stLines=len(stLines)),
-            accounts=accounts, stAccounts=stAccounts, lines=lines, stLines=stLines)
+            accounts=accounts, stAccounts=stAccounts, lines=lines, stLines=stLines, recap=recap)
 json.dump(data, open(OUT, 'w'), ensure_ascii=False, separators=(',', ':'))
 print('lines', len(lines), 'stLines', len(stLines), 'linked', sum(1 for s in stLines if s['link']),
       'payments', sum(1 for s in stLines if s['paye'] > 0))

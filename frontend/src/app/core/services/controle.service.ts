@@ -50,6 +50,15 @@ export interface CtlLine {
   stLink: string | null;
   article: string;         // poste du marché (alias or analyse.py rule)
   piece: string;           // Facture / Bon / Facture + bon / Mention sans numéro / Aucune pièce
+  rubrique: string;        // column of the Excel recap (ControleRubriques), or the article outside it
+  famille: string;         // Sous-traitance, Main-d'œuvre, Ouvrages, Travaux…
+}
+
+/** One cell of the Excel table « Récap des dépenses par projet ». */
+export interface CtlRecap {
+  proj: string;
+  rubrique: string;
+  amount: number;
 }
 
 export interface CtlStLine {
@@ -114,6 +123,7 @@ export interface CtlData {
   justif: CtlJustif[];
   valid: CtlValid[];
   imported: CtlImport | null;
+  recap: CtlRecap[];
 }
 
 // ── Request / response bodies ────────────────────────────────────────────────
