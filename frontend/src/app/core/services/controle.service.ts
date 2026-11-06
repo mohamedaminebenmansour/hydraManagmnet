@@ -152,7 +152,7 @@ export class ControleService {
     return this.http.get<CtlData>('/api/controle/data');
   }
 
-  /** POST /api/controle/import — multipart upload of the convert.py JSON. */
+  /** POST /api/controle/import — multipart upload of the .xlsx or the convert.py JSON. */
   importFile(file: File): Observable<ImportResult> {
     const fd = new FormData();
     fd.append('file', file, file.name);

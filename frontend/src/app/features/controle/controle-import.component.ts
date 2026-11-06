@@ -9,7 +9,7 @@ import { ControleStore } from './controle.store';
 /**
  * ControleImportComponent — CTL_IMPORT only (route guard handles permission).
  *
- * Explanation, file input (accept .json), « Importer » button with ConfirmDialog,
+ * Explanation, file input (accept .xlsx and .json), « Importer » button with ConfirmDialog,
  * result display, errors, last 10 imports, store.reload() after success.
  */
 @Component({
@@ -26,14 +26,14 @@ import { ControleStore } from './controle.store';
     <div class="card">
       <h2>Étapes</h2>
       <ol class="steps">
-        <li>Lancez <code>convert.py</code> sur le fichier Excel.</li>
-        <li>Choisissez le fichier JSON produit.</li>
+        <li>Choisissez le fichier Excel Caisse des projets (.xlsx).</li>
+        <li>Cliquez « Importer ».</li>
       </ol>
-      <p class="muted">Les justificatifs et validations déjà saisis sont gardés.</p>
+      <p class="muted">Un export JSON de <code>convert.py</code> est aussi accepté. Les justificatifs et validations déjà saisis sont gardés.</p>
 
       <div class="upload">
-        <input type="file" accept=".json,application/json" #fileInput (change)="onFilePick($event)" style="display:none" />
-        <p-button label="Choisir le fichier JSON" icon="pi pi-upload" (onClick)="fileInput.click()" />
+        <input type="file" accept=".xlsx,.json" #fileInput (change)="onFilePick($event)" style="display:none" />
+        <p-button label="Choisir le fichier" icon="pi pi-upload" (onClick)="fileInput.click()" />
         @if (selectedFile()) {
           <span class="filename">{{ selectedFile()!.name }} ({{ (selectedFile()!.size / 1024).toFixed(0) }} Ko)</span>
         }
@@ -217,7 +217,8 @@ export class ControleImportComponent implements OnInit {
           this.errorMsg.set(err?.error?.message ?? 'Le fichier contient des erreurs.');
           this.errorProblems.set(err?.error?.problems ?? []);
         } else if (code === 'IMPORT_FORMAT') {
-          this.errorMsg.set("Le fichier n'est pas un export valide de convert.py.");
+          // the server names the missing sheet for an .xlsx
+          this.errorMsg.set(err?.error?.message ?? "Le fichier n'est pas un export valide de convert.py.");
           this.errorProblems.set([]);
         } else if (code === 'IMPORT_TOO_LARGE') {
           this.errorMsg.set('Le fichier dépasse 20 Mo.');
