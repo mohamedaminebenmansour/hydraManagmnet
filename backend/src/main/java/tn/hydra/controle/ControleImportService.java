@@ -69,8 +69,6 @@ public class ControleImportService {
     @Transactional
     public ImportResult importFile(java.security.Principal auth, byte[] json) {
         if (auth == null) throw new IllegalStateException("Authentication required");
-        AppUser me = users.findByEmail(auth.getName()).orElseThrow();
-        UUID orgId = me.getOrgId();
 
         // ── (a) Parse ──────────────────────────────────────────────────────
         ControleImportFile.ImportFile file;
@@ -80,6 +78,18 @@ public class ControleImportService {
             throw new BusinessRuleException("IMPORT_FORMAT",
                     "Le fichier n'est pas un export valide de convert.py.");
         }
+        return importParsed(auth, file);
+    }
+
+    /**
+     * Validate + persist an already-parsed file (the JSON above, or the .xlsx
+     * read by {@link ControleExcelReader}). Same single transaction.
+     */
+    @Transactional
+    public ImportResult importParsed(java.security.Principal auth, ControleImportFile.ImportFile file) {
+        if (auth == null) throw new IllegalStateException("Authentication required");
+        AppUser me = users.findByEmail(auth.getName()).orElseThrow();
+        UUID orgId = me.getOrgId();
 
         // ── (b) Validate, collecting up to 20 problems ────────────────────
         List<String> problems = validate(file);
