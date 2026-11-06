@@ -1,4 +1,4 @@
-import { Component, OnInit, inject, signal } from '@angular/core';
+import { Component, OnDestroy, OnInit, inject, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { ButtonModule } from 'primeng/button';
 import { ConfirmDialogModule } from 'primeng/confirmdialog';
@@ -32,13 +32,17 @@ import { ControleStore } from './controle.store';
       <p class="muted">Un export JSON de <code>convert.py</code> est aussi accepté. Les justificatifs et validations déjà saisis sont gardés.</p>
 
       <div class="upload">
-        <label class="pick-btn">
+        <label class="pick-btn" (click)="onLabelClick()">
           <input type="file" accept=".json,.xlsx" (change)="onFilePick($event)" hidden />
           <i class="pi pi-upload" aria-hidden="true"></i> Choisir le fichier (.json ou .xlsx)
         </label>
         @if (selectedFile()) {
           <span class="filename">{{ selectedFile()!.name }} ({{ (selectedFile()!.size / 1024).toFixed(0) }} Ko)</span>
         }
+      </div>
+      <div class="backup-pick">
+        <p class="muted">Si le bouton ne marche pas, utilisez ce champ :</p>
+        <input type="file" accept=".json,.xlsx" (change)="onFilePick($event)" />
       </div>
 
       @if (selectedFile()) {
@@ -114,6 +118,8 @@ import { ControleStore } from './controle.store';
   styles: [`
     .pick-btn { display: inline-flex; align-items: center; gap: 8px; padding: 8px 16px; border-radius: 6px;
       background: var(--p-primary-color); color: #fff; cursor: pointer; font-weight: 500; }
+    .backup-pick p { margin: 0 0 4px; font-size: 13px; }
+    .backup-pick input { position: relative; z-index: 10; }
     h1 { font-size: 22px; margin: 0 0 4px; color: var(--ctl-ink, #16212b); letter-spacing: -.015em; }
     .lead { color: var(--ctl-muted, #58656f); max-width: 80ch; font-size: 14px; margin: 0; }
     .muted { color: var(--ctl-muted, #58656f); }
@@ -151,7 +157,7 @@ import { ControleStore } from './controle.store';
     @media (max-width: 400px) { .result-grid { grid-template-columns: 1fr; } }
   `]
 })
-export class ControleImportComponent implements OnInit {
+export class ControleImportComponent implements OnInit, OnDestroy {
   private api = inject(ControleService);
   private store = inject(ControleStore);
   private confirm = inject(ConfirmationService);
@@ -165,8 +171,28 @@ export class ControleImportComponent implements OnInit {
   protected errorProblems = signal<string[]>([]);
   protected history = signal<CtlImport[]>([]);
 
+  // DEBUG [CTL-IMPORT]: logs what is really under the mouse, to find an element covering the picker
+  private readonly debugClick = (e: MouseEvent): void => {
+    const under = document.elementFromPoint(e.clientX, e.clientY) as HTMLElement | null;
+    const t = e.target as HTMLElement | null;
+    console.log('[CTL-IMPORT] click', {
+      under: under ? { tag: under.tagName, id: under.id, cls: String(under.className) } : null,
+      target: t ? { tag: t.tagName, cls: String(t.className) } : null,
+    });
+  };
+
   ngOnInit(): void {
+    console.log('[CTL-IMPORT] page ready');
+    document.addEventListener('click', this.debugClick, true);
     this.loadHistory();
+  }
+
+  ngOnDestroy(): void {
+    document.removeEventListener('click', this.debugClick, true);
+  }
+
+  onLabelClick(): void {
+    console.log('[CTL-IMPORT] label clicked');
   }
 
   loadHistory(): void {
@@ -178,8 +204,13 @@ export class ControleImportComponent implements OnInit {
 
   onFilePick(event: Event): void {
     const input = event.target as HTMLInputElement;
-    if (!input.files || input.files.length === 0) return;
-    this.selectedFile.set(input.files[0]);
+    if (!input.files || input.files.length === 0) {
+      console.log('[CTL-IMPORT] no file');
+      return;
+    }
+    const f = input.files[0];
+    console.log('[CTL-IMPORT] file picked', { name: f.name, size: f.size, type: f.type });
+    this.selectedFile.set(f);
     // Reset so choosing the same file again fires (change)
     input.value = '';
     // Clear previous result/error
@@ -196,16 +227,22 @@ export class ControleImportComponent implements OnInit {
       message: "Remplacer les lignes actuelles par ce fichier ?",
       acceptLabel: "Oui, importer",
       rejectLabel: "Annuler",
-      accept: () => this.doImport(file),
+      accept: () => {
+        console.log('[CTL-IMPORT] confirm accepted');
+        this.doImport(file);
+      },
     });
   }
 
   private doImport(file: File): void {
+    console.log('[CTL-IMPORT] import start', file.name);
     this.importing.set(true);
     this.error.set(false);
     this.result.set(null);
     this.api.importFile(file).subscribe({
       next: (r) => {
+        // importFile() returns the body only; a success means HTTP 2xx
+        console.log('[CTL-IMPORT] import ok (2xx)', r);
         this.importing.set(false);
         this.result.set(r);
         this.error.set(false);
@@ -216,6 +253,7 @@ export class ControleImportComponent implements OnInit {
         this.loadHistory();
       },
       error: (err) => {
+        console.log('[CTL-IMPORT] import error', err?.status, err?.error);
         this.importing.set(false);
         this.error.set(true);
         const code = err?.error?.code;

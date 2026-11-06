@@ -22,6 +22,8 @@ import {
   standalone: true,
   imports: [FormsModule, ButtonModule, DrawerModule],
   template: `
+    <!-- Only in the page while open: a closed drawer must not leave a mask that catches clicks -->
+    @if (visible()) {
     <p-drawer [visible]="visible()" (visibleChange)="onVisibleChange($event)"
               position="right" [style]="{ width: 'min(560px, 100vw)' }">
       @if (line()) {
@@ -134,6 +136,7 @@ import {
         </div>
       }
     </p-drawer>
+    }
   `,
   styles: [`
     .dr-head { display: flex; justify-content: space-between; gap: 8px; align-items: flex-start;
