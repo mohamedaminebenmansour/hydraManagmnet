@@ -51,13 +51,13 @@ import { dfmt } from './controle-format';
       <main class="ctl-main">
         @if (store.loading()) {
           <div class="ctl-loading">Chargement des lignes…</div>
-        } @else if (store.error()) {
+        } @else if (store.error() && !isImportRoute()) {
           <app-load-error message="Impossible de charger les données du contrôle." (retry)="store.reload()" />
-        } @else if (store.data()?.imported === null) {
+        } @else if (store.data()?.imported === null && !isImportRoute()) {
           <app-empty-state icon="pi pi-upload" message="Aucun fichier importé"
                            buttonLabel="Importer le fichier"
                            (buttonAction)="goImport()">
-            <p class="ctl-empty-text">Importez le fichier produit par convert.py pour voir les comptes.</p>
+            <p class="ctl-empty-text">Importez le fichier Excel Caisse des projets (.xlsx) ou son export .json.</p>
           </app-empty-state>
         } @else {
           <router-outlet />
@@ -169,9 +169,16 @@ export class ControleLayoutComponent implements OnInit {
 
   ngOnInit(): void {
     this.store.load();
+    console.log('[CTL-LAYOUT] url', this.router.url, 'imported', this.store.data()?.imported ?? null);
+  }
+
+  /** The import page must always be reachable, even before the first import or after a load error. */
+  isImportRoute(): boolean {
+    return this.router.url.split('?')[0].endsWith('/controle/import');
   }
 
   goImport(): void {
+    console.log('[CTL-LAYOUT] url', this.router.url, 'imported', this.store.data()?.imported ?? null);
     this.router.navigate(['/controle/import']);
   }
 }
