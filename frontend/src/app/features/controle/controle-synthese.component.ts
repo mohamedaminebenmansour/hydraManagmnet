@@ -7,7 +7,7 @@ import { LinesTableComponent } from './lines-table.component';
 import { csvAmount, downloadCsv, money, pct } from './controle-format';
 import {
   DEFAULT_GROUPEMENT, FACTURE_LEVELS, FAMILLES_PAR_PROJET, FAMILLE_ORDER, FactureLevel, GROUPEMENTS,
-  GroupementKey, MOUVEMENTS_INTERNES, SOURCES, factureLevel, groupementOf, isFacturee, projectsOf, sourceOf,
+  GroupementKey, MOUVEMENTS_INTERNES, RECAP_RUBRIQUES, SOURCES, factureLevel, groupementOf, isFacturee, projectsOf, sourceOf,
 } from './controle-groups';
 
 type Tab = 'synthese' | 'recap';
@@ -53,7 +53,17 @@ interface Panel {
   key: string;
   title: string;
   preset: (l: CtlLine) => boolean;
+  highlight?: (l: CtlLine) => boolean;
+  highlightLabel?: string;
+  note?: string;
 }
+
+/** One cell of the comparison: one project × one rubrique. */
+interface RecapCell { proj: string; recap: number; hydra: number; ecart: number; diff: boolean; }
+interface RecapRow { rubrique: string; cells: RecapCell[]; }
+
+/** |écart| from 0,0005 (half a millime) is an écart. */
+const isDiff = (x: number) => Math.abs(x) >= 0.0005;
 
 const LEVEL_CLASS: Record<FactureLevel, string> = {
   'Facture': 'lv-f', 'Bon': 'lv-b', 'Bon signé (S)': 'lv-s', 'Non facturée': 'lv-n',
@@ -208,13 +218,72 @@ const LEVEL_CLASS: Record<FactureLevel, string> = {
       </section>
     }
 
+    @if (tab() === 'recap') {
+      <section class="ctl-card">
+        <div class="head">
+          <h2>Comparaison avec le « Récap des dépenses par projet » de l'Excel</h2>
+          <button class="ctl-btn" type="button" (click)="exportRecap()">Exporter (Excel)</button>
+        </div>
+        <p class="note">HYDRA = total des débits de toutes les lignes du projet rangées sous la rubrique, tous comptes
+          confondus. Écart = HYDRA − Récap Excel. Cliquez un écart en orange pour voir les lignes.</p>
+        @if (!hasRecap()) {
+          <div class="ctl-empty">Le récap Excel n'est pas dans le dernier import. Réimportez le fichier Excel.</div>
+        } @else {
+          <div class="tw">
+            <table>
+              <thead>
+                <tr>
+                  <th rowspan="2">Rubrique</th>
+                  @for (p of shownProjects(); track p) { <th colspan="3" class="pj">{{ p }}</th> }
+                </tr>
+                <tr>
+                  @for (p of shownProjects(); track p) {
+                    <th class="num pj">Récap Excel</th><th class="num">HYDRA</th><th class="num">Écart</th>
+                  }
+                </tr>
+              </thead>
+              <tbody>
+                @for (row of recapRows(); track row.rubrique) {
+                  <tr>
+                    <td>{{ row.rubrique }}</td>
+                    @for (c of row.cells; track c.proj) {
+                      <td class="num pj">{{ m(c.recap) }}</td>
+                      <td class="num">{{ m(c.hydra) }}</td>
+                      <td class="num">
+                        @if (c.diff) {
+                          <button type="button" class="ecart" (click)="openEcart(row.rubrique, c.proj)"
+                                  [attr.aria-label]="'Voir les lignes : ' + row.rubrique + ', ' + c.proj">{{ signed(c.ecart) }}</button>
+                        } @else { <span class="muted">0</span> }
+                      </td>
+                    }
+                  </tr>
+                }
+              </tbody>
+              <tfoot>
+                <tr>
+                  <th>Total</th>
+                  @for (c of recapTotals(); track c.proj) {
+                    <th class="num pj">{{ m(c.recap) }}</th>
+                    <th class="num">{{ m(c.hydra) }}</th>
+                    <th class="num" [class.warn]="c.diff">{{ c.diff ? signed(c.ecart) : '0' }}</th>
+                  }
+                </tr>
+              </tfoot>
+            </table>
+          </div>
+        }
+      </section>
+    }
+
     <!-- Lines panel -->
     @for (pn of panelList(); track pn.key) {
       <div id="ctl-synth-lines">
         <div class="panel-head">
+          @if (pn.note) { <p class="note">{{ pn.note }}</p> }
           <button class="ctl-btn" type="button" (click)="closePanel()">Fermer les lignes</button>
         </div>
-        <ctl-lines-table [preset]="pn.preset" [title]="pn.title" />
+        <ctl-lines-table [preset]="pn.preset" [title]="pn.title"
+                         [highlight]="pn.highlight" [highlightLabel]="pn.highlightLabel ?? ''" />
       </div>
     }
   `,
@@ -263,7 +332,12 @@ const LEVEL_CLASS: Record<FactureLevel, string> = {
     .note { font-size: 12.5px; color: var(--ctl-muted, #58656f); margin: 4px 0 0; }
     .muted { color: var(--ctl-muted, #58656f); }
     .ctl-empty { padding: 24px; text-align: center; color: var(--ctl-muted, #58656f); }
-    .panel-head { display: flex; justify-content: flex-end; margin-bottom: 8px; }
+    .panel-head { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: flex-start; justify-content: flex-end; margin-bottom: 8px; }
+    .panel-head .note { flex: 1 1 320px; margin: 0; }
+    th.pj, td.pj { border-left: 1px solid var(--ctl-line, #dbe1df); }
+    .ecart { font: inherit; font-family: var(--ctl-font-num); border: 0; border-radius: 6px; padding: 1px 6px; cursor: pointer;
+      background: var(--ctl-warn-soft, #fbf0dc); color: var(--ctl-warn, #9a5b00); font-weight: 600; }
+    th.warn { color: var(--ctl-warn, #9a5b00); }
     .tw { overflow-x: auto; border: 1px solid var(--ctl-line, #dbe1df); border-radius: var(--ctl-radius, 10px); }
     table { border-collapse: collapse; width: 100%; font-size: 13px; }
     th { text-align: left; font-weight: 600; color: var(--ctl-muted, #58656f); font-size: 12px; padding: 8px 10px;
@@ -473,6 +547,65 @@ export class ControleSyntheseComponent {
     add('Total (sans les mouvements internes)', '', '', '', this.treeTotal());
     downloadCsv('synthese-familles-' + this.selLabel(),
       ['Niveau', 'Famille', 'Rubrique', 'Projet', 'Entrées', 'Sorties', 'Facturée', 'Non facturée', 'Lignes'], rows);
+  }
+
+  // ── Comparaison avec le Récap Excel ──────────────────────────────────────
+  hasRecap = computed(() => (this.store.data()?.recap ?? []).length > 0);
+
+  recapRows = computed<RecapRow[]>(() => {
+    const projs = this.shownProjects();
+    const s = this.shownSet();
+    const recap = new Map<string, number>();
+    for (const r of this.store.data()?.recap ?? []) {
+      if (!s.has(r.proj)) continue;
+      const k = r.proj + '|' + r.rubrique;
+      recap.set(k, (recap.get(k) ?? 0) + r.amount);
+    }
+    const hydra = new Map<string, number>();
+    for (const l of this.selLines()) {
+      const k = l.proj + '|' + l.rubrique;
+      hydra.set(k, (hydra.get(k) ?? 0) + l.d);
+    }
+    return RECAP_RUBRIQUES.map(rubrique => ({
+      rubrique,
+      cells: projs.map(proj => {
+        const rc = recap.get(proj + '|' + rubrique) ?? 0;
+        const hy = hydra.get(proj + '|' + rubrique) ?? 0;
+        return { proj, recap: rc, hydra: hy, ecart: hy - rc, diff: isDiff(hy - rc) };
+      }),
+    })).filter(row => row.cells.some(c => c.recap || c.hydra));
+  });
+
+  recapTotals = computed<RecapCell[]>(() => this.shownProjects().map((proj, i) => {
+    let rc = 0, hy = 0;
+    for (const row of this.recapRows()) { rc += row.cells[i].recap; hy += row.cells[i].hydra; }
+    return { proj, recap: rc, hydra: hy, ecart: hy - rc, diff: isDiff(hy - rc) };
+  }));
+
+  openEcart(rubrique: string, proj: string): void {
+    const name = rubrique.toLowerCase();
+    this.openPanel({
+      key: 'recap:' + proj + '|' + rubrique,
+      title: `Lignes — ${rubrique} — ${proj}`,
+      preset: l => l.proj === proj && l.rubrique === rubrique,
+      highlight: l => (l.cat ?? '').trim().toLowerCase() !== name,
+      highlightLabel: "non compté par l'Excel",
+      note: "L'Excel additionne seulement les lignes dont le texte est exactement le nom de la rubrique : "
+        + "les lignes surlignées ont un autre texte. Un texte avec un espace en trop n'est pas compté non plus "
+        + "par l'Excel, mais HYDRA ne voit pas encore ces espaces : ces lignes ne sont pas surlignées.",
+    });
+  }
+
+  /** Écart with its sign. */
+  signed(v: number): string { return (v > 0 ? '+' : '') + money(v); }
+
+  exportRecap(): void {
+    const projs = this.shownProjects();
+    const head = ['Rubrique', ...projs.flatMap(p => [p + ' — Récap Excel', p + ' — HYDRA', p + ' — Écart'])];
+    const cells = (cs: RecapCell[]) => cs.flatMap(c => [csvAmount(c.recap), csvAmount(c.hydra), csvAmount(c.ecart)]);
+    const rows: unknown[][] = this.recapRows().map(r => [r.rubrique, ...cells(r.cells)]);
+    rows.push(['Total', ...cells(this.recapTotals())]);
+    downloadCsv('synthese-recap-excel-' + this.selLabel(), head, rows);
   }
 
   // ── Lines panel ──────────────────────────────────────────────────────────

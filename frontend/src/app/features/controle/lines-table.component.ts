@@ -148,7 +148,7 @@ const SENS_LABELS: Record<string, string> = {
             </thead>
             <tbody>
               @for (l of visibleRows(); track l.id) {
-                <tr class="click" tabindex="0"
+                <tr class="click" tabindex="0" [class.hl]="isHighlighted(l)"
                     (click)="openLine(l.id)"
                     (keydown)="onRowKey($event, l.id)">
                   <td class="num left">{{ dfmt(l.date) }}</td>
@@ -163,6 +163,7 @@ const SENS_LABELS: Record<string, string> = {
                       @for (f of l.flags; track f) {
                         <span class="chip flag" [title]="FLAGS[f]?.[1] || f">{{ FLAGS[f]?.[0] || f }}</span>
                       }
+                      @if (isHighlighted(l)) { <span class="chip red">{{ highlightLabel }}</span> }
                     </div>
                   </td>
                   <td>{{ l.article || '—' }}</td>
@@ -237,6 +238,7 @@ const SENS_LABELS: Record<string, string> = {
     tr:last-child td { border-bottom: 0; }
     tbody tr.click { cursor: pointer; }
     tbody tr.click:hover td { background: var(--ctl-accent-soft, #e1eff2); }
+    tbody tr.hl td { background: var(--ctl-warn-soft, #fbf0dc); }
     .desc { min-width: 220px; max-width: 460px; }
     .desc .sub { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 3px; }
     .chip {
@@ -287,6 +289,13 @@ export class LinesTableComponent implements OnInit {
   @Input() hideAcct = false;
   @Input() hideProj = false;
   @Input() sort?: (a: CtlLine, b: CtlLine) => number;
+  /** Optional: lines to highlight (row colour + chip {@link highlightLabel}, « Alerte » column in the export). */
+  @Input() highlight?: (l: CtlLine) => boolean;
+  @Input() highlightLabel = '';
+
+  isHighlighted(l: CtlLine): boolean {
+    return !!this.highlight && this.highlight(l);
+  }
 
   private _initialFiltersValue: Partial<FilterState> = {};
   @Input()
@@ -423,7 +432,7 @@ export class LinesTableComponent implements OnInit {
       return [
         dfmt(l.date), this.acctName(l.acct), l.proj, l.desig, l.poste, l.party,
         l.article, l.piece, l.mode, csvAmount(l.e), csvAmount(l.d), l.bon, l.fct, l.sheet, l.row,
-        l.flags.map(f => FLAGS[f]?.[0] || f).join(', '),
+        [...l.flags.map(f => FLAGS[f]?.[0] || f), ...(this.isHighlighted(l) ? [this.highlightLabel] : [])].join(', '),
         STATUS_LABEL[j?.statut ?? 'none'],
         j?.docType ?? '', j?.reference ?? '',
         j?.docDate ? dfmt(j.docDate) : '',
