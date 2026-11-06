@@ -32,8 +32,10 @@ import { ControleStore } from './controle.store';
       <p class="muted">Un export JSON de <code>convert.py</code> est aussi accepté. Les justificatifs et validations déjà saisis sont gardés.</p>
 
       <div class="upload">
-        <input type="file" accept=".xlsx,.json" #fileInput (change)="onFilePick($event)" style="display:none" />
-        <p-button label="Choisir le fichier" icon="pi pi-upload" (onClick)="fileInput.click()" />
+        <label class="pick-btn">
+          <input type="file" accept=".json,.xlsx" (change)="onFilePick($event)" hidden />
+          <i class="pi pi-upload" aria-hidden="true"></i> Choisir le fichier (.json ou .xlsx)
+        </label>
         @if (selectedFile()) {
           <span class="filename">{{ selectedFile()!.name }} ({{ (selectedFile()!.size / 1024).toFixed(0) }} Ko)</span>
         }
@@ -110,6 +112,8 @@ import { ControleStore } from './controle.store';
     <p-confirmdialog />
   `,
   styles: [`
+    .pick-btn { display: inline-flex; align-items: center; gap: 8px; padding: 8px 16px; border-radius: 6px;
+      background: var(--p-primary-color); color: #fff; cursor: pointer; font-weight: 500; }
     h1 { font-size: 22px; margin: 0 0 4px; color: var(--ctl-ink, #16212b); letter-spacing: -.015em; }
     .lead { color: var(--ctl-muted, #58656f); max-width: 80ch; font-size: 14px; margin: 0; }
     .muted { color: var(--ctl-muted, #58656f); }
@@ -176,6 +180,8 @@ export class ControleImportComponent implements OnInit {
     const input = event.target as HTMLInputElement;
     if (!input.files || input.files.length === 0) return;
     this.selectedFile.set(input.files[0]);
+    // Reset so choosing the same file again fires (change)
+    input.value = '';
     // Clear previous result/error
     this.result.set(null);
     this.error.set(false);
