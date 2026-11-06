@@ -1,8 +1,8 @@
 # Test — Contrôle de trésorerie (P8)
 
 Cochez « OK » ou « KO » après chaque étape. Connectez-vous comme **Gérant Démo**
-(mot de passe = `HYDRA_DEMO_PASSWORD`). Le fichier `docs/sample.json` est un
-FAKE fichier (noms et montants fictifs) produit par `docs/convert.py`.
+(mot de passe = `HYDRA_DEMO_PASSWORD`). Le fichier `docs/controle/sample.json` est un
+FAKE fichier (noms et montants fictifs) produit par `tools/controle/convert.py`.
 
 ## Préparation
 
@@ -10,7 +10,7 @@ FAKE fichier (noms et montants fictifs) produit par `docs/convert.py`.
 |---|--------|------------------|---------|
 | 1 | Ouvrir **Contrôle caisse** depuis le menu | La page affiche « Aucun fichier importé » avec un bouton « Importer le fichier ». | |
 | 2 | Cliquer « Importer le fichier » → onglet **Importer** | La page affiche les étapes et le bouton « Choisir le fichier JSON ». | |
-| 3 | Choisir `docs/sample.json` → cliquer « Importer » | Boîte de dialogue « Remplacer les lignes actuelles par ce fichier ? ». Cliquer « Oui, importer ». | |
+| 3 | Choisir `docs/controle/sample.json` → cliquer « Importer » | Boîte de dialogue « Remplacer les lignes actuelles par ce fichier ? ». Cliquer « Oui, importer ». | |
 | 4 | Vérifier le résultat | « Import réussi » avec 5 lignes de caisse, 3 lignes sous-traitants, 3 comptes. | |
 | 5 | Vérifier l'historique | Une ligne dans l'historique : date du jour, fichier « exemple-fictif.xlsx », par « Gérant Démo ». | |
 
@@ -41,7 +41,7 @@ FAKE fichier (noms et montants fictifs) produit par `docs/convert.py`.
 | 16 | Dans le tiroir, cliquer « Justifié », Type = Facture, Référence = F-01, Montant = 6 500,000 | Le message « Le document couvre exactement la ligne. » apparaît. | |
 | 17 | Cliquer « Enregistrer » | Toast « Justificatif enregistré. », le tiroir se ferme. La ligne `t0000000003` affiche maintenant un pill vert « Justifié ». | |
 | 18 | Vérifier sur la page Vue d'ensemble | Le KPI « Sorties justifiées » affiche maintenant un pourcentage, et la barre de UIB TEST est partiellement verte. | |
-| 19 | Re-importer `docs/sample.json` | L'import réussit. Le justificatif de `t0000000003` est toujours là (pill vert « Justifié »). | |
+| 19 | Re-importer `docs/controle/sample.json` | L'import réussit. Le justificatif de `t0000000003` est toujours là (pill vert « Justifié »). | |
 | 20 | Vérifier le résultat de l'import | « 0 justificatif(s) ne correspondent plus à aucune ligne » (la ligne t0000000003 existe toujours). | |
 
 ## Sous-traitants

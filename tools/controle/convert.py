@@ -149,6 +149,7 @@ def load_box(sheet, acct, proj, partner):
     cD, cDes, cMode = col(vals, 'Date'), col(vals, 'Désignation'), col(vals, 'Mode')
     cCr, cDb = col(vals, 'Crédi', 'Encaissement'), col(vals, 'Débit', 'Décaissement')
     cDest = col(vals, 'Sous-traitant', 'Déstination', 'Destination')
+    cBon, cFct, cObs = col(vals, 'Bon'), col(vals, 'Facture', 'Fct'), col(vals, 'Observation')
     for r in range(h + 1, ws.max_row + 1):
         g = lambda c: ws.cell(r, c).value if c else None
         e, d = num(g(cCr)) or 0.0, num(g(cDb)) or 0.0
@@ -158,9 +159,9 @@ def load_box(sheet, acct, proj, partner):
         p = proj
         if dest.lower().startswith('projet'): p = proj_of(dest[6:].strip()) if not partner else proj
         lines.append(dict(id=make_id(sheet, date, e, d, desig), sheet=sheet, row=r, date=date, acct=acct, proj=p,
-            e=round(e, 3), d=round(d, 3), mode=mode_of(g(cMode)), bon='', fct='', cat=dest, desig=desig,
+            e=round(e, 3), d=round(d, 3), mode=mode_of(g(cMode)), bon=txt(g(cBon)), fct=txt(g(cFct)), cat=dest, desig=desig,
             party=person_of(dest), poste=(('Financement ' + ('NGNET' if 'NGNET' in sheet else 'Hani Barkia') if partner else 'Alimentation reçue') if e and not d else poste_out('', dest, desig)) if (e or d) else '',
-            kind=('partenaire' if partner else ('transfert' if e and not d else 'sortie')), obs=''))
+            kind=('partenaire' if partner else ('transfert' if e and not d else 'sortie')), obs=txt(g(cObs))))
 for sh, (i, p) in SITE.items(): load_box(sh, i, p, False)
 for sh, (i, p, o) in PARTNER.items(): load_box(sh, i, p, True)
 
