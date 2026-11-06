@@ -14,8 +14,10 @@ import java.math.RoundingMode;
 import java.sql.Date;
 import java.time.LocalDate;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 
@@ -109,7 +111,11 @@ public class ControleImportService {
 
         insertAccounts(orgId, file.accounts());
         insertStAccounts(orgId, file.stAccounts());
-        insertLines(orgId, file.lines());
+        // Article aliases of the org (raw_key → article) — never deleted by an import.
+        Map<String, String> aliases = new HashMap<>();
+        jdbc.query("select raw_key, article from ctl_article_alias where org_id = ?",
+                rs -> { aliases.put(rs.getString("raw_key"), rs.getString("article")); }, orgId);
+        insertLines(orgId, file.lines(), aliases);
         insertStLines(orgId, file.stLines());
 
         UUID importId = UUID.randomUUID();
@@ -296,22 +302,23 @@ public class ControleImportService {
         });
     }
 
-    private void insertLines(UUID orgId, List<ControleImportFile.Line> lines) {
+    private void insertLines(UUID orgId, List<ControleImportFile.Line> lines, Map<String, String> aliases) {
         if (lines.isEmpty()) return;
         List<ControleImportFile.Line> batch = new ArrayList<>(BATCH_SIZE);
         for (ControleImportFile.Line l : lines) {
             batch.add(l);
-            if (batch.size() >= BATCH_SIZE) { flushLines(orgId, batch); batch.clear(); }
+            if (batch.size() >= BATCH_SIZE) { flushLines(orgId, batch, aliases); batch.clear(); }
         }
-        if (!batch.isEmpty()) flushLines(orgId, batch);
+        if (!batch.isEmpty()) flushLines(orgId, batch, aliases);
     }
 
-    private void flushLines(UUID orgId, List<ControleImportFile.Line> batch) {
+    private void flushLines(UUID orgId, List<ControleImportFile.Line> batch, Map<String, String> aliases) {
         jdbc.batchUpdate("""
                 insert into ctl_line (org_id, line_key, sheet, excel_row, line_date, account_id,
                     project, amount_in, amount_out, pay_mode, bon, fct, category_excel,
-                    designation, party, poste, kind, obs, flags, st_line_key)
-                values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    designation, party, poste, kind, obs, flags, st_line_key,
+                    raw_key, article, piece)
+                values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """, new org.springframework.jdbc.core.BatchPreparedStatementSetter() {
             @Override public int getBatchSize() { return batch.size(); }
             @Override public void setValues(java.sql.PreparedStatement ps, int i) throws java.sql.SQLException {
@@ -337,6 +344,12 @@ public class ControleImportService {
                 ps.setArray(19, ps.getConnection().createArrayOf("text",
                         (l.flags() == null || l.flags().isEmpty()) ? new String[0] : l.flags().toArray()));
                 ps.setString(20, emptyToNull(l.stLink())); // st_line_key stays null when empty
+                // Article = the org's alias for raw_key, else the analyse.py rule.
+                String rawKey = ControleArticleRules.plain(l.cat());
+                String alias = aliases.get(rawKey);
+                ps.setString(21, rawKey);
+                ps.setString(22, alias != null ? alias : ControleArticleRules.article(l.cat(), l.party()));
+                ps.setString(23, ControleArticleRules.piece(l.fct(), l.bon()));
             }
         });
     }
