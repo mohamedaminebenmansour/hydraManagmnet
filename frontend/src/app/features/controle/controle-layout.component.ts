@@ -3,6 +3,7 @@ import { Router, RouterLink, RouterLinkActive, RouterOutlet } from '@angular/rou
 import { ButtonModule } from 'primeng/button';
 import { AuthService } from '@app/core/auth.service';
 import { ControleStore } from './controle.store';
+import { LineDrawerComponent } from './line-drawer.component';
 import { EmptyStateComponent } from '@app/shared/empty-state.component';
 import { LoadErrorComponent } from '@app/shared/load-error.component';
 import { dfmt } from './controle-format';
@@ -10,7 +11,7 @@ import { dfmt } from './controle-format';
 @Component({
   selector: 'app-controle-layout',
   standalone: true,
-  imports: [RouterOutlet, RouterLink, RouterLinkActive, ButtonModule, EmptyStateComponent, LoadErrorComponent],
+  imports: [RouterOutlet, RouterLink, RouterLinkActive, ButtonModule, EmptyStateComponent, LoadErrorComponent, LineDrawerComponent],
   template: `
     <div class="ctl-page">
       <!-- Header (like the prototype top bar) -->
@@ -62,6 +63,9 @@ import { dfmt } from './controle-format';
           <router-outlet />
         }
       </main>
+
+      <!-- Line drawer (placed once, opened by any page via ControleDrawerService) -->
+      <ctl-line-drawer />
     </div>
   `,
   styles: [`

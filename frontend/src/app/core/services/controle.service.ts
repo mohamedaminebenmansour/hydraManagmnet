@@ -69,13 +69,14 @@ export type CtlJustifStatut = 'none' | 'justifie' | 'partiel' | 'non-justifie' |
 export interface CtlJustif {
   lineKey: string;
   statut: CtlJustifStatut;
-  doc: string | null;
-  ref: string | null;
-  dateDoc: string | null;
-  montant: number | null;
+  docType: string | null;
+  reference: string | null;
+  docDate: string | null;
+  docAmount: number | null;
   note: string | null;
-  by: string | null;       // user id
-  at: string | null;       // ISO timestamp
+  version: number;
+  updatedBy: string | null;    // user id
+  updatedAt: string | null;    // ISO timestamp
 }
 
 export type CtlValidStatut = 'none' | 'valide' | 'a-revoir' | 'conteste';
@@ -85,8 +86,9 @@ export interface CtlValid {
   statut: CtlValidStatut;
   solde: number | null;
   note: string | null;
-  by: string | null;
-  at: string | null;
+  version: number;
+  updatedBy: string | null;
+  updatedAt: string | null;
 }
 
 export interface CtlImport {
@@ -123,17 +125,19 @@ export interface ImportResult {
 
 export interface JustifBody {
   statut: CtlJustifStatut;
-  doc: string | null;
-  ref: string | null;
-  dateDoc: string | null;
-  montant: number | null;
+  docType: string | null;
+  reference: string | null;
+  docDate: string | null;
+  docAmount: number | null;
   note: string | null;
+  version: number;
 }
 
 export interface ValidBody {
   statut: CtlValidStatut;
   solde: number | null;
   note: string | null;
+  version: number;
 }
 
 // ── Service ──────────────────────────────────────────────────────────────────
