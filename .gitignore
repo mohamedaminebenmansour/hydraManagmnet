@@ -36,3 +36,9 @@ scripts/
 upload/
 # PDFs
 *.pdf
+
+# Contrôle de trésorerie — the real Excel and its converted JSON must never be committed.
+# Only backend/src/test/resources/controle/sample.json (a FAKE sample) is tracked.
+*.xlsx
+tools/controle/*.json
+data.json

@@ -19,6 +19,7 @@ section (grep the method, then read around it).
 | `audit` | `EventLogService`, `AuditService`, `AuditController` | Append-only event log |
 | `event` | `DomainEventService`, `EventType`, `DomainEventController` | Domain events (table domain_event, V47): one row per business action, written in the action's transaction by `DomainEventService.publish` (payment submitted, cash posted, step completed, BC created, BL received, facture recorded, bordereau imported / activated, document uploaded). Nothing consumes them yet. `GET /api/events` (owner) feeds the "Journal des événements" page. Not the audit log |
 | `organization` | `TunisianIds` (pure Java MF/RIB validators), `CompanyProfileService`, `CompanyProfileController`, `GroupementService`, `GroupementController` | Company profile (legal identity, bank, logo) + groupements (joint ventures with members and shares). `GET/PUT /api/company`, `POST/GET/DELETE /api/company/logo`, `GET/POST/PUT /api/company/groupements`. Permission `ORG_SETTINGS` (OWNER only). Migration V54. |
+| `controle` | `ControleImportFile` (records matching convert.py JSON), `ControleImportService` (~430), `ControleImportController` (~80) | Archive of the company's cash Excel. `POST /api/controle/import` (PERM_CTL_IMPORT, multipart part "file", 20 MB max) parses + validates + persists a convert.py JSON export in ONE transaction (deletes the previous import's rows for the org, then re-inserts; NEVER touches `ctl_justification` / `ctl_validation`). `GET /api/controle/imports` (PERM_CTL_READ) — last 10 imports of my org. **Never touches `cash_pot` / `cash_movement`.** Tables: `ctl_import`, `ctl_account`, `ctl_line`, `ctl_st_account`, `ctl_st_line`, `ctl_justification` (no FK to `ctl_line` on purpose — a justification must survive a re-import), `ctl_validation`. Permissions `CTL_READ`, `CTL_JUSTIFY`, `CTL_IMPORT` (OWNER only). Migration V55. Tests: `ControleImportServiceTest` (CI-01..CI-08). |
 | `ticket` | `TicketService` (~1070), `TicketController` (~260), `TicketPhotoService` (~340, photos + deliverable files), `TicketType`, `TicketWorkflow` | Signalements: 5 types (PROBLEME/RESERVE/DEMANDE/TACHE/VISA_DOCUMENT), categories, origine (RESERVE), ouvrage/party links; universal lifecycle OPEN→IN_PROGRESS→RESOLVED→CLOSED (+CANCELLED) for the first four; VISA keeps DRAFT→…→AS_BUILT. TACHE = office task, project optional (null = « Bureau »), is_private (creator+assignee only). Central visibility rule `canRead` + `readVisibilityFragment` (A4) used by get/list/search/summary/actions/timeline/comments/photos/files. Deliverable files (POST /{id}/files, phase DELIVERABLE) filed by category. `GET /api/tickets/catalog` / `/search` / `/summary` / `/{id}/actions` / `/{id}/timeline` / `/{id}/photos` / `/{id}/files`. |
 | `mail` | `MailService` (interface), `MailServiceSmtp`, `MailServiceDisabled`, `MailConfig` | Optional email: SMTP when `HYDRA_MAIL_HOST` + `HYDRA_MAIL_FROM` set, disabled otherwise. `sendAfterCommit` defers to after-commit. 3 templates (reset/invite/changed). |
 | `security` | `PermissionService`, `FolderAccessService`, `ToxicPairService`, `HydraUserDetailsService`, `SessionRevoker`, `PasswordPolicy` (U1), `TemporaryPasswordGenerator` (U1), `PasswordChangeRequiredFilter` (U1) | Permissions, folder ACL, segregation of duties, password policy (min 12, blocklist, personal info), temp password generation, forced change at first login |
@@ -26,8 +27,8 @@ section (grep the method, then read around it).
 | `config` | `SecurityConfig`, `CorsConfig`, `BootstrapRunner`, `DemoDataRunner` (off by default since T9), `DevDataSeedRunner`, `config/demo/` (`DemoScenarioRunner`, `DemoTachesScenario`, `DemoScenario`, `InMemoryMultipartFile`) | Security, CORS, seeding. `@Profile("demo")` demo pack creates the « HYDRA Démo » company + 9 users + 1 chantier + 11 signalements; never touches the real company. See `docs/DEMO.md`. |
 | `common`, `exception` | `GlobalExceptionHandler`, `BusinessRuleException` | Errors → HTTP |
 
-Migrations: `backend/src/main/resources/db/migration/`, last = **V54__company_profile.sql**.
-Never edit an existing migration; the next one is V55.
+Migrations: `backend/src/main/resources/db/migration/`, last = **V55__controle_tresorerie.sql**.
+Never edit an existing migration; the next one is V56.
 Recent ones: V38 rule columns · V39 FINANCE_ONLY rule · V40 step approvals (ALL mode) ·
 V41 project_member default · V42 role substitute · V43 opt-out seed · V44 absences ·
 V45 bordereau_version.source_document_id / source_revision · V46 two-level folder tree
@@ -46,7 +47,11 @@ V52 password_token (id/org_id/user_id/purpose RESET|INVITE/token_hash unique/exp
 index user_id+purpose where used_at is null) ·
 V53 user_profile_security (app_user: phone, job_title, last_login_at, password_changed_at, first_login_at) ·
 V54 company_profile (company_profile: legal identity, bank, logo; groupement + groupement_member with shares;
-ORG_SETTINGS permission granted to OWNER; RLS enabled on all 3 tables).
+ORG_SETTINGS permission granted to OWNER; RLS enabled on all 3 tables) ·
+V55 controle_tresorerie (ctl_import / ctl_account / ctl_line / ctl_st_account / ctl_st_line /
+ctl_justification / ctl_validation; archive of the company's cash Excel; never touches
+cash_pot / cash_movement; CTL_READ / CTL_JUSTIFY / CTL_IMPORT permissions granted to OWNER;
+RLS enabled on all 7 tables).
 
 Key behaviours to remember:
 - A rule is enabled on a chantier unless `project_process_template.enabled = false` (opt-out).
@@ -65,6 +70,7 @@ Tests: `backend/src/test/java/tn/hydra/<package>/`. Test DB: `hydra_test` on
 | `core/` | `auth.service.ts`, `perm.guard.ts`, `permissions.ts`, `api.interceptor.ts` | Auth, permission constants and guards |
 | `features/projects/` | `projects.component` (list + creation wizard), `project-detail.component` (~535 ts; tabs 0 Dossiers, 3 Ouvrages, 1 Équipe, 2 Processus, 4 Règles, 5 Bordereau), `ouvrages-tab.component`, `bordereau-tab.component` (~390: Excel import + preview, Ouvrage column: dropdown + "Affecter à…" while DRAFT, read-only name otherwise), `project-rules-tab.component` (~415: rôles + remplaçants + absences, règles actives, en attente), `project-role-assignees` (read-only), `folder-access-dialog` | Chantiers |
 | `features/cash/` | `movement-form` (~875), `movement-detail`, `finance-hub`, `cash-hub`, pots, parties | Trésorerie |
+| `features/controle/` | _(to be added in P3+ — importer page, line browser, justification editor, subcontractor validation panel; behaviour reference in `docs/controle/prototype.html`)_ | Contrôle de trésorerie — archive of the company's cash Excel |
 | `features/stock/` | `move-form` (~720), `stock-list`, `stock-moves`, BC / BL / facture list-form-detail, `match-overview` | Stock and achats |
 | `features/process/` | `process-builder` (~640: 4-screen rule builder Quoi/Quand/Qui/Aperçu), `process-hub` ("Modèles prêts"), `my-tasks` ("Remplace …"), `approval-desk`, `process-timeline`, `start-process` | Rules and approvals |
 | `features/home/` | `home.component` (~510) | Home page |

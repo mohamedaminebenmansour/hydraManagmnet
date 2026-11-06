@@ -1,0 +1,728 @@
+<title>Trésorerie SIGAT</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Public+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: a fixed top bar with the scope switch, tabs under it, then one view at a time.
+   Detail pages open full width; a line opens in a side drawer with its justification form. */
+:root {
+  --bg: #f4f6f5; --panel: #ffffff; --panel-2: #eef2f1; --ink: #16212b; --muted: #58656f; --line: #dbe1df;
+  --accent: #0d5c6e; --accent-ink: #ffffff; --accent-soft: #e1eff2;
+  --ok: #1d7348; --ok-soft: #e3f3ea; --warn: #9a5b00; --warn-soft: #fbf0dc; --bad: #b42318; --bad-soft: #fbe7e5;
+  --vio: #5b3fb5; --vio-soft: #eeeafb; --shadow: 0 1px 2px rgba(16,33,43,.06), 0 4px 16px rgba(16,33,43,.06);
+  --f-body: "Public Sans", "Segoe UI", Roboto, Arial, sans-serif; --f-num: "IBM Plex Mono", ui-monospace, Menlo, Consolas, monospace;
+  --r: 10px;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --bg: #0f1619; --panel: #162126; --panel-2: #1c2a30; --ink: #e5ecee; --muted: #9aabb2; --line: #2a3a41;
+  --accent: #5cb7c9; --accent-ink: #062027; --accent-soft: #173640;
+  --ok: #5fc58e; --ok-soft: #173426; --warn: #e8a948; --warn-soft: #3a2b12; --bad: #f2867b; --bad-soft: #3e1d1a;
+  --vio: #b6a3f2; --vio-soft: #2a2343; --shadow: 0 1px 2px rgba(0,0,0,.3); color-scheme: dark; } }
+:root[data-theme="dark"] {
+  --bg: #0f1619; --panel: #162126; --panel-2: #1c2a30; --ink: #e5ecee; --muted: #9aabb2; --line: #2a3a41;
+  --accent: #5cb7c9; --accent-ink: #062027; --accent-soft: #173640;
+  --ok: #5fc58e; --ok-soft: #173426; --warn: #e8a948; --warn-soft: #3a2b12; --bad: #f2867b; --bad-soft: #3e1d1a;
+  --vio: #b6a3f2; --vio-soft: #2a2343; --shadow: 0 1px 2px rgba(0,0,0,.3); color-scheme: dark; }
+* { box-sizing: border-box; }
+body { background: var(--bg); color: var(--ink); font-family: var(--f-body); font-size: 14px; line-height: 1.45; }
+.wrap { padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); max-width: 1400px; margin-inline: auto; }
+header.top { background: var(--panel); border-bottom: 1px solid var(--line); position: sticky; top: env(safe-area-inset-top, 0px); z-index: 20; }
+body::before { content: ""; position: fixed; inset: 0 0 auto; height: env(safe-area-inset-top, 0px); z-index: 30; background: var(--panel); }
+.topbar { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: center; padding-block: 12px 8px; }
+.brand { display: flex; flex-direction: column; margin-right: auto; min-width: 0; }
+.brand b { font-size: 17px; letter-spacing: -.01em; }
+.brand small { color: var(--muted); font-size: 12px; }
+.seg { display: inline-flex; border: 1px solid var(--line); border-radius: 999px; padding: 2px; background: var(--panel-2); }
+.seg button { font: inherit; font-size: 12.5px; border: 0; background: none; color: var(--muted); padding: 5px 12px; border-radius: 999px; cursor: pointer; }
+.seg button[aria-pressed="true"] { background: var(--panel); color: var(--ink); box-shadow: var(--shadow); font-weight: 600; }
+nav.tabs { display: flex; gap: 2px; overflow-x: auto; scrollbar-width: none; }
+nav.tabs a { color: var(--muted); text-decoration: none; padding: 9px 12px; border-bottom: 2px solid transparent; white-space: nowrap; font-weight: 500; }
+nav.tabs a[aria-current="page"] { color: var(--ink); border-bottom-color: var(--accent); }
+main { padding-block: 20px 48px; display: flex; flex-direction: column; gap: 16px; }
+h1 { font-size: 22px; margin: 0; letter-spacing: -.015em; text-wrap: balance; }
+h2 { font-size: 15px; margin: 0; }
+h3 { font-size: 13px; margin: 0; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); font-weight: 600; }
+p { margin: 0; }
+.muted { color: var(--muted); }
+.lead { color: var(--muted); max-width: 80ch; }
+.crumb { font-size: 13px; color: var(--muted); }
+.crumb a { color: var(--accent); text-decoration: none; }
+.card { background: var(--panel); border: 1px solid var(--line); border-radius: var(--r); padding: 16px; display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+.grid { display: grid; gap: 12px; grid-template-columns: repeat(auto-fill, minmax(min(100%, 280px), 1fr)); }
+.kpis { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(min(100%, 190px), 1fr)); }
+.kpi { background: var(--panel); border: 1px solid var(--line); border-radius: var(--r); padding: 14px 16px; }
+.kpi span { display: block; font-size: 12px; color: var(--muted); }
+.kpi b { display: block; font-family: var(--f-num); font-weight: 500; font-size: 21px; margin-top: 4px; font-variant-numeric: tabular-nums; }
+.kpi small { color: var(--muted); font-size: 12px; }
+.num { font-family: var(--f-num); font-variant-numeric: tabular-nums; text-align: right; white-space: nowrap; }
+.pos { color: var(--ok); } .neg { color: var(--bad); }
+.tw { overflow-x: auto; border: 1px solid var(--line); border-radius: var(--r); background: var(--panel); }
+table { border-collapse: collapse; width: 100%; font-size: 13px; }
+th { text-align: left; font-weight: 600; color: var(--muted); font-size: 12px; padding: 8px 10px; border-bottom: 1px solid var(--line); background: var(--panel-2); position: sticky; top: 0; white-space: nowrap; }
+td { padding: 8px 10px; border-bottom: 1px solid var(--line); vertical-align: top; }
+tr:last-child td { border-bottom: 0; }
+tbody tr.click { cursor: pointer; }
+tbody tr.click:hover td { background: var(--accent-soft); }
+tfoot td { font-weight: 600; background: var(--panel-2); border-top: 1px solid var(--line); }
+.desc { min-width: 220px; max-width: 460px; }
+.desc .sub { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 3px; }
+.chip { display: inline-flex; align-items: center; gap: 4px; font-size: 11.5px; padding: 1px 7px; border-radius: 999px; background: var(--panel-2); color: var(--muted); border: 1px solid var(--line); white-space: nowrap; }
+.chip.acc { background: var(--accent-soft); color: var(--accent); border-color: transparent; }
+.chip.flag { background: var(--warn-soft); color: var(--warn); border-color: transparent; }
+.chip.red { background: var(--bad-soft); color: var(--bad); border-color: transparent; }
+.pill { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 600; padding: 2px 9px; border-radius: 999px; white-space: nowrap; }
+.pill::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
+.s-none { background: var(--panel-2); color: var(--muted); }
+.s-justifie, .s-valide { background: var(--ok-soft); color: var(--ok); }
+.s-partiel, .s-a-revoir { background: var(--warn-soft); color: var(--warn); }
+.s-non-justifie { background: var(--bad-soft); color: var(--bad); }
+.s-conteste { background: var(--vio-soft); color: var(--vio); }
+.filters { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+input, select, textarea { font: inherit; font-size: 13px; color: var(--ink); background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 7px 10px; min-width: 0; }
+input[type="search"] { flex: 1 1 220px; }
+input:focus-visible, select:focus-visible, textarea:focus-visible, button:focus-visible, a:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.btn { font: inherit; font-size: 13px; font-weight: 600; border-radius: 8px; padding: 7px 14px; border: 1px solid var(--line); background: var(--panel); color: var(--ink); cursor: pointer; }
+.btn.primary { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
+.btn:disabled { opacity: .5; cursor: default; }
+.btn.ghost { border-color: transparent; background: none; color: var(--accent); padding-inline: 6px; }
+.sumbar { display: flex; flex-wrap: wrap; gap: 6px 18px; font-size: 13px; color: var(--muted); align-items: baseline; }
+.sumbar b { color: var(--ink); font-family: var(--f-num); font-weight: 500; }
+.bar { height: 8px; border-radius: 999px; background: var(--panel-2); overflow: hidden; display: flex; }
+.bar i { display: block; height: 100%; }
+.legend { display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: 12px; color: var(--muted); }
+.legend i { display: inline-block; width: 9px; height: 9px; border-radius: 2px; margin-right: 5px; vertical-align: -1px; }
+.acct-card { cursor: pointer; text-align: left; font: inherit; color: inherit; }
+.acct-card:hover { border-color: var(--accent); }
+.acct-card .row { display: flex; justify-content: space-between; gap: 8px; font-size: 13px; }
+.acct-card .row span { color: var(--muted); }
+.badge { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .05em; color: var(--accent); }
+.split { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(min(100%, 420px), 1fr)); }
+.big-solde { font-family: var(--f-num); font-size: 26px; font-weight: 500; }
+.note { font-size: 12.5px; color: var(--muted); background: var(--panel-2); border-radius: 8px; padding: 8px 10px; }
+.banner { border-radius: var(--r); padding: 10px 14px; font-size: 13px; background: var(--warn-soft); color: var(--warn); }
+.banner.info { background: var(--accent-soft); color: var(--accent); }
+.validate { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.validate .seg button { padding: 5px 10px; }
+.more { display: flex; justify-content: center; padding: 10px; }
+aside.drawer { position: fixed; inset: 0 0 0 auto; width: min(560px, 100%); background: var(--panel); border-left: 1px solid var(--line); box-shadow: -8px 0 32px rgba(0,0,0,.15); z-index: 40; display: flex; flex-direction: column; padding-top: env(safe-area-inset-top, 0px); padding-bottom: env(safe-area-inset-bottom, 0px); padding-right: env(safe-area-inset-right, 0px); }
+.drawer-head { display: flex; justify-content: space-between; gap: 8px; align-items: flex-start; padding: 16px; border-bottom: 1px solid var(--line); }
+.drawer-body { overflow-y: auto; padding: 16px; display: flex; flex-direction: column; gap: 14px; }
+.scrim { position: fixed; inset: 0; background: rgba(10,20,25,.35); z-index: 35; }
+dl.kv { display: grid; grid-template-columns: max-content 1fr; gap: 6px 14px; margin: 0; font-size: 13px; }
+dl.kv dt { color: var(--muted); }
+dl.kv dd { margin: 0; min-width: 0; overflow-wrap: anywhere; }
+.form { display: grid; gap: 10px; grid-template-columns: 1fr 1fr; }
+.form label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--muted); font-weight: 600; }
+.form .full { grid-column: 1 / -1; }
+.statuses { display: flex; flex-wrap: wrap; gap: 6px; }
+.statuses button { font: inherit; font-size: 12.5px; border: 1px solid var(--line); background: var(--panel); color: var(--ink); border-radius: 999px; padding: 5px 11px; cursor: pointer; }
+.statuses button[aria-pressed="true"] { border-color: currentColor; font-weight: 700; }
+.toast { position: fixed; bottom: calc(16px + env(safe-area-inset-bottom, 0px)); left: 50%; transform: translateX(-50%); background: var(--ink); color: var(--panel); padding: 8px 14px; border-radius: 8px; font-size: 13px; z-index: 60; }
+.empty { padding: 24px; text-align: center; color: var(--muted); }
+.loading { padding: 60px 16px; text-align: center; color: var(--muted); }
+@media (max-width: 640px) { .form { grid-template-columns: 1fr; } .kpi b { font-size: 18px; } h1 { font-size: 19px; } }
+@media (prefers-reduced-motion: no-preference) { aside.drawer { animation: slide .18s ease-out; } @keyframes slide { from { transform: translateX(24px); opacity: .6; } } }
+</style>
+
+<header class="top">
+  <div class="wrap">
+    <div class="topbar">
+      <div class="brand"><b>Trésorerie SIGAT</b><small id="meta">Chargement des données…</small></div>
+      <div class="seg" role="group" aria-label="Projets affichés">
+        <button type="button" id="scope-grp" aria-pressed="true">Groupement NGNET · 3 projets</button>
+        <button type="button" id="scope-all" aria-pressed="false">Tous les projets</button>
+      </div>
+    </div>
+    <nav class="tabs" aria-label="Pages">
+      <a href="#accueil" data-tab="accueil">Vue d'ensemble</a>
+      <a href="#comptes" data-tab="comptes">Comptes</a>
+      <a href="#projets" data-tab="projets">Projets</a>
+      <a href="#sous-traitants" data-tab="sous-traitants">Sous-traitants</a>
+      <a href="#ngnet" data-tab="ngnet">Réunion NGNET</a>
+      <a href="#justificatifs" data-tab="justificatifs">Justificatifs</a>
+    </nav>
+  </div>
+</header>
+<main class="wrap" id="view"><div class="loading">Chargement des 8 500 lignes…</div></main>
+<div id="drawer-host"></div>
+
+<script>
+(() => {
+'use strict';
+const GRP = ['Hajeb', 'Hammed', 'Ouled Khalfallah'];
+const STATUS = [
+  ['none', 'Non vérifié'], ['justifie', 'Justifié'], ['partiel', 'Partiel'], ['non-justifie', 'Non justifié'], ['conteste', 'Contesté'],
+];
+const STATUS_LABEL = Object.fromEntries(STATUS);
+const VSTATUS = [['none', 'Pas encore vu'], ['valide', 'Validé avec lui'], ['a-revoir', 'À revoir'], ['conteste', 'Contesté']];
+const VLABEL = Object.fromEntries(VSTATUS);
+const DOCS = ['Facture', 'Attachement signé', 'Bon de livraison', 'Bon de commande', 'Reçu signé', 'Ordre de virement', 'Relevé bancaire', 'Décompte', 'Autre'];
+const FLAGS = {
+  'especes': ['Espèces > 5 000 TND', 'Payé en espèces plus de 5 000 TND : amende de 20 % (minimum 2 000 TND) pour celui qui paie.'],
+  'hors-compte': ['Absent du compte ST', 'Payé à un sous-traitant mais introuvable dans son compte sous-traitant.'],
+  'benefice': ['Avance sur bénéfice', 'Avance sur bénéfice versée à un sous-traitant : à rattacher à son compte et à son contrat.'],
+  'doublon': ['Doublon possible', 'Même jour, même montant, même texte et même projet qu\'une autre ligne.'],
+  'interne': ['Transfert compté deux fois', 'Transfert entre comptes noté en encaissement et en décaissement.'],
+  'date': ['Date impossible', 'La date est dans le futur ou avant 2023 : faute de frappe probable.'],
+  'sans-date': ['Sans date', 'La ligne n\'a pas de date.'],
+  'non-retrouve': ['Paiement non retrouvé', 'Ce paiement du compte sous-traitant n\'a été retrouvé dans aucune caisse.'],
+};
+const ACCT_GROUP = { banque: 'Banques', especes: 'Espèces', chantier: 'Caisses chantier', partenaire: 'Caisses partenaires' };
+
+const S = { tables: new Set(), data: null, scope: 'grp', justif: new Map(), valid: new Map(), db: null, user: null, uid: null, canWrite: false, dl: null,
+  lineById: new Map(), stById: new Map(), acctById: new Map(), stAcctById: new Map() };
+
+const nf = new Intl.NumberFormat('fr-FR', { minimumFractionDigits: 3, maximumFractionDigits: 3 });
+const nf0 = new Intl.NumberFormat('fr-FR', { maximumFractionDigits: 0 });
+const pf = new Intl.NumberFormat('fr-FR', { style: 'percent', maximumFractionDigits: 0 });
+const money = (v) => (v ? nf.format(v) : '');
+const money0 = (v) => nf0.format(v || 0);
+const dfmt = (s) => s ? s.slice(8, 10) + '/' + s.slice(5, 7) + '/' + s.slice(0, 4) : '—';
+const slug = (s) => s.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+
+function h(tag, attrs, ...kids) {
+  const el = document.createElement(tag);
+  if (attrs) for (const [k, v] of Object.entries(attrs)) {
+    if (v == null || v === false) continue;
+    if (k === 'class') el.className = v;
+    else if (k === 'text') el.textContent = v;
+    else if (k.startsWith('on')) el.addEventListener(k.slice(2), v);
+    else if (k === 'style') el.setAttribute('style', v);
+    else el.setAttribute(k, v === true ? '' : v);
+  }
+  for (const k of kids.flat(Infinity)) if (k != null && k !== false) el.append(k instanceof Node ? k : document.createTextNode(String(k)));
+  return el;
+}
+const toast = (msg) => { const t = h('div', { class: 'toast', role: 'status', text: msg }); document.body.append(t); setTimeout(() => t.remove(), 2600); };
+
+/* ---------- data ---------- */
+const inScope = (proj) => S.scope === 'all' || GRP.includes(proj);
+const jOf = (id) => S.justif.get(id);
+const jStatus = (id) => (jOf(id)?.statut) || 'none';
+const isTransfer = (l) => l.kind === 'transfert';
+const outAmt = (l) => (l.kind === 'partenaire' ? l.d : (isTransfer(l) ? 0 : l.d));
+const inAmt = (l) => (l.kind === 'partenaire' ? l.e : (isTransfer(l) ? 0 : l.e));
+
+function stPerson(person) { return S.data.stAccounts.filter((a) => a.person === person); }
+function stTotals(sid) {
+  let w = 0, p = 0, nf = 0;
+  for (const s of S.data.stLines) if (s.st === sid) { w += s.travaux; p += s.paye; if (s.flags.includes('non-retrouve')) nf++; }
+  return { travaux: w, paye: p, solde: w - p, nonFound: nf };
+}
+function sourceOfSt(s) { const l = s.link && S.lineById.get(s.link); return l ? S.acctById.get(l.acct)?.name || 'Sans compte' : null; }
+
+/* ---------- lines table (shared by every page) ---------- */
+function linesTable(preset, opts = {}) {
+  const st = { q: '', sens: '', mode: '', poste: '', statut: '', flag: '', acct: '', proj: '', party: '', shown: 150, ...(opts.filters || {}) };
+  const box = h('div', { class: 'card' });
+  const pool = () => S.data.lines.filter((l) => preset(l));
+  const all = pool();
+  const uniq = (f) => [...new Set(all.map(f).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'fr'));
+  const sel = (key, label, items, fmt = (x) => x) => {
+    const s = h('select', { 'aria-label': label }, h('option', { value: '' , text: label }), items.map((x) => h('option', { value: x, text: fmt(x) })));
+    s.value = st[key]; s.addEventListener('change', () => { st[key] = s.value; st.shown = 150; draw(); }); return s;
+  };
+  const search = h('input', { type: 'search', placeholder: 'Chercher : nom, désignation, montant, n° de bon…', 'aria-label': 'Chercher dans les lignes', value: st.q });
+  let tmr; search.addEventListener('input', () => { clearTimeout(tmr); tmr = setTimeout(() => { st.q = search.value.trim().toLowerCase(); st.shown = 150; draw(); }, 180); });
+  const filters = h('div', { class: 'filters' }, search,
+    sel('sens', 'Entrées et sorties', ['in', 'out', 'tr'], (x) => ({ in: 'Entrées seulement', out: 'Sorties seulement', tr: 'Transferts' })[x]),
+    opts.hideAcct ? null : sel('acct', 'Tous les comptes', uniq((l) => l.acct), (x) => S.acctById.get(x)?.name || x),
+    opts.hideProj ? null : sel('proj', 'Tous les projets', uniq((l) => l.proj)),
+    sel('mode', 'Tous les paiements', uniq((l) => l.mode)),
+    sel('poste', 'Toutes les catégories', uniq((l) => l.poste)),
+    sel('party', 'Tous les sous-traitants', uniq((l) => l.party)),
+    sel('statut', 'Tous les justificatifs', STATUS.map((x) => x[0]), (x) => STATUS_LABEL[x]),
+    sel('flag', 'Toutes les alertes', ['any', ...Object.keys(FLAGS).filter((k) => k !== 'non-retrouve')], (x) => x === 'any' ? 'Avec une alerte' : FLAGS[x][0]),
+    S.dl ? h('button', { class: 'btn', type: 'button', onclick: () => exportCsv(current(), opts.title || 'lignes') }, 'Exporter (Excel)') : null);
+  const sum = h('div', { class: 'sumbar' });
+  const tw = h('div', { class: 'tw' });
+  const more = h('div', { class: 'more' });
+  box.append(opts.title ? h('h2', { text: opts.title }) : null, filters, sum, tw, more);
+
+  function current() {
+    return pool().filter((l) => {
+      if (st.sens === 'in' && !(inAmt(l) > 0)) return false;
+      if (st.sens === 'out' && !(outAmt(l) > 0)) return false;
+      if (st.sens === 'tr' && !isTransfer(l)) return false;
+      if (st.acct && l.acct !== st.acct) return false;
+      if (st.proj && l.proj !== st.proj) return false;
+      if (st.mode && l.mode !== st.mode) return false;
+      if (st.poste && l.poste !== st.poste) return false;
+      if (st.party && l.party !== st.party) return false;
+      if (st.statut && jStatus(l.id) !== st.statut) return false;
+      if (st.flag === 'any' && !l.flags.length) return false;
+      if (st.flag && st.flag !== 'any' && !l.flags.includes(st.flag)) return false;
+      if (st.q) {
+        const j = jOf(l.id);
+        const hay = (l.desig + ' ' + l.cat + ' ' + l.party + ' ' + l.poste + ' ' + l.bon + ' ' + l.fct + ' ' + l.sheet + ' ' + l.row + ' ' + money(l.e) + ' ' + money(l.d) + ' ' + (j ? j.ref + ' ' + j.note : '')).toLowerCase();
+        if (!hay.includes(st.q) && !hay.replace(/\s/g, '').includes(st.q.replace(/\s/g, ''))) return false;
+      }
+      return true;
+    }).sort(opts.sort || ((a, b) => (b.date || '').localeCompare(a.date || '') || a.row - b.row));
+  }
+  function draw() {
+    const rows = current();
+    let e = 0, d = 0, dj = 0;
+    for (const l of rows) { e += inAmt(l); d += outAmt(l); const s = jStatus(l.id); if (s === 'justifie') dj += outAmt(l); }
+    sum.replaceChildren(
+      h('span', null, h('b', { text: rows.length.toLocaleString('fr-FR') }), ' lignes'),
+      h('span', null, 'Entrées ', h('b', { class: 'pos', text: nf.format(e) })),
+      h('span', null, 'Sorties ', h('b', { class: 'neg', text: nf.format(d) })),
+      h('span', null, 'Sorties justifiées ', h('b', { text: d ? pf.format(dj / d) : '—' })));
+    if (!rows.length) { tw.replaceChildren(h('div', { class: 'empty', text: 'Aucune ligne ne correspond à ces filtres.' })); more.replaceChildren(); return; }
+    const tb = h('tbody');
+    for (const l of rows.slice(0, st.shown)) {
+      const s = jStatus(l.id);
+      const acct = S.acctById.get(l.acct);
+      tb.append(h('tr', { class: 'click', tabindex: '0', onclick: () => openLine(l.id, draw), onkeydown: (ev) => { if (ev.key === 'Enter') openLine(l.id, draw); } },
+        h('td', { class: 'num', style: 'text-align:left', text: dfmt(l.date) }),
+        h('td', { text: acct ? acct.name : 'Sans compte' }),
+        opts.hideProj ? null : h('td', { text: l.proj }),
+        h('td', { class: 'desc' }, l.desig || '—', h('div', { class: 'sub' },
+          l.poste ? h('span', { class: 'chip acc', text: l.poste }) : null,
+          l.party ? h('span', { class: 'chip', text: l.party }) : null,
+          isTransfer(l) ? h('span', { class: 'chip', text: 'Transfert' }) : null,
+          l.flags.map((f) => h('span', { class: 'chip flag', title: FLAGS[f]?.[1] || f, text: FLAGS[f]?.[0] || f })))),
+        h('td', { text: l.mode }),
+        h('td', { class: 'num pos', text: money(l.e) }),
+        h('td', { class: 'num neg', text: money(l.d) }),
+        h('td', null, h('span', { class: 'pill s-' + s, text: STATUS_LABEL[s] })),
+        h('td', { class: 'muted', style: 'white-space:nowrap', text: shortSheet(l.sheet) + ' · L' + l.row })));
+    }
+    tw.replaceChildren(h('table', null, h('thead', null, h('tr', null, h('th', { text: 'Date' }), h('th', { text: 'Compte' }),
+      opts.hideProj ? null : h('th', { text: 'Projet' }), h('th', { text: 'Désignation' }), h('th', { text: 'Paiement' }),
+      h('th', { class: 'num', text: 'Entrée' }), h('th', { class: 'num', text: 'Sortie' }), h('th', { text: 'Justificatif' }), h('th', { text: 'Feuille · ligne' }))), tb));
+    more.replaceChildren(rows.length > st.shown ? h('button', { class: 'btn', type: 'button', onclick: () => { st.shown += 300; draw(); } }, `Afficher plus (${(rows.length - st.shown).toLocaleString('fr-FR')} restantes)`) : null);
+  }
+  draw();
+  box.redraw = draw;
+  S.tables.add(draw);
+  return box;
+}
+const shortSheet = (s) => s === 'Caisse Central' ? 'Caisse Central' : s;
+
+/* ---------- export ---------- */
+async function exportCsv(rows, name) {
+  if (!S.dl) return;
+  const head = ['Date', 'Compte', 'Projet', 'Désignation', 'Catégorie', 'Sous-traitant', 'Paiement', 'Entrée', 'Sortie', 'Bon', 'Facture (Excel)', 'Feuille', 'Ligne Excel', 'Alertes', 'Justificatif', 'Type de document', 'Référence', 'Date document', 'Montant document', 'Note'];
+  const q = (v) => '"' + String(v ?? '').replace(/"/g, '""') + '"';
+  const n = (v) => v ? String(v).replace('.', ',') : '';
+  const lines = [head.map(q).join(';')];
+  for (const l of rows) {
+    const j = jOf(l.id) || {};
+    lines.push([dfmt(l.date), S.acctById.get(l.acct)?.name || '', l.proj, l.desig, l.poste, l.party, l.mode, n(l.e), n(l.d), l.bon, l.fct, l.sheet, l.row,
+      l.flags.map((f) => FLAGS[f]?.[0] || f).join(', '), STATUS_LABEL[j.statut || 'none'], j.doc || '', j.ref || '', j.dateDoc ? dfmt(j.dateDoc) : '', n(j.montant), j.note || ''].map(q).join(';'));
+  }
+  try { await S.dl.save({ filename: slug(name) + '.csv', data: '﻿' + lines.join('\r\n') }); }
+  catch (e) { toast('Export annulé.'); }
+}
+
+/* ---------- drawer: one line + its justification ---------- */
+function closeDrawer() { document.getElementById('drawer-host').replaceChildren(); }
+function openLine(id, after) {
+  const l = S.lineById.get(id) || null;
+  const s = l ? null : S.stById.get(id);
+  const host = document.getElementById('drawer-host');
+  const j = { ...(jOf(id) || {}) };
+  let statut = j.statut || 'none';
+  const amount = l ? (l.d || l.e) : (s.paye || s.travaux);
+  const title = l ? (l.desig || 'Ligne sans désignation') : (s.desig || 'Ligne du compte sous-traitant');
+  const kv = h('dl', { class: 'kv' });
+  const add = (k, v) => { if (v !== '' && v != null) kv.append(h('dt', { text: k }), h('dd', null, v)); };
+  if (l) {
+    add('Date', dfmt(l.date)); add('Compte', S.acctById.get(l.acct)?.name || 'Sans compte'); add('Projet', l.proj);
+    add('Sens', isTransfer(l) ? 'Transfert entre comptes' : (l.e && l.d ? 'Entrée et sortie (payé par le partenaire)' : (l.e ? 'Entrée' : 'Sortie')));
+    add('Montant', h('span', { class: 'num', text: nf.format(amount) + ' TND' })); add('Paiement', l.mode);
+    add('Catégorie', l.poste); add('Catégorie dans l\'Excel', l.cat); add('Sous-traitant', l.party);
+    add('N° de bon', l.bon); add('Facture (Excel)', l.fct); add('Observation', l.obs);
+    add('Dans l\'Excel', `Feuille « ${l.sheet} », ligne ${l.row}`);
+    if (l.stLink) { const x = S.stById.get(l.stLink); const a = x && S.stAcctById.get(x.st);
+      if (a) add('Compte sous-traitant', h('a', { href: '#st-' + slug(a.person), onclick: closeDrawer, text: `${a.person} · ${a.proj} (feuille « ${a.sheet} », ligne ${x.row})` })); }
+  } else {
+    const a = S.stAcctById.get(s.st);
+    add('Date', dfmt(s.date)); add('Sous-traitant', `${a.person} · ${a.proj}`); add('Nature', s.travaux ? 'Travaux (crédit du sous-traitant)' : 'Paiement au sous-traitant');
+    add('Montant', h('span', { class: 'num', text: nf.format(amount) + ' TND' })); add('Paiement', s.mode);
+    add('Dans l\'Excel', `Feuille « ${s.sheet} », ligne ${s.row}`);
+    if (s.paye) { const m = s.link && S.lineById.get(s.link);
+      add('Payé depuis', m ? h('button', { class: 'btn ghost', type: 'button', onclick: () => openLine(m.id, after) }, `${S.acctById.get(m.acct)?.name || 'Sans compte'} · ${m.sheet} ligne ${m.row}`) : h('span', { class: 'chip red', text: 'Non retrouvé dans les caisses' })); }
+  }
+  const flags = (l ? l.flags : s.flags).map((f) => h('div', { class: 'banner', text: (FLAGS[f]?.[0] || f) + ' : ' + (FLAGS[f]?.[1] || '') }));
+
+  const sb = h('div', { class: 'statuses', role: 'group', 'aria-label': 'Statut du justificatif' });
+  const drawSb = () => sb.replaceChildren(...STATUS.map(([k, lab]) => h('button', { type: 'button', class: 's-' + k, 'aria-pressed': String(statut === k), disabled: !S.canWrite, onclick: () => { statut = k; drawSb(); } }, lab)));
+  drawSb();
+  const doc = h('select', { id: 'f-doc', disabled: !S.canWrite }, h('option', { value: '', text: '— Choisir —' }), DOCS.map((x) => h('option', { value: x, text: x })));
+  doc.value = j.doc || '';
+  const ref = h('input', { id: 'f-ref', value: j.ref || '', placeholder: 'ex. Facture n° 2026/145', disabled: !S.canWrite });
+  const dd = h('input', { id: 'f-date', type: 'date', value: j.dateDoc || '', disabled: !S.canWrite });
+  const mt = h('input', { id: 'f-mt', inputmode: 'decimal', value: j.montant != null ? String(j.montant).replace('.', ',') : '', placeholder: nf.format(amount), disabled: !S.canWrite });
+  const diff = h('p', { class: 'muted', style: 'font-size:12px' });
+  const showDiff = () => { const v = parseFloat(mt.value.replace(/\s/g, '').replace(',', '.')); diff.textContent = isNaN(v) ? '' : (Math.abs(v - amount) < 0.0005 ? 'Le document couvre exactement la ligne.' : `Écart avec la ligne : ${nf.format(v - amount)} TND`); };
+  mt.addEventListener('input', showDiff); showDiff();
+  const note = h('textarea', { id: 'f-note', rows: '3', disabled: !S.canWrite, placeholder: 'Ce que le sous-traitant a dit, ce qui manque…' }); note.value = j.note || '';
+  const save = h('button', { class: 'btn primary', type: 'button', disabled: !S.canWrite }, 'Enregistrer');
+  save.addEventListener('click', async () => {
+    const v = parseFloat(mt.value.replace(/\s/g, '').replace(',', '.'));
+    const body = { statut, doc: doc.value, ref: ref.value.trim(), dateDoc: dd.value, montant: isNaN(v) ? null : v, note: note.value.trim(), by: S.uid || '', at: new Date().toISOString() };
+    save.disabled = true;
+    try {
+      if (statut === 'none' && !body.ref && !body.note && !body.doc) await S.db.doc('justif/' + id).delete();
+      else await S.db.doc('justif/' + id).set(body);
+      S.justif.set(id, body); toast('Justificatif enregistré.'); closeDrawer(); after && after(); refreshBadges();
+    } catch (e) { toast('Pas enregistré : ' + (e.code === 'invalid_argument' ? 'vous n\'avez pas le droit de modifier.' : 'réessayez.')); save.disabled = false; }
+  });
+  const meta = j.at ? h('p', { class: 'muted', style: 'font-size:12px', text: 'Dernière mise à jour : ' + new Date(j.at).toLocaleString('fr-FR') }) : null;
+  host.replaceChildren(h('div', { class: 'scrim', onclick: closeDrawer }),
+    h('aside', { class: 'drawer', role: 'dialog', 'aria-modal': 'true', 'aria-label': 'Détail de la ligne' },
+      h('div', { class: 'drawer-head' }, h('div', null, h('h2', { text: title }), h('p', { class: 'muted', style: 'font-size:12px', text: nf.format(amount) + ' TND' })),
+        h('button', { class: 'btn', type: 'button', onclick: closeDrawer, 'aria-label': 'Fermer' }, 'Fermer')),
+      h('div', { class: 'drawer-body' }, kv, flags,
+        h('h3', { text: 'Justificatif' }),
+        S.canWrite ? null : h('div', { class: 'banner info', text: S.db ? 'Lecture seule : votre accès ne permet pas de modifier.' : 'Les justificatifs ne peuvent pas être enregistrés dans cette vue.' }),
+        sb,
+        h('div', { class: 'form' },
+          h('label', null, 'Type de document', doc), h('label', null, 'Référence du document', ref),
+          h('label', null, 'Date du document', dd), h('label', null, 'Montant du document (TND)', mt),
+          h('div', { class: 'full' }, diff),
+          h('label', { class: 'full' }, 'Note', note)),
+        h('div', { class: 'validate' }, save, meta))));
+  host.querySelector('.drawer-head .btn').focus();
+}
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeDrawer(); });
+
+/* ---------- pages ---------- */
+const view = () => document.getElementById('view');
+function page(...kids) { view().replaceChildren(...kids); window.scrollTo(0, 0); }
+function clickCard(onGo, ...kids) { return h('div', { class: 'card acct-card', role: 'link', tabindex: '0', onclick: onGo, onkeydown: (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onGo(); } } }, ...kids); }
+function kpi(label, value, sub, cls) { return h('div', { class: 'kpi' }, h('span', { text: label }), h('b', { class: cls || '', text: value }), sub ? h('small', { text: sub }) : null); }
+function scopeLines() { return S.data.lines.filter((l) => inScope(l.proj)); }
+function totals(rows) {
+  let e = 0, d = 0, dj = 0, n = 0;
+  for (const l of rows) { e += inAmt(l); d += outAmt(l); if (jStatus(l.id) === 'justifie') dj += outAmt(l); n++; }
+  return { e, d, dj, n };
+}
+const scopeName = () => S.scope === 'grp' ? 'Hajeb, Hammed et Ouled Khalfallah' : 'tous les projets';
+function projList() { const set = new Set(S.data.lines.map((l) => l.proj)); return [...set].filter(inScope).sort((a, b) => (GRP.indexOf(a) + 1 || 99) - (GRP.indexOf(b) + 1 || 99) || a.localeCompare(b, 'fr')); }
+
+function sourceMatrix(rows, groupBy, onClick) {
+  const accts = S.data.accounts.filter((a) => rows.some((l) => l.acct === a.id && outAmt(l) > 0));
+  const keys = [...new Set(rows.map(groupBy))];
+  const m = new Map();
+  for (const l of rows) { const k = groupBy(l); const o = m.get(k) || {}; o[l.acct] = (o[l.acct] || 0) + outAmt(l); o.t = (o.t || 0) + outAmt(l); m.set(k, o); }
+  keys.sort((a, b) => (m.get(b).t || 0) - (m.get(a).t || 0));
+  const foot = {}; for (const k of keys) for (const [a, v] of Object.entries(m.get(k))) foot[a] = (foot[a] || 0) + v;
+  return h('div', { class: 'tw' }, h('table', null,
+    h('thead', null, h('tr', null, h('th', { text: '' }), accts.map((a) => h('th', { class: 'num', text: a.name })), h('th', { class: 'num', text: 'Total sorties' }))),
+    h('tbody', null, keys.filter((k) => m.get(k).t).map((k) => h('tr', { class: onClick ? 'click' : '', onclick: onClick ? () => onClick(k) : null },
+      h('td', { text: k }), accts.map((a) => h('td', { class: 'num', text: money(m.get(k)[a.id]) })), h('td', { class: 'num', style: 'font-weight:600', text: money(m.get(k).t) })))),
+    h('tfoot', null, h('tr', null, h('td', { text: 'Total' }), accts.map((a) => h('td', { class: 'num', text: money(foot[a.id]) })), h('td', { class: 'num', text: money(foot.t) })))));
+}
+
+function pageHome() {
+  const rows = scopeLines(); const t = totals(rows);
+  const flagged = rows.filter((l) => l.flags.length);
+  const fcount = {}; for (const l of flagged) for (const f of l.flags) fcount[f] = (fcount[f] || 0) + 1;
+  const stNotFound = S.data.stLines.filter((s) => s.flags.includes('non-retrouve') && inScope(S.stAcctById.get(s.st).proj)).length;
+  page(
+    h('div', null, h('h1', { text: 'Où est l\'argent de ' + scopeName() }),
+      h('p', { class: 'lead', text: 'Chaque ligne de chaque compte, avec la feuille et la ligne de l\'Excel. Cliquez sur une ligne pour voir son détail et noter son justificatif (facture, attachement, reçu…).' })),
+    h('div', { class: 'kpis' },
+      kpi('Entrées', nf.format(t.e), 'TND, y compris l\'argent mis par NGNET dans ses caisses', 'pos'),
+      kpi('Sorties', nf.format(t.d), 'TND, hors transferts entre comptes', 'neg'),
+      kpi('Lignes', t.n.toLocaleString('fr-FR'), 'dans tous les comptes'),
+      kpi('Sorties justifiées', t.d ? pf.format(t.dj / t.d) : '—', nf.format(t.dj) + ' TND justifiés')),
+    h('div', { class: 'card' }, h('h2', { text: 'Qui a payé quoi, projet par projet' }),
+      h('p', { class: 'muted', text: 'Les sorties de chaque compte pour chaque projet. Les alimentations de caisse chantier ne sont pas comptées ici : la dépense est comptée quand la caisse chantier paie.' }),
+      sourceMatrix(rows, (l) => l.proj, (p) => go('projet-' + slug(p)))),
+    h('div', { class: 'split' },
+      h('div', { class: 'card' }, h('h2', { text: 'À vérifier en priorité' }),
+        h('div', { class: 'tw' }, h('table', null, h('tbody', null,
+          Object.entries(fcount).sort((a, b) => b[1] - a[1]).map(([f, n]) => h('tr', { class: 'click', onclick: () => go('justificatifs', { flag: f }) },
+            h('td', null, h('span', { class: 'chip flag', text: FLAGS[f][0] })), h('td', { class: 'muted', text: FLAGS[f][1] }), h('td', { class: 'num', text: n + ' lignes' }))),
+          h('tr', { class: 'click', onclick: () => go('sous-traitants') }, h('td', null, h('span', { class: 'chip red', text: FLAGS['non-retrouve'][0] })), h('td', { class: 'muted', text: FLAGS['non-retrouve'][1] }), h('td', { class: 'num', text: stNotFound + ' lignes' })))))),
+      h('div', { class: 'card' }, h('h2', { text: 'Justificatifs par compte' }), justifByAcct(rows))));
+}
+function justifByAcct(rows) {
+  const m = new Map();
+  for (const l of rows) { const o = m.get(l.acct) || { d: 0, j: 0, p: 0, x: 0 }; const v = outAmt(l); o.d += v; const s = jStatus(l.id); if (s === 'justifie') o.j += v; else if (s === 'partiel') o.p += v; else if (s === 'non-justifie' || s === 'conteste') o.x += v; m.set(l.acct, o); }
+  const wrap = h('div', { style: 'display:flex;flex-direction:column;gap:12px' },
+    h('div', { class: 'legend' }, h('span', null, h('i', { style: 'background:var(--ok)' }), 'Justifié'), h('span', null, h('i', { style: 'background:var(--warn)' }), 'Partiel'), h('span', null, h('i', { style: 'background:var(--bad)' }), 'Non justifié ou contesté'), h('span', null, h('i', { style: 'background:var(--panel-2);border:1px solid var(--line)' }), 'Pas encore vérifié')));
+  for (const a of S.data.accounts) { const o = m.get(a.id); if (!o || !o.d) continue;
+    wrap.append(h('div', { class: 'click', style: 'cursor:pointer', onclick: () => go('compte-' + a.id) },
+      h('div', { style: 'display:flex;justify-content:space-between;gap:8px;font-size:13px' }, h('span', { text: a.name }), h('span', { class: 'muted num', text: pf.format(o.j / o.d) + ' de ' + money0(o.d) + ' TND' })),
+      h('div', { class: 'bar', role: 'img', 'aria-label': `${a.name} : ${pf.format(o.j / o.d)} justifié` },
+        h('i', { style: `width:${o.j / o.d * 100}%;background:var(--ok)` }), h('i', { style: `width:${o.p / o.d * 100}%;background:var(--warn)` }), h('i', { style: `width:${o.x / o.d * 100}%;background:var(--bad)` })))); }
+  return wrap;
+}
+
+function pageAccounts() {
+  const groups = {};
+  for (const a of S.data.accounts) {
+    const rows = S.data.lines.filter((l) => l.acct === a.id && inScope(l.proj));
+    if (!rows.length) continue;
+    (groups[a.kind] ||= []).push([a, rows]);
+  }
+  const cc = S.data.lines.filter((l) => l.sheet === 'Caisse Central' && inScope(l.proj));
+  page(h('div', null, h('h1', { text: 'Les comptes' }), h('p', { class: 'lead', text: 'Les trois comptes UIB, la caisse SIGAT, les caisses chantier et les caisses NGNET de chaque projet. Les chiffres comptent seulement les lignes de ' + scopeName() + '. « Caisse Central » n\'est pas un compte : c\'est la somme des comptes UIB et de la caisse SIGAT.' })),
+    clickCard(() => go('compte-caisse-central'), h('div', { style: 'display:flex;justify-content:space-between;gap:8px;align-items:baseline' }, h('h2', { text: 'Caisse Central (vue réunie)' }), h('span', { class: 'badge', text: 'Vue' })),
+      h('p', { class: 'muted', style: 'font-size:12px', text: 'La feuille « Caisse Central » de l\'Excel : UIB SIGAT + UIB OMAR + UIB NGNET + caisse SIGAT, avec toutes ses lignes.' }),
+      h('div', { class: 'row' }, h('span', { text: 'Entrées' }), h('b', { class: 'num pos', text: nf.format(cc.reduce((s, l) => s + l.e, 0)) })),
+      h('div', { class: 'row' }, h('span', { text: 'Sorties' }), h('b', { class: 'num neg', text: nf.format(cc.reduce((s, l) => s + l.d, 0)) })),
+      h('div', { class: 'row' }, h('span', { text: 'Lignes' }), h('b', { class: 'num', text: cc.length.toLocaleString('fr-FR') }))),
+    ...Object.entries(groups).map(([k, list]) => h('section', { style: 'display:flex;flex-direction:column;gap:10px' }, h('h3', { text: ACCT_GROUP[k] || k }),
+      h('div', { class: 'grid' }, list.map(([a, rows]) => { const t = totals(rows); const all = rows.reduce((s, l) => s + l.e - l.d, 0);
+        return clickCard(() => go('compte-' + a.id),
+          h('div', { style: 'display:flex;justify-content:space-between;gap:8px;align-items:baseline' }, h('h2', { text: a.name }), h('span', { class: 'badge', text: a.owner })),
+          a.note ? h('p', { class: 'muted', style: 'font-size:12px', text: a.note }) : null,
+          h('div', { class: 'row' }, h('span', { text: 'Entrées' }), h('b', { class: 'num pos', text: nf.format(rows.reduce((s, l) => s + l.e, 0)) })),
+          h('div', { class: 'row' }, h('span', { text: 'Sorties' }), h('b', { class: 'num neg', text: nf.format(rows.reduce((s, l) => s + l.d, 0)) })),
+          h('div', { class: 'row' }, h('span', { text: 'Solde (selon l\'Excel)' }), h('b', { class: 'num ' + (all < 0 ? 'neg' : ''), text: nf.format(all) })),
+          h('div', { class: 'row' }, h('span', { text: 'Sorties justifiées' }), h('b', { class: 'num', text: t.d ? pf.format(t.dj / t.d) : '—' })),
+          h('div', { class: 'row' }, h('span', { text: 'Lignes' }), h('b', { class: 'num', text: rows.length.toLocaleString('fr-FR') }))); })))));
+}
+function pageAccount(id) {
+  const virt = id === 'caisse-central';
+  const a = virt ? { id, name: 'Caisse Central', note: 'Ce n\'est pas un vrai compte : c\'est la feuille qui réunit UIB SIGAT, UIB OMAR, UIB NGNET et la caisse SIGAT.' } : S.acctById.get(id); if (!a) return pageAccounts();
+  const match = virt ? (l) => l.sheet === 'Caisse Central' : (l) => l.acct === id;
+  const rows = S.data.lines.filter((l) => match(l) && inScope(l.proj));
+  const e = rows.reduce((s, l) => s + l.e, 0), d = rows.reduce((s, l) => s + l.d, 0);
+  const byProj = new Map(); for (const l of rows) { const o = byProj.get(l.proj) || { e: 0, d: 0, n: 0 }; o.e += l.e; o.d += l.d; o.n++; byProj.set(l.proj, o); }
+  const byPoste = new Map(); for (const l of rows) { if (!l.d) continue; byPoste.set(l.poste, (byPoste.get(l.poste) || 0) + l.d); }
+  let table;
+  page(h('p', { class: 'crumb' }, h('a', { href: '#comptes', text: 'Comptes' }), ' / ', a.name),
+    h('div', null, h('h1', { text: a.name }), h('p', { class: 'lead', text: (a.note ? a.note + ' ' : '') + 'Toutes les entrées et sorties de ce compte pour ' + scopeName() + '.' })),
+    h('div', { class: 'kpis' }, kpi('Entrées', nf.format(e), 'TND', 'pos'), kpi('Sorties', nf.format(d), 'TND', 'neg'), kpi('Solde selon l\'Excel', nf.format(e - d), 'à comparer au relevé ou au comptage', e - d < 0 ? 'neg' : ''), kpi('Lignes', rows.length.toLocaleString('fr-FR'))),
+    h('div', { class: 'split' },
+      h('div', { class: 'card' }, h('h2', { text: 'Par projet' }), h('div', { class: 'tw' }, h('table', null,
+        h('thead', null, h('tr', null, h('th', { text: 'Projet' }), h('th', { class: 'num', text: 'Entrées' }), h('th', { class: 'num', text: 'Sorties' }), h('th', { class: 'num', text: 'Lignes' }))),
+        h('tbody', null, [...byProj].sort((x, y) => y[1].d - x[1].d).map(([p, o]) => h('tr', { class: 'click', onclick: () => go('projet-' + slug(p)) }, h('td', { text: p }), h('td', { class: 'num pos', text: money(o.e) }), h('td', { class: 'num neg', text: money(o.d) }), h('td', { class: 'num', text: o.n }))))))),
+      h('div', { class: 'card' }, h('h2', { text: 'Sorties par catégorie' }), h('div', { class: 'tw' }, h('table', null,
+        h('tbody', null, [...byPoste].sort((x, y) => y[1] - x[1]).map(([p, v]) => h('tr', null, h('td', { text: p }), h('td', { class: 'num', text: money(v) })))))))),
+    table = linesTable((l) => match(l) && inScope(l.proj), { hideAcct: !virt, title: 'Toutes les lignes du compte' }));
+}
+
+function pageProjects() {
+  page(h('div', null, h('h1', { text: 'Les projets' }), h('p', { class: 'lead', text: 'Pour chaque projet : tout ce qui est entré et sorti, quel que soit le compte qui a payé.' })),
+    h('div', { class: 'grid' }, projList().map((p) => { const rows = S.data.lines.filter((l) => l.proj === p); const t = totals(rows);
+      const accts = new Set(rows.filter((l) => l.d).map((l) => S.acctById.get(l.acct)?.name).filter(Boolean));
+      return clickCard(() => go('projet-' + slug(p)), h('h2', { text: p }),
+        h('div', { class: 'row' }, h('span', { text: 'Sorties' }), h('b', { class: 'num neg', text: nf.format(t.d) })),
+        h('div', { class: 'row' }, h('span', { text: 'Entrées' }), h('b', { class: 'num pos', text: nf.format(t.e) })),
+        h('div', { class: 'row' }, h('span', { text: 'Justifié' }), h('b', { class: 'num', text: t.d ? pf.format(t.dj / t.d) : '—' })),
+        h('p', { class: 'muted', style: 'font-size:12px', text: 'Payé depuis : ' + [...accts].join(', ') })); })));
+}
+function pageProject(sl) {
+  const p = [...new Set(S.data.lines.map((l) => l.proj))].find((x) => slug(x) === sl); if (!p) return pageProjects();
+  const rows = S.data.lines.filter((l) => l.proj === p); const t = totals(rows);
+  const ins = new Map(); for (const l of rows) if (inAmt(l) > 0) { const k = (S.acctById.get(l.acct)?.name || 'Sans compte') + ' · ' + l.poste; ins.set(k, (ins.get(k) || 0) + inAmt(l)); }
+  const parties = new Map(); for (const l of rows) if (l.party && outAmt(l) > 0) parties.set(l.party, (parties.get(l.party) || 0) + outAmt(l));
+  let lt;
+  const filterLines = (f) => { lt.replaceWith(lt = linesTable((l) => l.proj === p, { hideProj: true, title: 'Toutes les lignes du projet', filters: f })); lt.scrollIntoView({ behavior: 'smooth' }); };
+  page(h('p', { class: 'crumb' }, h('a', { href: '#projets', text: 'Projets' }), ' / ', p),
+    h('div', null, h('h1', { text: p }), h('p', { class: 'lead', text: GRP.includes(p) ? 'Projet du groupement SIGAT – NGNET. Le coût vient des comptes UIB, de la caisse chantier et de la caisse NGNET du projet.' : 'Toutes les entrées et sorties de ce projet.' })),
+    h('div', { class: 'kpis' }, kpi('Sorties (coût)', nf.format(t.d), 'TND, tous comptes', 'neg'), kpi('Entrées', nf.format(t.e), 'TND', 'pos'), kpi('Sorties justifiées', t.d ? pf.format(t.dj / t.d) : '—', nf.format(t.dj) + ' TND'), kpi('Lignes', t.n.toLocaleString('fr-FR'))),
+    h('div', { class: 'card' }, h('h2', { text: 'Sorties par catégorie et par compte' }), h('p', { class: 'muted', text: 'Cliquez une catégorie pour voir ses lignes.' }),
+      sourceMatrix(rows, (l) => l.poste, (k) => filterLines({ poste: k }))),
+    h('div', { class: 'split' },
+      h('div', { class: 'card' }, h('h2', { text: 'D\'où viennent les entrées' }), h('div', { class: 'tw' }, h('table', null, h('tbody', null,
+        [...ins].sort((a, b) => b[1] - a[1]).map(([k, v]) => h('tr', null, h('td', { text: k }), h('td', { class: 'num pos', text: money(v) }))))))),
+      h('div', { class: 'card' }, h('h2', { text: 'Payé par sous-traitant (toutes caisses)' }), h('div', { class: 'tw' }, h('table', null, h('tbody', null,
+        [...parties].sort((a, b) => b[1] - a[1]).map(([k, v]) => h('tr', { class: 'click', onclick: () => go('st-' + slug(k)) }, h('td', { text: k }), h('td', { class: 'num', text: money(v) })))))))),
+    lt = linesTable((l) => l.proj === p, { hideProj: true, title: 'Toutes les lignes du projet' }));
+}
+
+/* ---------- subcontractors ---------- */
+function persons() {
+  const m = new Map();
+  for (const a of S.data.stAccounts) { if (!inScope(a.proj) && !(S.scope === 'grp' && S.data.stAccounts.some((b) => b.person === a.person && GRP.includes(b.proj)))) continue;
+    const o = m.get(a.person) || { person: a.person, accts: [], travaux: 0, paye: 0, nf: 0, supplier: a.supplier };
+    const t = stTotals(a.id); o.accts.push(a); o.travaux += t.travaux; o.paye += t.paye; o.nf += t.nonFound; m.set(a.person, o); }
+  for (const l of S.data.lines) if (l.party && l.flags.includes('hors-compte') && inScope(l.proj)) { const o = m.get(l.party) || { person: l.party, accts: [], travaux: 0, paye: 0, nf: 0 }; o.hors = (o.hors || 0) + l.d; m.set(l.party, o); }
+  return [...m.values()].sort((a, b) => a.person.localeCompare(b.person, 'fr'));
+}
+const vKey = (person) => 'person-' + slug(person);
+const vStatus = (k) => S.valid.get(k)?.statut || 'none';
+function pageSubs() {
+  const list = persons();
+  page(h('div', null, h('h1', { text: 'Les sous-traitants' }), h('p', { class: 'lead', text: 'Un sous-traitant peut travailler sur plusieurs projets : sa fiche réunit tous ses comptes. Ouvrez la fiche pendant la réunion pour valider avec lui chaque travail et chaque paiement.' })),
+    h('div', { class: 'tw' }, h('table', null,
+      h('thead', null, h('tr', null, h('th', { text: 'Sous-traitant' }), h('th', { text: 'Projets' }), h('th', { class: 'num', text: 'Travaux' }), h('th', { class: 'num', text: 'Payé' }), h('th', { class: 'num', text: 'Solde' }), h('th', { class: 'num', text: 'Payé hors compte' }), h('th', { class: 'num', text: 'Paiements non retrouvés' }), h('th', { text: 'Réunion' }))),
+      h('tbody', null, list.map((o) => { const sol = o.travaux - o.paye; const vs = vStatus(vKey(o.person));
+        return h('tr', { class: 'click', tabindex: '0', onclick: () => go('st-' + slug(o.person)), onkeydown: (e) => { if (e.key === 'Enter') go('st-' + slug(o.person)); } },
+          h('td', null, h('b', { text: o.person })), h('td', { text: [...new Set(o.accts.map((a) => a.proj))].join(', ') || '—' }),
+          h('td', { class: 'num', text: money(o.travaux) }), h('td', { class: 'num', text: money(o.paye) }),
+          h('td', { class: 'num ' + (sol < -0.0005 ? 'neg' : sol > 0.0005 ? 'pos' : ''), text: o.accts.length ? nf.format(sol) : '—' }),
+          h('td', { class: 'num', text: money(o.hors) }), h('td', { class: 'num', text: o.nf || '' }),
+          h('td', null, h('span', { class: 'pill s-' + vs, text: VLABEL[vs] }))); })))),
+    h('p', { class: 'muted', style: 'font-size:12px', text: 'Solde positif : SIGAT lui doit encore. Négatif : il a reçu plus que ses travaux enregistrés.' }));
+}
+function soldeSentence(sol) {
+  if (Math.abs(sol) < 0.0005) return 'Compte soldé : travaux = paiements.';
+  return sol > 0 ? `SIGAT lui doit encore ${nf.format(sol)} TND.` : `Il a reçu ${nf.format(-sol)} TND de plus que ses travaux enregistrés.`;
+}
+function validationBlock(key, label, suggested) {
+  const v = { ...(S.valid.get(key) || {}) };
+  let statut = v.statut || 'none';
+  const seg = h('div', { class: 'statuses', role: 'group', 'aria-label': 'Statut de la validation' });
+  const drawSeg = () => seg.replaceChildren(...VSTATUS.map(([k, lab]) => h('button', { type: 'button', class: 's-' + k, 'aria-pressed': String(statut === k), disabled: !S.canWrite, onclick: () => { statut = k; drawSeg(); } }, lab)));
+  drawSeg();
+  const sol = h('input', { inputmode: 'decimal', value: v.solde != null ? String(v.solde).replace('.', ',') : '', placeholder: suggested != null ? nf.format(suggested) : '', disabled: !S.canWrite, 'aria-label': 'Solde accepté' });
+  const note = h('textarea', { rows: '2', placeholder: 'Ce qui a été dit, ce qu\'il doit apporter (factures, attachements)…', disabled: !S.canWrite, 'aria-label': 'Note de la réunion' }); note.value = v.note || '';
+  const btn = h('button', { class: 'btn primary', type: 'button', disabled: !S.canWrite }, 'Enregistrer la validation');
+  btn.addEventListener('click', async () => {
+    const n = parseFloat(sol.value.replace(/\s/g, '').replace(',', '.'));
+    const body = { statut, solde: isNaN(n) ? null : n, note: note.value.trim(), by: S.uid || '', at: new Date().toISOString() };
+    btn.disabled = true;
+    try { await S.db.doc('valid/' + key).set(body); S.valid.set(key, body); toast('Validation enregistrée.'); }
+    catch (e) { toast('Pas enregistré : réessayez.'); }
+    btn.disabled = !S.canWrite;
+  });
+  return h('div', { class: 'card', style: 'background:var(--panel-2)' }, h('h2', { text: label }), seg,
+    h('div', { class: 'form' }, h('label', null, 'Solde accepté par les deux (TND)', sol), h('label', { class: 'full' }, 'Note', note)),
+    h('div', { class: 'validate' }, btn, v.at ? h('span', { class: 'muted', style: 'font-size:12px', text: 'Mis à jour le ' + new Date(v.at).toLocaleString('fr-FR') }) : null));
+}
+function pageSub(sl) {
+  const o = persons().find((x) => slug(x.person) === sl) || (() => { const p = S.data.stAccounts.find((a) => slug(a.person) === sl); return p && { person: p.person, accts: stPerson(p.person), travaux: 0, paye: 0 }; })();
+  if (!o) return pageSubs();
+  const sol = o.travaux - o.paye;
+  const blocks = o.accts.map((a) => {
+    const ls = S.data.stLines.filter((s) => s.st === a.id).sort((x, y) => (x.date || '').localeCompare(y.date || '') || x.row - y.row);
+    const t = stTotals(a.id);
+    const work = ls.filter((s) => s.travaux), pay = ls.filter((s) => s.paye);
+    const tbl = (rows, isPay) => rows.length ? h('div', { class: 'tw' }, h('table', null,
+      h('thead', null, h('tr', null, h('th', { text: 'Date' }), h('th', { text: 'Désignation' }), isPay ? h('th', { text: 'Paiement' }) : null, isPay ? h('th', { text: 'Payé depuis' }) : null, h('th', { class: 'num', text: 'Montant' }), h('th', { text: 'Justificatif' }), h('th', { text: 'Ligne' }))),
+      h('tbody', null, rows.map((s) => { const js = jStatus(s.id); const src = sourceOfSt(s);
+        return h('tr', { class: 'click', tabindex: '0', onclick: () => openLine(s.id, () => go('st-' + sl, null, true)) },
+          h('td', { class: 'num', style: 'text-align:left', text: dfmt(s.date) }), h('td', { class: 'desc', text: s.desig || '—' }),
+          isPay ? h('td', { text: s.mode }) : null,
+          isPay ? h('td', null, src ? h('span', { class: 'chip acc', text: src }) : h('span', { class: 'chip red', text: 'Non retrouvé' })) : null,
+          h('td', { class: 'num', text: nf.format(isPay ? s.paye : s.travaux) }), h('td', null, h('span', { class: 'pill s-' + js, text: STATUS_LABEL[js] })), h('td', { class: 'muted', text: 'L' + s.row })); })),
+      h('tfoot', null, h('tr', null, h('td', { text: 'Total' }), h('td'), isPay ? h('td') : null, isPay ? h('td') : null, h('td', { class: 'num', text: nf.format(isPay ? t.paye : t.travaux) }), h('td'), h('td'))))) : h('p', { class: 'empty', text: isPay ? 'Aucun paiement dans cette feuille.' : 'Aucun travail enregistré dans cette feuille.' });
+    const zero = Math.abs(t.solde) < 0.0005 && t.travaux > 0;
+    return h('section', { class: 'card' },
+      h('div', { style: 'display:flex;flex-wrap:wrap;justify-content:space-between;gap:8px;align-items:baseline' },
+        h('h2', { text: `${a.proj} — feuille « ${a.sheet} »` }), h('span', { class: 'big-solde ' + (t.solde < -0.0005 ? 'neg' : t.solde > 0.0005 ? 'pos' : ''), text: nf.format(t.solde) })),
+      h('p', { text: soldeSentence(t.solde) }),
+      zero ? h('div', { class: 'banner', text: 'Travaux exactement égaux aux paiements : les travaux ont peut-être été recopiés des paiements. Vérifier avec les attachements signés.' }) : null,
+      !t.travaux && t.paye ? h('div', { class: 'banner', text: 'Payé sans aucun travail enregistré : demander les attachements.' }) : null,
+      h('h3', { text: `Travaux (${work.length})` }), tbl(work, false),
+      h('h3', { text: `Paiements (${pay.length})` }), tbl(pay, true),
+      validationBlock('st-' + a.id, `Validation du compte ${a.proj}`, t.solde));
+  });
+  const hors = S.data.lines.filter((l) => l.party === o.person && l.flags.includes('hors-compte'));
+  page(h('p', { class: 'crumb' }, h('a', { href: '#sous-traitants', text: 'Sous-traitants' }), ' / ', o.person),
+    h('div', null, h('h1', { text: o.person }), h('p', { class: 'lead', text: 'Fiche de réunion : chaque travail et chaque paiement, avec la caisse qui a payé. Cliquez une ligne pour noter la facture ou l\'attachement qui la justifie.' })),
+    h('div', { class: 'kpis' }, kpi('Travaux enregistrés', nf.format(o.travaux), 'TND, tous projets'), kpi('Payé', nf.format(o.paye), 'TND, tous projets'),
+      kpi('Solde', nf.format(sol), soldeSentence(sol), sol < -0.0005 ? 'neg' : sol > 0.0005 ? 'pos' : ''), kpi('Payé hors compte', nf.format(o.hors || 0), 'trouvé dans les caisses, absent de ses feuilles')),
+    ...blocks,
+    hors.length ? linesTable((l) => l.party === o.person && l.flags.includes('hors-compte'), { title: 'Payé dans les caisses mais absent de ses comptes', filters: {} }) : null,
+    validationBlock(vKey(o.person), 'Validation générale avec ' + o.person, sol));
+}
+
+/* ---------- NGNET meeting ---------- */
+function pageNgnet() {
+  const parts = GRP.map((p) => {
+    const box = S.data.accounts.find((a) => a.kind === 'partenaire' && a.project === p);
+    const ng = S.data.lines.filter((l) => l.acct === box.id);
+    const uibng = S.data.lines.filter((l) => l.acct === 'uib-ngnet' && l.proj === p);
+    const sig = S.data.lines.filter((l) => l.proj === p && l.acct !== box.id);
+    const enc = sig.filter((l) => inAmt(l) > 0);
+    const byPoste = new Map(); for (const l of ng) byPoste.set(l.poste, (byPoste.get(l.poste) || 0) + l.d);
+    const ngTotal = ng.reduce((s, l) => s + l.d, 0), sigOut = totals(sig).d, encT = enc.reduce((s, l) => s + inAmt(l), 0);
+    return h('section', { class: 'card' },
+      h('div', { style: 'display:flex;flex-wrap:wrap;justify-content:space-between;gap:8px' }, h('h2', { text: p }), h('a', { href: '#projet-' + slug(p), text: 'Voir tout le projet' })),
+      h('div', { class: 'kpis' }, kpi('Payé par NGNET (caisse NGNET)', nf.format(ngTotal), 'TND'), kpi('Payé depuis les comptes UIB, caisse SIGAT et caisse chantier', nf.format(sigOut), 'TND'),
+        kpi('Coût total', nf.format(ngTotal + sigOut), pf.format(ngTotal / (ngTotal + sigOut || 1)) + ' payé par NGNET'), kpi('Reçu sur les comptes SIGAT', nf.format(encT), 'encaissements du projet', 'pos')),
+      h('div', { class: 'split' },
+        h('div', null, h('h3', { text: 'Ce que NGNET a payé, par catégorie' }), h('div', { class: 'tw' }, h('table', null, h('tbody', null, [...byPoste].sort((a, b) => b[1] - a[1]).map(([k, v]) => h('tr', null, h('td', { text: k }), h('td', { class: 'num', text: money(v) }))))))),
+        h('div', null, h('h3', { text: 'Ce qui est entré pour ce projet' }), h('div', { class: 'tw' }, h('table', null, h('tbody', null,
+          Object.entries(enc.reduce((m, l) => { const k = S.acctById.get(l.acct)?.name + ' · ' + l.poste; m[k] = (m[k] || 0) + inAmt(l); return m; }, {})).sort((a, b) => b[1] - a[1]).map(([k, v]) => h('tr', null, h('td', { text: k }), h('td', { class: 'num pos', text: money(v) })))))))),
+      linesTable((l) => l.acct === box.id, { hideAcct: true, hideProj: true, title: 'Lignes de la caisse NGNET ' + p, filters: { sens: 'out' } }),
+      uibng.length ? linesTable((l) => l.acct === 'uib-ngnet' && l.proj === p, { hideAcct: true, hideProj: true, title: 'Lignes UIB NGNET pour ' + p }) : null,
+      validationBlock('ngnet-' + slug(p), 'Validation avec NGNET — ' + p, null));
+  });
+  page(h('div', null, h('h1', { text: 'Réunion avec NGNET' }), h('p', { class: 'lead', text: 'Pour chaque projet du groupement : ce que NGNET a payé directement, ce que SIGAT a payé, et ce qui est entré sur les comptes. Les décomptes payés par le client ne sont pas dans l\'Excel : la marge et la part de chacun restent à établir avec NGNET.' })),
+    ...parts);
+}
+
+/* ---------- justification queue ---------- */
+function pageJustif(filters) {
+  const rows = scopeLines(); const t = totals(rows);
+  const per = projList().map((p) => { const r = rows.filter((l) => l.proj === p); return [p, totals(r)]; });
+  page(h('div', null, h('h1', { text: 'Justificatifs' }), h('p', { class: 'lead', text: 'Chaque sortie doit avoir sa facture, son attachement ou son reçu. Les lignes sont classées par montant, les plus grosses d\'abord. Cliquez une ligne pour noter son justificatif.' })),
+    h('div', { class: 'kpis' }, kpi('Sorties justifiées', t.d ? pf.format(t.dj / t.d) : '—', nf.format(t.dj) + ' sur ' + nf.format(t.d) + ' TND'),
+      ...per.map(([p, x]) => kpi(p, x.d ? pf.format(x.dj / x.d) : '—', 'justifié sur ' + money0(x.d) + ' TND'))),
+    linesTable((l) => inScope(l.proj) && outAmt(l) > 0, { title: 'Sorties à justifier', filters: { statut: filters?.flag ? '' : 'none', ...(filters || {}) }, sort: (a, b) => outAmt(b) - outAmt(a) }));
+}
+
+/* ---------- routing ---------- */
+let pending = null;
+function go(name, filters, keepScroll) { pending = filters || null; if (location.hash === '#' + name) route(keepScroll); else location.hash = name; }
+function route(keepScroll) {
+  if (!S.data) return;
+  const y = window.scrollY;
+  const r = (location.hash || '#accueil').slice(1);
+  const tab = r.startsWith('compte-') ? 'comptes' : r.startsWith('projet-') ? 'projets' : r.startsWith('st-') ? 'sous-traitants' : r;
+  document.querySelectorAll('nav.tabs a').forEach((a) => { if (a.dataset.tab === tab) a.setAttribute('aria-current', 'page'); else a.removeAttribute('aria-current'); });
+  closeDrawer();
+  S.tables = new Set();
+  const f = pending; pending = null;
+  if (r.startsWith('compte-')) pageAccount(r.slice(7));
+  else if (r.startsWith('projet-')) pageProject(r.slice(7));
+  else if (r.startsWith('st-')) pageSub(r.slice(3));
+  else if (r === 'comptes') pageAccounts();
+  else if (r === 'projets') pageProjects();
+  else if (r === 'sous-traitants') pageSubs();
+  else if (r === 'ngnet') pageNgnet();
+  else if (r === 'justificatifs') pageJustif(f);
+  else pageHome();
+  if (keepScroll) window.scrollTo(0, y);
+}
+function refreshBadges() { /* pages redraw their own rows; nothing global to update */ }
+window.addEventListener('hashchange', () => route());
+for (const [id, sc] of [['scope-grp', 'grp'], ['scope-all', 'all']]) document.getElementById(id).addEventListener('click', () => {
+  S.scope = sc; document.getElementById('scope-grp').setAttribute('aria-pressed', String(sc === 'grp')); document.getElementById('scope-all').setAttribute('aria-pressed', String(sc === 'all'));
+  try { localStorage.setItem('tresorerie-scope', sc); } catch (e) {}
+  route(true);
+});
+
+/* ---------- start ---------- */
+async function start() {
+  try { const sc = localStorage.getItem('tresorerie-scope'); if (sc === 'all' || sc === 'grp') { S.scope = sc; document.getElementById('scope-grp').setAttribute('aria-pressed', String(sc === 'grp')); document.getElementById('scope-all').setAttribute('aria-pressed', String(sc === 'all')); } } catch (e) {}
+  let res;
+  try { res = await fetch('data.json'); if (!res.ok) throw new Error(res.status); S.data = await res.json(); }
+  catch (e) { view().replaceChildren(h('div', { class: 'banner', text: 'Les données n\'ont pas pu être chargées. Rechargez la page.' })); return; }
+  for (const l of S.data.lines) S.lineById.set(l.id, l);
+  for (const s of S.data.stLines) S.stById.set(s.id, s);
+  for (const a of S.data.accounts) S.acctById.set(a.id, a);
+  for (const a of S.data.stAccounts) S.stAcctById.set(a.id, a);
+  const g = S.data.meta.generated;
+  document.getElementById('meta').textContent = `Fichier « ${S.data.meta.source} » · converti le ${g.slice(8, 10)}/${g.slice(5, 7)}/${g.slice(0, 4)} · ${S.data.meta.lines.toLocaleString('fr-FR')} lignes de caisse, ${S.data.meta.stLines.toLocaleString('fr-FR')} lignes sous-traitants`;
+  route();
+  connect();
+}
+async function connect() {
+  if (!window.claude?.use) return;
+  const [db, user, dl] = await Promise.all([window.claude.use('db'), window.claude.use('user'), window.claude.use('downloads')]);
+  S.db = db; S.user = user; S.dl = dl;
+  if (user) { try { S.uid = await user.id(); } catch (e) {} }
+  if (db) {
+    let can = null; try { can = user ? await user.can('data.write') : null; } catch (e) {}
+    S.canWrite = can !== false;
+    let firstJ = true, firstV = true;
+    const onErr = () => {};
+    db.collection('justif').onSnapshot((snap) => {
+      S.justif = new Map(snap.docs.filter((d) => d.exists).map((d) => [d.id, d.data()]));
+      if (firstJ) { firstJ = false; if (!document.querySelector('aside.drawer')) route(true); return; }
+      S.tables.forEach((fn) => fn());
+    }, onErr);
+    db.collection('valid').onSnapshot((snap) => {
+      S.valid = new Map(snap.docs.filter((d) => d.exists).map((d) => [d.id, d.data()]));
+      if (firstV) { firstV = false; if (!document.querySelector('aside.drawer') && !document.activeElement?.closest('textarea, input')) route(true); }
+    }, onErr);
+  }
+  if (!db) route(true);
+}
+start();
+})();
+</script>
