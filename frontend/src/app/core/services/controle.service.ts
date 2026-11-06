@@ -48,6 +48,8 @@ export interface CtlLine {
   obs: string;
   flags: string[];
   stLink: string | null;
+  article: string;         // poste du marché (alias or analyse.py rule)
+  piece: string;           // Facture / Bon / Facture + bon / Mention sans numéro / Aucune pièce
 }
 
 export interface CtlStLine {

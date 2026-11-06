@@ -54,7 +54,8 @@ public class ControleQueryService {
     public record CtlLine(String id, String sheet, int row, String date, String acct,
                           String proj, BigDecimal e, BigDecimal d, String mode, String bon,
                           String fct, String cat, String desig, String party, String poste,
-                          String kind, String obs, List<String> flags, String stLink) {}
+                          String kind, String obs, List<String> flags, String stLink,
+                          String article, String piece) {}
 
     public record CtlStLine(String id, String st, String sheet, int row, String date,
                             BigDecimal travaux, BigDecimal paye, String mode, String desig,
@@ -161,7 +162,9 @@ public class ControleQueryService {
                         rs.getString("kind"),
                         rs.getString("obs"),
                         flagsToList(rs.getArray("flags")),
-                        rs.getString("st_line_key")),
+                        rs.getString("st_line_key"),
+                        rs.getString("article"),
+                        rs.getString("piece")),
                 orgId);
     }
 
