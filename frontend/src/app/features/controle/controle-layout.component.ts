@@ -36,6 +36,7 @@ import { dfmt } from './controle-format';
 
       <!-- Tabs -->
       <nav class="ctl-tabs" aria-label="Pages">
+        <a routerLink="synthese" routerLinkActive="active">Synthèse</a>
         <a routerLink="" routerLinkActive="active" [routerLinkActiveOptions]="{exact: true}">Vue d'ensemble</a>
         <a routerLink="comptes" routerLinkActive="active">Comptes</a>
         <a routerLink="projets" routerLinkActive="active">Projets</a>
