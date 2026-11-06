@@ -59,6 +59,7 @@ export const ACCT_GROUP: Record<string, string> = {
   especes: 'Espèces',
   chantier: 'Caisses chantier',
   partenaire: 'Caisses partenaires',
+  echeance: 'Caisse à échéance',
 };
 
 // ── Formatters (ported from the prototype, same behaviour) ──────────────────

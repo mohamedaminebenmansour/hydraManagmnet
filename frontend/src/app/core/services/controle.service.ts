@@ -14,7 +14,7 @@ export interface CtlMeta {
 export interface CtlAccount {
   id: string;
   name: string;
-  kind: 'banque' | 'especes' | 'chantier' | 'partenaire';
+  kind: 'banque' | 'especes' | 'chantier' | 'partenaire' | 'echeance';
   owner: string;
   project: string;
   note: string | null;

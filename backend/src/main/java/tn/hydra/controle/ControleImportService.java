@@ -37,7 +37,7 @@ public class ControleImportService {
 
     private static final int MAX_PROBLEMS = 20;
     private static final int BATCH_SIZE = 500;
-    private static final Set<String> VALID_ACCOUNT_KINDS = Set.of("banque", "especes", "chantier", "partenaire");
+    private static final Set<String> VALID_ACCOUNT_KINDS = Set.of("banque", "especes", "chantier", "partenaire", "echeance");
     private static final Set<String> VALID_LINE_KINDS = Set.of("entree", "sortie", "transfert", "partenaire");
 
     private final JdbcTemplate jdbc;

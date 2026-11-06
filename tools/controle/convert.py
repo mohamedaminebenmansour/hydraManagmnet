@@ -105,6 +105,9 @@ PARTNER = {'STE NGNET Hajeb': ('ngnet-hajeb', 'Hajeb', 'NGNET'), 'SOCIETE NGNET 
            'STE NGNET OULED KHALFALLAH': ('ngnet-okh', 'Ouled Khalfallah', 'NGNET'), 'SOCIETE HANI BARKIA': ('hb-zaghdoud', 'Zaghdoud', 'Hani Barkia')}
 for sh, (i, p) in SITE.items(): accounts.append(dict(id=i, name=f'Caisse chantier {p}', kind='chantier', owner='SIGAT', project=p))
 for sh, (i, p, o) in PARTNER.items(): accounts.append(dict(id=i, name=f'Caisse {o} {p}', kind='partenaire', owner=o, project=p))
+ECHEANCE = 'Caisse à échéance'
+if ECHEANCE in wb.sheetnames:
+    accounts.append(dict(id='caisse-echeance', name=ECHEANCE, kind='echeance', owner='SIGAT', project=''))
 
 seen = {}
 def make_id(sheet, date, e, d, desig):
@@ -196,6 +199,24 @@ for sh, (person, proj) in ST_SHEETS.items():
         date = day(g(cD))
         stLines.append(dict(id=make_id(sh, date, w, p, desig), st=sid, sheet=sh, row=r, date=date, travaux=round(w, 3), paye=round(p, 3),
             mode=mode_of(g(cMode)), desig=desig, link=''))
+
+# --- Caisse à échéance (après toutes les autres lignes : les identifiants existants ne bougent pas)
+def load_echeance():
+    ws = wb[ECHEANCE]
+    h, vals = header_row(ws)
+    cD, cDes, cMode = col(vals, 'Date'), col(vals, 'Désignation'), col(vals, 'Mode')
+    cDb, cDest, cProj = col(vals, 'Débit'), col(vals, 'Sous-traitant'), col(vals, 'Destination')
+    cBon, cFct, cObs = col(vals, 'Bon'), col(vals, 'Fct'), col(vals, 'Observation')
+    for r in range(h + 1, ws.max_row + 1):
+        g = lambda c: ws.cell(r, c).value if c else None
+        d = num(g(cDb)) or 0.0
+        if not d: continue
+        cat, desig, date = txt(g(cDest)), txt(g(cDes)), day(g(cD))
+        lines.append(dict(id=make_id(ECHEANCE, date, 0.0, d, desig), sheet=ECHEANCE, row=r, date=date,
+            acct='caisse-echeance', proj=proj_of(g(cProj)), e=0.0, d=round(d, 3), mode=mode_of(g(cMode)),
+            bon=txt(g(cBon)), fct=txt(g(cFct)), cat=cat, desig=desig, party=person_of(cat),
+            poste=poste_out(cat, '', desig), kind='sortie', obs=txt(g(cObs))))
+if ECHEANCE in wb.sheetnames: load_echeance()
 
 # --- rapprochement : chaque paiement d'un compte ST retrouvé dans une caisse
 def dnum(s):
