@@ -1,4 +1,4 @@
-import { Component, Input, OnInit, computed, inject, signal } from '@angular/core';
+import { Component, Input, OnInit, computed, inject, input, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { ButtonModule } from 'primeng/button';
 import { ControleStore } from './controle.store';
@@ -264,7 +264,7 @@ export class LinesTableComponent implements OnInit {
   protected dfmt = dfmt;
 
   // ── Inputs ──────────────────────────────────────────────────────────────
-  @Input({ required: true }) preset!: (l: CtlLine) => boolean;
+  preset = input.required<(l: CtlLine) => boolean>();
   @Input() title = '';
   @Input() hideAcct = false;
   @Input() hideProj = false;
@@ -295,7 +295,7 @@ export class LinesTableComponent implements OnInit {
   private pool = computed(() => {
     const data = this.store.data();
     if (!data) return [] as CtlLine[];
-    return data.lines.filter(l => this.preset(l));
+    return data.lines.filter(l => this.preset()(l));
   });
 
   private uniqValues = (fn: (l: CtlLine) => string | null | undefined): string[] => {

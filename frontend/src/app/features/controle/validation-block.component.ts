@@ -73,7 +73,7 @@ import { VSTATUS, VLABEL, money } from './controle-format';
       <!-- Save + meta -->
       <div class="validate">
         <button class="ctl-btn primary" type="button"
-                [disabled]="!canWrite() || saving()"
+                [disabled]="!canWrite() || saving() || statut() === 'none'"
                 (click)="save()">
           {{ saving() ? 'Enregistrement…' : 'Enregistrer la validation' }}
         </button>
@@ -169,9 +169,9 @@ export class ValidationBlockComponent implements OnInit {
     });
   }
 
-  /** "Pas encore vu" is disabled when nothing was saved before. */
+  /** "Pas encore vu" is ALWAYS disabled — 'none' is never sent to the backend. */
   isNoneDisabled(code: string): boolean {
-    return code === 'none' && this.currentValid() == null;
+    return code === 'none';
   }
 
   setStatus(code: string): void {

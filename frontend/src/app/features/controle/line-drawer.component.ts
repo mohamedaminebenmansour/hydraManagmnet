@@ -418,8 +418,15 @@ export class LineDrawerComponent implements OnInit {
     const version = j?.version ?? 0;
     const v = parseFloat(this.docAmount().replace(/\s/g, '').replace(',', '.'));
 
-    // If statut is 'none' and no content, delete
-    const isEmpty = this.statut() === 'none' && !this.reference().trim() && !this.note().trim() && !this.docType();
+    // « Non vérifié » = always delete the justification row.
+    const isEmpty = this.statut() === 'none';
+
+    // If statut 'none' and no existing justification, just close the drawer.
+    if (isEmpty && j == null) {
+      this.saving.set(false);
+      this.close();
+      return;
+    }
 
     if (isEmpty) {
       // Delete: send statut none with empty body, the backend deletes
