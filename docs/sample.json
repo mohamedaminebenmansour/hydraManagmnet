@@ -1,0 +1,190 @@
+{
+ "meta": {
+  "source": "exemple-fictif.xlsx",
+  "generated": "2026-11-06T10:00",
+  "lines": 5,
+  "stLines": 3
+ },
+ "accounts": [
+  {
+   "id": "uib-test",
+   "name": "UIB TEST",
+   "kind": "banque",
+   "owner": "SOCIETE TEST",
+   "project": ""
+  },
+  {
+   "id": "chantier-alpha",
+   "name": "Caisse chantier Alpha",
+   "kind": "chantier",
+   "owner": "SOCIETE TEST",
+   "project": "Alpha"
+  },
+  {
+   "id": "partenaire-alpha",
+   "name": "Caisse Partenaire Alpha",
+   "kind": "partenaire",
+   "owner": "PARTENAIRE TEST",
+   "project": "Alpha"
+  }
+ ],
+ "stAccounts": [
+  {
+   "id": "st-test-alpha",
+   "sheet": "ST Test Alpha",
+   "person": "Sous-traitant Test",
+   "proj": "Alpha",
+   "supplier": false
+  }
+ ],
+ "lines": [
+  {
+   "id": "t0000000001",
+   "sheet": "Caisse Central",
+   "row": 10,
+   "date": "2026-01-05",
+   "acct": "uib-test",
+   "proj": "Alpha",
+   "e": 50000.0,
+   "d": 0.0,
+   "mode": "Virement",
+   "bon": "",
+   "fct": "",
+   "cat": "Encaissement",
+   "desig": "Encaissement projet Alpha",
+   "party": "",
+   "poste": "Encaissement projet",
+   "kind": "entree",
+   "obs": "",
+   "flags": []
+  },
+  {
+   "id": "t0000000002",
+   "sheet": "Caisse Central",
+   "row": 11,
+   "date": "2026-01-06",
+   "acct": "uib-test",
+   "proj": "Alpha",
+   "e": 0.0,
+   "d": 1000.0,
+   "mode": "Virement",
+   "bon": "12",
+   "fct": "",
+   "cat": "caisse chantier",
+   "desig": "Alimentation caisse chantier Alpha",
+   "party": "",
+   "poste": "Alimentation caisse chantier",
+   "kind": "transfert",
+   "obs": "",
+   "flags": []
+  },
+  {
+   "id": "t0000000003",
+   "sheet": "Caisse Central",
+   "row": 12,
+   "date": "2026-01-10",
+   "acct": "uib-test",
+   "proj": "Alpha",
+   "e": 0.0,
+   "d": 6500.0,
+   "mode": "Espèces",
+   "bon": "13",
+   "fct": "F-01",
+   "cat": "ST Test",
+   "desig": "Avance ST Test",
+   "party": "Sous-traitant Test",
+   "poste": "Sous-traitants",
+   "kind": "sortie",
+   "obs": "",
+   "flags": [
+    "especes"
+   ],
+   "stLink": "s0000000002"
+  },
+  {
+   "id": "t0000000004",
+   "sheet": "Caisse chantier Alpha",
+   "row": 8,
+   "date": "2026-01-07",
+   "acct": "chantier-alpha",
+   "proj": "Alpha",
+   "e": 1000.0,
+   "d": 0.0,
+   "mode": "Espèces",
+   "bon": "",
+   "fct": "",
+   "cat": "",
+   "desig": "Alimentation reçue",
+   "party": "",
+   "poste": "Alimentation reçue",
+   "kind": "transfert",
+   "obs": "",
+   "flags": []
+  },
+  {
+   "id": "t0000000005",
+   "sheet": "Caisse Partenaire Alpha",
+   "row": 9,
+   "date": "",
+   "acct": "partenaire-alpha",
+   "proj": "Alpha",
+   "e": 2400.0,
+   "d": 2400.0,
+   "mode": "Virement",
+   "bon": "",
+   "fct": "",
+   "cat": "Conduite PEHD",
+   "desig": "Conduite PEHD DN 110",
+   "party": "",
+   "poste": "Conduites et pièces spéciales",
+   "kind": "partenaire",
+   "obs": "",
+   "flags": [
+    "sans-date"
+   ]
+  }
+ ],
+ "stLines": [
+  {
+   "id": "s0000000001",
+   "st": "st-test-alpha",
+   "sheet": "ST Test Alpha",
+   "row": 8,
+   "date": "2026-01-20",
+   "travaux": 8000.0,
+   "paye": 0.0,
+   "mode": "",
+   "desig": "Attachement N°1",
+   "link": "",
+   "flags": []
+  },
+  {
+   "id": "s0000000002",
+   "st": "st-test-alpha",
+   "sheet": "ST Test Alpha",
+   "row": 9,
+   "date": "2026-01-10",
+   "travaux": 0.0,
+   "paye": 6500.0,
+   "mode": "Espèces",
+   "desig": "Avance",
+   "link": "t0000000003",
+   "flags": []
+  },
+  {
+   "id": "s0000000003",
+   "st": "st-test-alpha",
+   "sheet": "ST Test Alpha",
+   "row": 10,
+   "date": "2026-01-25",
+   "travaux": 0.0,
+   "paye": 500.0,
+   "mode": "Espèces",
+   "desig": "Avance 2",
+   "link": "",
+   "flags": [
+    "non-retrouve"
+   ]
+  }
+ ]
+}
