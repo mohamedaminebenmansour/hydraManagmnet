@@ -26,6 +26,7 @@ const NAV: NavItem[] = [
   { label: 'Accueil',        icon: 'pi-home',          path: '/',           perm: '',           color: '#0ea5e9' },
   { label: 'Mes validations',     icon: 'pi-check-square', path: '/mes-taches',  perm: '',           color: '#f59e0b', badge: 'count' },
   { label: 'Trésorerie',     icon: 'pi-wallet',       path: '/tresorerie',  perm: PERM.CASH_READ, color: '#0d9488' },
+  { label: 'Contrôle caisse', icon: 'pi-verified',    path: '/controle',    perm: PERM.CTL_READ,  color: '#0d5c6e' },
   // TASK 5 — Espace Finance: caisses + paiements en attente + export mensuel CSV.
   // Same CASH_READ perm (FINANCE + OWNER both have it); sits under Trésorerie in the nav.
   { label: 'Espace Finance', icon: 'pi-briefcase',    path: '/tresorerie/finance', perm: PERM.CASH_READ, color: '#0891b2' },
