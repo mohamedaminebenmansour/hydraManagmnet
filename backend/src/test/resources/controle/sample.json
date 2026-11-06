@@ -1,0 +1,28 @@
+{
+  "meta": {
+    "source": "sample-caisse-fake.xlsx",
+    "generated": "2024-12-31",
+    "lines": 5,
+    "stLines": 3
+  },
+  "accounts": [
+    {"id": "b1", "name": "Banque Factice", "kind": "banque", "owner": "Société Factice", "project": "", "note": ""},
+    {"id": "c1", "name": "Caisse Factice", "kind": "especes", "owner": "Société Factice", "project": "", "note": "caisse principale"},
+    {"id": "p1", "name": "Chantier Factice", "kind": "chantier", "owner": "Société Factice", "project": "Chantier Factice A", "note": ""}
+  ],
+  "stAccounts": [
+    {"id": "st1", "sheet": "Sous-traitants", "person": "Sous-traitant Factice", "proj": "Chantier Factice A", "supplier": true}
+  ],
+  "lines": [
+    {"id": "t0000000001", "sheet": "Banque", "row": 5, "date": "2024-01-15", "acct": "b1", "proj": "Chantier Factice A", "e": 1000.000, "d": 0, "mode": "virement", "bon": "", "fct": "", "cat": "apport", "desig": "Apport initial", "party": "", "poste": "", "kind": "entree", "obs": "", "flags": [], "stLink": null},
+    {"id": "t0000000002", "sheet": "Banque", "row": 6, "date": "2024-01-20", "acct": "b1", "proj": "Chantier Factice A", "e": 0, "d": 250.000, "mode": "cheque", "bon": "BC-FAKE-001", "fct": "", "cat": "materiaux", "desig": "Achat materiaux", "party": "Fournisseur Factice", "poste": "materiaux", "kind": "sortie", "obs": "", "flags": [], "stLink": null},
+    {"id": "t0000000003", "sheet": "Caisse", "row": 7, "date": "2024-01-25", "acct": "c1", "proj": "Chantier Factice A", "e": 0, "d": 50.000, "mode": "especes", "bon": "", "fct": "", "cat": "main d'oeuvre", "desig": "Main d'oeuvre", "party": "", "poste": "main d'oeuvre", "kind": "sortie", "obs": "", "flags": [], "stLink": null},
+    {"id": "t0000000004", "sheet": "Banque", "row": 8, "date": "2024-02-01", "acct": "b1", "proj": "", "e": 0, "d": 0, "mode": "virement", "bon": "", "fct": "", "cat": "transfert", "desig": "Transfert banque caisse", "party": "", "poste": "", "kind": "transfert", "obs": "", "flags": [], "stLink": null},
+    {"id": "t0000000005", "sheet": "Banque", "row": 9, "date": "2024-02-05", "acct": "p1", "proj": "Chantier Factice A", "e": 0, "d": 0, "mode": "virement", "bon": "", "fct": "", "cat": "reglement", "desig": "Reglement sous-traitant", "party": "Sous-traitant Factice", "poste": "", "kind": "partenaire", "obs": "", "flags": [], "stLink": "st-line-1"}
+  ],
+  "stLines": [
+    {"id": "st-line-1", "st": "st1", "sheet": "Sous-traitants", "row": 5, "date": "2024-02-05", "travaux": 500.000, "paye": 500.000, "mode": "virement", "desig": "Travaux de plomberie", "link": "t0000000005", "flags": []},
+    {"id": "st-line-2", "st": "st1", "sheet": "Sous-traitants", "row": 6, "date": "2024-02-10", "travaux": 300.000, "paye": 0, "mode": "", "desig": "Travaux electricite", "link": null, "flags": []},
+    {"id": "st-line-3", "st": "st1", "sheet": "Sous-traitants", "row": 7, "date": "2024-02-15", "travaux": 200.000, "paye": 100.000, "mode": "especes", "desig": "Carrelage", "link": null, "flags": []}
+  ]
+}
