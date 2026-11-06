@@ -1,4 +1,4 @@
-import { Component, HostListener, OnInit, computed, effect, inject, signal } from '@angular/core';
+import { Component, HostListener, computed, effect, inject, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { Router } from '@angular/router';
 import { ButtonModule } from 'primeng/button';
@@ -188,7 +188,7 @@ import {
     @media (max-width: 400px) { .form { grid-template-columns: 1fr; } }
   `]
 })
-export class LineDrawerComponent implements OnInit {
+export class LineDrawerComponent {
   protected store = inject(ControleStore);
   private drawer = inject(ControleDrawerService);
   private api = inject(ControleService);
@@ -326,7 +326,7 @@ export class LineDrawerComponent implements OnInit {
   protected fieldErrorEntries = computed(() => Object.entries(this.fieldErrors()));
 
   // ── Init ──────────────────────────────────────────────────────────────────
-  ngOnInit(): void {
+  constructor() {
     // React to drawer.openKey changes
     effect(() => {
       const key = this.drawer.openKey();
@@ -336,7 +336,7 @@ export class LineDrawerComponent implements OnInit {
         this.visible.set(false);
         this.line.set(null);
       }
-    });
+    }, { allowSignalWrites: true });
   }
 
   @HostListener('document:keydown.escape')

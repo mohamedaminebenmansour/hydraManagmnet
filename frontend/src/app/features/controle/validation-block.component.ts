@@ -1,4 +1,4 @@
-import { Component, Input, OnInit, computed, effect, inject, signal } from '@angular/core';
+import { Component, Input, computed, effect, inject, input, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { ButtonModule } from 'primeng/button';
 import { MessageService } from 'primeng/api';
@@ -126,7 +126,7 @@ import { VSTATUS, VLABEL, money } from './controle-format';
     @media (max-width: 400px) { .form { grid-template-columns: 1fr; } }
   `]
 })
-export class ValidationBlockComponent implements OnInit {
+export class ValidationBlockComponent {
   private store = inject(ControleStore);
   private api = inject(ControleService);
   private auth = inject(AuthService);
@@ -136,7 +136,7 @@ export class ValidationBlockComponent implements OnInit {
   protected VLABEL = VLABEL;
   protected money = money;
 
-  @Input({ required: true }) key!: string;
+  key = input.required<string>();
   @Input({ required: true }) label!: string;
   @Input() suggestedBalance: number | null = null;
 
@@ -146,7 +146,7 @@ export class ValidationBlockComponent implements OnInit {
   protected saving = signal(false);
   protected staleError = signal(false);
 
-  private currentValid = computed(() => this.store.valid().get(this.key));
+  private currentValid = computed(() => this.store.valid().get(this.key()));
 
   canWrite = computed(() => this.auth.can('CTL_JUSTIFY'));
 
@@ -158,7 +158,7 @@ export class ValidationBlockComponent implements OnInit {
     return name ? `Mis à jour le ${date} par ${name}` : `Mis à jour le ${date}`;
   });
 
-  ngOnInit(): void {
+  constructor() {
     // Load current values when the store data changes
     effect(() => {
       const v = this.currentValid();
@@ -166,7 +166,7 @@ export class ValidationBlockComponent implements OnInit {
       this.agreedBalance.set(v?.agreedBalance != null ? String(v.agreedBalance).replace('.', ',') : '');
       this.note.set(v?.note ?? '');
       this.staleError.set(false);
-    });
+    }, { allowSignalWrites: true });
   }
 
   /** "Pas encore vu" is ALWAYS disabled — 'none' is never sent to the backend. */
@@ -199,9 +199,9 @@ export class ValidationBlockComponent implements OnInit {
       version,
     };
 
-    this.api.putValidation(this.key, body).subscribe({
+    this.api.putValidation(this.key(), body).subscribe({
       next: (result) => {
-        this.store.setValid(this.key, result);
+        this.store.setValid(this.key(), result);
         this.msgs.add({ severity: 'success', summary: 'Validation enregistrée.' });
         this.saving.set(false);
       },

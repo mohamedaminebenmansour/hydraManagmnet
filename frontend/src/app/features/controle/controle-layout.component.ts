@@ -149,8 +149,7 @@ export class ControleLayoutComponent implements OnInit {
 
   metaLine = signal<string | null>(null);
 
-  ngOnInit(): void {
-    this.store.load();
+  constructor() {
     // Update the meta line when data arrives or scope changes
     effect(() => {
       const d = this.store.data();
@@ -165,7 +164,11 @@ export class ControleLayoutComponent implements OnInit {
       } else {
         this.metaLine.set(null);
       }
-    });
+    }, { allowSignalWrites: true });
+  }
+
+  ngOnInit(): void {
+    this.store.load();
   }
 
   goImport(): void {
