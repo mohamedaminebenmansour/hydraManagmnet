@@ -75,8 +75,8 @@ public class ControleJustificationService {
                     insert into ctl_justification (org_id, line_key, statut, doc_type, reference, doc_date, doc_amount, note, version, updated_by, updated_at)
                     values (?, ?, ?, ?, ?, ?, ?, ?, 1, ?, now())
                     on conflict (org_id, line_key) do nothing
-                    """, orgId, lineKey, body.statut(), body.docType(), body.reference(),
-                    parseDate(body.docDate()), body.docAmount(), body.note(), me.getId());
+                    """, orgId, lineKey, body.statut(), blankToNull(body.docType()), blankToNull(body.reference()),
+                    parseDate(body.docDate()), body.docAmount(), blankToNull(body.note()), me.getId());
             if (inserted == 0) {
                 throw new BusinessRuleException("STALE",
                         "Quelqu'un d'autre a modifié ce justificatif. Rechargez.");
@@ -87,8 +87,8 @@ public class ControleJustificationService {
                     update ctl_justification set statut = ?, doc_type = ?, reference = ?, doc_date = ?, doc_amount = ?, note = ?,
                         version = version + 1, updated_by = ?, updated_at = now()
                     where org_id = ? and line_key = ? and version = ?
-                    """, body.statut(), body.docType(), body.reference(),
-                    parseDate(body.docDate()), body.docAmount(), body.note(), me.getId(),
+                    """, body.statut(), blankToNull(body.docType()), blankToNull(body.reference()),
+                    parseDate(body.docDate()), body.docAmount(), blankToNull(body.note()), me.getId(),
                     orgId, lineKey, body.version());
             if (updated == 0) {
                 throw new BusinessRuleException("STALE",
@@ -117,9 +117,12 @@ public class ControleJustificationService {
             errors.put("statut", "Statut invalide.");
         }
 
-        // docType
+        // docType — required only for "justifie" and "partiel"
         String docType = str(body.docType());
-        if (docType.isEmpty() || !VALID_DOCS.contains(docType)) {
+        boolean needsDoc = "justifie".equals(body.statut()) || "partiel".equals(body.statut());
+        if (docType.isEmpty()) {
+            if (needsDoc) errors.put("docType", "Choisissez le type de document.");
+        } else if (!VALID_DOCS.contains(docType)) {
             errors.put("docType", "Type de document invalide.");
         }
 
@@ -195,6 +198,13 @@ public class ControleJustificationService {
     }
 
     private static String str(String s) { return s == null ? "" : s; }
+
+    /** Return null for null/blank strings, otherwise the trimmed value. */
+    private static String blankToNull(String s) {
+        if (s == null) return null;
+        String t = s.trim();
+        return t.isEmpty() ? null : s;
+    }
 
     private static String jsonEscape(String s) {
         if (s == null) return "";

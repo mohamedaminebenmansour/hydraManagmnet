@@ -267,4 +267,32 @@ class ControleSaveTest {
                 new ControleValidationService.ValidBody("valide", null, null, 0),
                 nonOwnerAuth));
     }
+
+    // ── CS-09 ──────────────────────────────────────────────────────────────
+
+    @Test
+    void putJustif_nonJustifie_withoutDocType_saved() {
+        var body = new ControleJustificationService.JustifBody(
+                "non-justifie", null, null, null, null, null, 0);
+        var r = justifService.putJustification(ownerAuth, "t0000000003", body);
+        assertThat(r).isInstanceOf(ControleQueryService.CtlJustif.class);
+        var j = (ControleQueryService.CtlJustif) r;
+        assertThat(j.statut()).isEqualTo("non-justifie");
+        assertThat(j.docType()).isNull();
+        assertThat(j.version()).isEqualTo(1);
+    }
+
+    // ── CS-10 ──────────────────────────────────────────────────────────────
+
+    @Test
+    void putJustif_justifie_withoutDocType_400() {
+        var body = new ControleJustificationService.JustifBody(
+                "justifie", null, null, null, null, null, 0);
+        assertThatThrownBy(() -> justifService.putJustification(ownerAuth, "t0000000004", body))
+                .isInstanceOf(CompanyProfileService.ValidationException.class)
+                .satisfies(ex -> {
+                    var e = (CompanyProfileService.ValidationException) ex;
+                    assertThat(e.getFields()).containsOnlyKeys("docType");
+                });
+    }
 }
