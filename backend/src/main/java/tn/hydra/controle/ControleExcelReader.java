@@ -64,6 +64,9 @@ public class ControleExcelReader {
 
     private static final Set<Integer> INTERNAL = Set.of(606, 607, 962, 963, 1647, 1648);
 
+    static final String ECHEANCE = "Caisse à échéance";
+    static final String RECAP_SHEET = "Récap T.d.B dépenses";
+
     private static final Map<String, String> ACCTS = Map.of(
             "UIB SIGAT", "uib-sigat", "UIB OMAR", "uib-omar", "UIB NGNET", "uib-ngnet",
             "Caisse SIGAT", "caisse-sigat");
@@ -167,6 +170,7 @@ public class ControleExcelReader {
         private final List<ControleImportFile.Account> accounts = new ArrayList<>();
         private final List<ControleImportFile.StAccount> stAccounts = new ArrayList<>();
         private final List<S> stLines = new ArrayList<>();
+        private final List<ControleImportFile.Recap> recap = new ArrayList<>();
 
         Run(XSSFWorkbook wb, LocalDate today) {
             this.wb = wb;
@@ -185,13 +189,20 @@ public class ControleExcelReader {
                     v[0], "Caisse chantier " + v[1], "chantier", "SIGAT", v[1], null)));
             PARTNER.forEach((sh, v) -> accounts.add(new ControleImportFile.Account(
                     v[0], "Caisse " + v[2] + " " + v[1], "partenaire", v[2], v[1], null)));
+            Sheet echeanceSheet = sheetOrNull(ECHEANCE);
+            if (echeanceSheet != null) {
+                accounts.add(new ControleImportFile.Account("caisse-echeance", ECHEANCE, "echeance", "SIGAT", "", null));
+            }
 
             caisseCentral();
             SITE.forEach((sh, v) -> loadBox(sh, v[0], v[1], false));
             PARTNER.forEach((sh, v) -> loadBox(sh, v[0], v[1], true));
             stSheets();
+            if (echeanceSheet != null) echeance(echeanceSheet);
             rapprochement();
             flags();
+            Sheet recapSheet = sheetOrNull(RECAP_SHEET);
+            if (recapSheet != null) recap(recapSheet);
 
             String source = sourceName == null ? "" : sourceName.substring(sourceName.lastIndexOf('/') + 1);
             source = source.substring(source.lastIndexOf('\\') + 1);
@@ -199,7 +210,8 @@ public class ControleExcelReader {
                     lines.size(), stLines.size());
             return new ControleImportFile.ImportFile(meta, accounts, stAccounts,
                     lines.stream().map(L::toRecord).toList(),
-                    stLines.stream().map(S::toRecord).toList());
+                    stLines.stream().map(S::toRecord).toList(),
+                    List.copyOf(recap));
         }
 
         // ── make_id ───────────────────────────────────────────────────────
@@ -317,6 +329,37 @@ public class ControleExcelReader {
             });
         }
 
+        // ── Caisse à échéance (after every other line: existing ids do not move) ──
+
+        void echeance(Sheet ws) {
+            HeaderRow hr = headerRow(ws);
+            if (hr == null) {
+                throw new BusinessRuleException("IMPORT_FORMAT",
+                        "En-tête « Désignation » introuvable dans la feuille « " + ECHEANCE + " ».");
+            }
+            List<String> vals = hr.vals;
+            Integer cD = col(vals, "Date"), cDes = col(vals, "Désignation"), cMode = col(vals, "Mode");
+            Integer cDb = col(vals, "Débit"), cDest = col(vals, "Sous-traitant"), cProj = col(vals, "Destination");
+            Integer cBon = col(vals, "Bon"), cFct = col(vals, "Fct"), cObs = col(vals, "Observation");
+            for (int r = hr.row + 1; r <= maxRow(ws); r++) {
+                final int row = r;
+                java.util.function.Function<Integer, Object> g = c -> c == null ? null : value(ws, row, c);
+                double d = orZero(num(g.apply(cDb)));
+                if (d == 0) continue;
+                String cat = txt(g.apply(cDest)), desig = txt(g.apply(cDes)), date = day(g.apply(cD));
+                L l = new L();
+                l.id = makeId(ECHEANCE, date, 0.0, d, desig);
+                l.sheet = ECHEANCE; l.row = r; l.date = date; l.acct = "caisse-echeance";
+                l.proj = projOf(g.apply(cProj));
+                l.e = 0.0; l.d = round3(d); l.mode = modeOf(g.apply(cMode));
+                l.bon = txt(g.apply(cBon)); l.fct = txt(g.apply(cFct)); l.cat = cat; l.desig = desig;
+                l.party = personOf(cat);
+                l.poste = posteOut(cat, "", desig);
+                l.kind = "sortie"; l.obs = txt(g.apply(cObs));
+                lines.add(l);
+            }
+        }
+
         // ── rapprochement ─────────────────────────────────────────────────
 
         void rapprochement() {
@@ -390,6 +433,36 @@ public class ControleExcelReader {
             }
         }
 
+        // ── « Récap des dépenses par projet » ─────────────────────────────
+
+        void recap(Sheet ws) {
+            int maxCol = maxColumn(ws);
+            Integer top = null;
+            for (int r = 1; r <= maxRow(ws) && top == null; r++) {
+                for (int c = 1; c <= maxCol; c++) {
+                    if (txt(value(ws, r, c)).equals("Récap des dépenses par projet")) { top = r; break; }
+                }
+            }
+            if (top == null) return;
+            int h = top + 1;
+            List<Integer> headCols = new ArrayList<>();
+            List<String> heads = new ArrayList<>();
+            for (int c = 3; c <= maxCol; c++) {
+                String t = txt(value(ws, h, c));
+                if (t.equals("Total par Projet")) break;
+                if (!t.isEmpty()) { headCols.add(c); heads.add(t); }
+            }
+            for (int r = h + 1; r <= maxRow(ws); r++) {
+                String name = txt(value(ws, r, 2));
+                if (name.equals("Total par Dést.")) break;
+                if (name.isEmpty()) continue;
+                for (int i = 0; i < heads.size(); i++) {
+                    Double a = num(value(ws, r, headCols.get(i)));
+                    if (truthy(a)) recap.add(new ControleImportFile.Recap(projOf(name), heads.get(i), round3(a)));
+                }
+            }
+        }
+
         // ── sheets and cells (openpyxl data_only=True) ────────────────────
 
         /** wb[name]: exact name (POI's getSheet ignores case, openpyxl does not). */
@@ -399,6 +472,14 @@ public class ControleExcelReader {
             }
             throw new BusinessRuleException("IMPORT_FORMAT",
                     "La feuille « " + name + " » est absente du fichier Excel.");
+        }
+
+        /** {@code name in wb.sheetnames}: the sheet, or null when absent (optional sheets). */
+        Sheet sheetOrNull(String name) {
+            for (int i = 0; i < wb.getNumberOfSheets(); i++) {
+                if (wb.getSheetName(i).equals(name)) return wb.getSheetAt(i);
+            }
+            return null;
         }
 
         static int maxRow(Sheet ws) {

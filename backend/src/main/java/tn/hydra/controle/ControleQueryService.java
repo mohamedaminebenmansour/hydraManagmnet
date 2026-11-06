@@ -55,7 +55,9 @@ public class ControleQueryService {
                           String proj, BigDecimal e, BigDecimal d, String mode, String bon,
                           String fct, String cat, String desig, String party, String poste,
                           String kind, String obs, List<String> flags, String stLink,
-                          String article, String piece) {}
+                          String article, String piece, String rubrique, String famille) {}
+
+    public record CtlRecap(String proj, String rubrique, BigDecimal amount) {}
 
     public record CtlStLine(String id, String st, String sheet, int row, String date,
                             BigDecimal travaux, BigDecimal paye, String mode, String desig,
@@ -74,7 +76,7 @@ public class ControleQueryService {
     public record CtlData(CtlMeta meta, List<CtlAccount> accounts,
                           List<CtlStAccount> stAccounts, List<CtlLine> lines,
                           List<CtlStLine> stLines, List<CtlJustif> justif,
-                          List<CtlValid> valid, CtlImport imported) {}
+                          List<CtlValid> valid, CtlImport imported, List<CtlRecap> recap) {}
 
     // ════════════════════════════════════════════════════════════════════════
     // GET /api/controle/data
@@ -115,7 +117,9 @@ public class ControleQueryService {
         List<CtlJustif> justif = loadJustifications(orgId);
         List<CtlValid> valid = loadValidations(orgId);
 
-        return new CtlData(meta, accounts, stAccounts, lines, stLines, justif, valid, imported);
+        List<CtlRecap> recap = loadRecap(orgId);
+
+        return new CtlData(meta, accounts, stAccounts, lines, stLines, justif, valid, imported, recap);
     }
 
     // ════════════════════════════════════════════════════════════════════════
@@ -164,7 +168,16 @@ public class ControleQueryService {
                         flagsToList(rs.getArray("flags")),
                         rs.getString("st_line_key"),
                         rs.getString("article"),
-                        rs.getString("piece")),
+                        rs.getString("piece"),
+                        rs.getString("rubrique"),
+                        rs.getString("famille")),
+                orgId);
+    }
+
+    private List<CtlRecap> loadRecap(UUID orgId) {
+        return jdbc.query(
+                "select project, rubrique, amount from ctl_recap where org_id = ? order by project, rubrique",
+                (rs, i) -> new CtlRecap(rs.getString("project"), rs.getString("rubrique"), rs.getBigDecimal("amount")),
                 orgId);
     }
 

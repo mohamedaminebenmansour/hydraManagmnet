@@ -38,8 +38,19 @@ public final class ControleImportFile {
                          double travaux, double paye, String mode, String desig,
                          String link, List<String> flags) {}
 
+    /** One cell of the Excel table « Récap des dépenses par projet ». */
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    public record Recap(String proj, String rubrique, double amount) {}
+
     @JsonIgnoreProperties(ignoreUnknown = true)
     public record ImportFile(Meta meta, List<Account> accounts,
                              List<StAccount> stAccounts, List<Line> lines,
-                             List<StLine> stLines) {}
+                             List<StLine> stLines, List<Recap> recap) {
+
+        /** Files without a recap (older convert.py exports, tests). */
+        public ImportFile(Meta meta, List<Account> accounts, List<StAccount> stAccounts,
+                          List<Line> lines, List<StLine> stLines) {
+            this(meta, accounts, stAccounts, lines, stLines, List.of());
+        }
+    }
 }

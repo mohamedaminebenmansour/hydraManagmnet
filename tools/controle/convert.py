@@ -105,6 +105,9 @@ PARTNER = {'STE NGNET Hajeb': ('ngnet-hajeb', 'Hajeb', 'NGNET'), 'SOCIETE NGNET 
            'STE NGNET OULED KHALFALLAH': ('ngnet-okh', 'Ouled Khalfallah', 'NGNET'), 'SOCIETE HANI BARKIA': ('hb-zaghdoud', 'Zaghdoud', 'Hani Barkia')}
 for sh, (i, p) in SITE.items(): accounts.append(dict(id=i, name=f'Caisse chantier {p}', kind='chantier', owner='SIGAT', project=p))
 for sh, (i, p, o) in PARTNER.items(): accounts.append(dict(id=i, name=f'Caisse {o} {p}', kind='partenaire', owner=o, project=p))
+ECHEANCE = 'Caisse à échéance'
+if ECHEANCE in wb.sheetnames:
+    accounts.append(dict(id='caisse-echeance', name=ECHEANCE, kind='echeance', owner='SIGAT', project=''))
 
 seen = {}
 def make_id(sheet, date, e, d, desig):
@@ -197,6 +200,24 @@ for sh, (person, proj) in ST_SHEETS.items():
         stLines.append(dict(id=make_id(sh, date, w, p, desig), st=sid, sheet=sh, row=r, date=date, travaux=round(w, 3), paye=round(p, 3),
             mode=mode_of(g(cMode)), desig=desig, link=''))
 
+# --- Caisse à échéance (après toutes les autres lignes : les identifiants existants ne bougent pas)
+def load_echeance():
+    ws = wb[ECHEANCE]
+    h, vals = header_row(ws)
+    cD, cDes, cMode = col(vals, 'Date'), col(vals, 'Désignation'), col(vals, 'Mode')
+    cDb, cDest, cProj = col(vals, 'Débit'), col(vals, 'Sous-traitant'), col(vals, 'Destination')
+    cBon, cFct, cObs = col(vals, 'Bon'), col(vals, 'Fct'), col(vals, 'Observation')
+    for r in range(h + 1, ws.max_row + 1):
+        g = lambda c: ws.cell(r, c).value if c else None
+        d = num(g(cDb)) or 0.0
+        if not d: continue
+        cat, desig, date = txt(g(cDest)), txt(g(cDes)), day(g(cD))
+        lines.append(dict(id=make_id(ECHEANCE, date, 0.0, d, desig), sheet=ECHEANCE, row=r, date=date,
+            acct='caisse-echeance', proj=proj_of(g(cProj)), e=0.0, d=round(d, 3), mode=mode_of(g(cMode)),
+            bon=txt(g(cBon)), fct=txt(g(cFct)), cat=cat, desig=desig, party=person_of(cat),
+            poste=poste_out(cat, '', desig), kind='sortie', obs=txt(g(cObs))))
+if ECHEANCE in wb.sheetnames: load_echeance()
+
 # --- rapprochement : chaque paiement d'un compte ST retrouvé dans une caisse
 def dnum(s):
     try: return dt.date.fromisoformat(s).toordinal()
@@ -245,9 +266,35 @@ for s in stLines:
     if s['paye'] > 0 and not s['link']: s['flags'].append('non-retrouve')
     if s['date'] and (s['date'] > TODAY.isoformat() or s['date'] < '2023-01-01'): s['flags'].append('date')
 
+# --- « Récap des dépenses par projet » (feuille « Récap T.d.B dépenses ») : montants de l'Excel par projet et rubrique
+RECAP_SHEET = 'Récap T.d.B dépenses'
+recap = []
+def load_recap():
+    ws = wb[RECAP_SHEET]
+    top = None
+    for r in range(1, ws.max_row + 1):
+        for c in range(1, ws.max_column + 1):
+            if txt(ws.cell(r, c).value) == 'Récap des dépenses par projet': top = r; break
+        if top: break
+    if not top: return
+    h = top + 1
+    heads = []
+    for c in range(3, ws.max_column + 1):
+        t = txt(ws.cell(h, c).value)
+        if t == 'Total par Projet': break
+        if t: heads.append((c, t))
+    for r in range(h + 1, ws.max_row + 1):
+        name = txt(ws.cell(r, 2).value)
+        if name == 'Total par Dést.': break
+        if not name: continue
+        for c, t in heads:
+            a = num(ws.cell(r, c).value)
+            if a: recap.append(dict(proj=proj_of(name), rubrique=t, amount=round(a, 3)))
+if RECAP_SHEET in wb.sheetnames: load_recap()
+
 data = dict(meta=dict(source=SRC.split('/')[-1], generated=dt.datetime.now().isoformat(timespec='minutes'),
                       lines=len(lines), stLines=len(stLines)),
-            accounts=accounts, stAccounts=stAccounts, lines=lines, stLines=stLines)
+            accounts=accounts, stAccounts=stAccounts, lines=lines, stLines=stLines, recap=recap)
 json.dump(data, open(OUT, 'w'), ensure_ascii=False, separators=(',', ':'))
 print('lines', len(lines), 'stLines', len(stLines), 'linked', sum(1 for s in stLines if s['link']),
       'payments', sum(1 for s in stLines if s['paye'] > 0))

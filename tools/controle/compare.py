@@ -19,8 +19,10 @@ for n in ('lines', 'stLines'):
         diffs.append(f'meta.{n} : {a["meta"][n]} contre {b["meta"][n]}')
 for n in ('accounts', 'stAccounts', 'lines', 'stLines'):
     cmp_list(n, a[n], b[n])
+cmp_list('recap', a.get('recap') or [], b.get('recap') or [])
 
-print('lines', len(a['lines']), len(b['lines']), 'stLines', len(a['stLines']), len(b['stLines']))
+print('lines', len(a['lines']), len(b['lines']), 'stLines', len(a['stLines']), len(b['stLines']),
+      'recap', len(a.get('recap') or []), len(b.get('recap') or []))
 if diffs:
     print(len(diffs), 'différence(s) :')
     for d in diffs[:20]: print(' ', d)
