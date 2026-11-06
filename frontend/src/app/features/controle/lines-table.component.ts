@@ -5,7 +5,7 @@ import { ControleStore } from './controle.store';
 import { ControleDrawerService } from './controle-drawer.service';
 import { CtlLine } from '@app/core/services/controle.service';
 import {
-  STATUS, STATUS_LABEL, FLAGS, money, pct, dfmt, slug,
+  STATUS, STATUS_LABEL, FLAGS, money, pct, dfmt, csvAmount, downloadCsv,
 } from './controle-format';
 
 interface FilterState {
@@ -18,6 +18,8 @@ interface FilterState {
   acct: string;
   proj: string;
   party: string;
+  article: string;
+  piece: string;
   shown: number;
 }
 
@@ -87,6 +89,18 @@ const SENS_LABELS: Record<string, string> = {
             <option [value]="x">{{ x }}</option>
           }
         </select>
+        <select [ngModel]="filters().article" (ngModelChange)="onFilter('article', $event)" aria-label="Tous les articles">
+          <option value="">Tous les articles</option>
+          @for (x of articleOptions(); track x) {
+            <option [value]="x">{{ x }}</option>
+          }
+        </select>
+        <select [ngModel]="filters().piece" (ngModelChange)="onFilter('piece', $event)" aria-label="Toutes les pièces">
+          <option value="">Toutes les pièces</option>
+          @for (x of pieceOptions(); track x) {
+            <option [value]="x">{{ x }}</option>
+          }
+        </select>
         <select [ngModel]="filters().statut" (ngModelChange)="onFilter('statut', $event)" aria-label="Tous les justificatifs">
           <option value="">Tous les justificatifs</option>
           @for (s of STATUS; track s[0]) {
@@ -123,6 +137,8 @@ const SENS_LABELS: Record<string, string> = {
                 <th>Compte</th>
                 @if (!hideProj) { <th>Projet</th> }
                 <th>Désignation</th>
+                <th>Article</th>
+                <th>Pièce</th>
                 <th>Paiement</th>
                 <th class="num">Entrée</th>
                 <th class="num">Sortie</th>
@@ -149,6 +165,8 @@ const SENS_LABELS: Record<string, string> = {
                       }
                     </div>
                   </td>
+                  <td>{{ l.article || '—' }}</td>
+                  <td class="nowrap">{{ l.piece || '—' }}</td>
                   <td>{{ l.mode }}</td>
                   <td class="num pos">{{ money(l.e) }}</td>
                   <td class="num neg">{{ money(l.d) }}</td>
@@ -279,7 +297,7 @@ export class LinesTableComponent implements OnInit {
   // ── Filter signals ──────────────────────────────────────────────────────
   protected filters = signal<FilterState>({
     q: '', sens: '', mode: '', poste: '', statut: '', flag: '',
-    acct: '', proj: '', party: '', shown: 150,
+    acct: '', proj: '', party: '', article: '', piece: '', shown: 150,
   });
 
   private searchTimer: ReturnType<typeof setTimeout> | null = null;
@@ -312,6 +330,8 @@ export class LinesTableComponent implements OnInit {
   modeOptions = computed(() => this.uniqValues(l => l.mode));
   posteOptions = computed(() => this.uniqValues(l => l.poste));
   partyOptions = computed(() => this.uniqValues(l => l.party));
+  articleOptions = computed(() => this.uniqValues(l => l.article));
+  pieceOptions = computed(() => this.uniqValues(l => l.piece));
   flagKeys = computed(() => Object.keys(FLAGS).filter(k => k !== 'non-retrouve'));
 
   // ── Filtered + sorted rows ───────────────────────────────────────────────
@@ -327,13 +347,15 @@ export class LinesTableComponent implements OnInit {
       if (st.mode && l.mode !== st.mode) return false;
       if (st.poste && l.poste !== st.poste) return false;
       if (st.party && l.party !== st.party) return false;
+      if (st.article && l.article !== st.article) return false;
+      if (st.piece && l.piece !== st.piece) return false;
       if (st.statut && this.store.jStatus(l.id) !== st.statut) return false;
       if (st.flag === 'any' && !l.flags.length) return false;
       if (st.flag && st.flag !== 'any' && !l.flags.includes(st.flag)) return false;
       if (st.q) {
         const j = this.store.jOf(l.id);
         const hay = (
-          l.desig + ' ' + l.cat + ' ' + l.party + ' ' + l.poste + ' ' +
+          l.desig + ' ' + l.cat + ' ' + l.party + ' ' + l.poste + ' ' + l.article + ' ' +
           l.bon + ' ' + l.fct + ' ' + l.sheet + ' ' + l.row + ' ' +
           money(l.e) + ' ' + money(l.d) + ' ' +
           (j ? (j.reference ?? '') + ' ' + (j.note ?? '') : '')
@@ -388,39 +410,26 @@ export class LinesTableComponent implements OnInit {
     return this.store.acctById().get(id)?.name ?? 'Sans compte';
   }
 
-  // ── Export CSV (same as prototype's exportCsv) ────────────────────────────
+  // ── Export CSV for French Excel (Phase 3 replaces it with a real .xlsx) ───
   exportCsv(): void {
-    const rows = this.filteredRows();
-    const name = this.title || 'lignes';
     const head = [
       'Date', 'Compte', 'Projet', 'Désignation', 'Catégorie', 'Sous-traitant',
-      'Paiement', 'Entrée', 'Sortie', 'Bon', 'Facture (Excel)', 'Feuille',
+      'Article', 'Pièce', 'Paiement', 'Entrée', 'Sortie', 'Bon', 'Facture (Excel)', 'Feuille',
       'Ligne Excel', 'Alertes', 'Justificatif', 'Type de document', 'Référence',
       'Date document', 'Montant document', 'Note',
     ];
-    const q = (v: unknown) => '"' + String(v ?? '').replace(/"/g, '""') + '"';
-    const n = (v: number | null | undefined) => v ? String(v).replace('.', ',') : '';
-    const lines = [head.map(q).join(';')];
-    for (const l of rows) {
+    const rows = this.filteredRows().map(l => {
       const j = this.store.jOf(l.id);
-      lines.push([
+      return [
         dfmt(l.date), this.acctName(l.acct), l.proj, l.desig, l.poste, l.party,
-        l.mode, n(l.e), n(l.d), l.bon, l.fct, l.sheet, l.row,
+        l.article, l.piece, l.mode, csvAmount(l.e), csvAmount(l.d), l.bon, l.fct, l.sheet, l.row,
         l.flags.map(f => FLAGS[f]?.[0] || f).join(', '),
         STATUS_LABEL[j?.statut ?? 'none'],
         j?.docType ?? '', j?.reference ?? '',
         j?.docDate ? dfmt(j.docDate) : '',
-        n(j?.docAmount), j?.note ?? '',
-      ].map(q).join(';'));
-    }
-    const csv = '\uFEFF' + lines.join('\r\n');
-    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
-    const a = document.createElement('a');
-    a.href = URL.createObjectURL(blob);
-    a.download = slug(name) + '.csv';
-    document.body.append(a);
-    a.click();
-    a.remove();
-    URL.revokeObjectURL(a.href);
+        csvAmount(j?.docAmount), j?.note ?? '',
+      ];
+    });
+    downloadCsv(this.title || 'lignes', head, rows);
   }
 }
