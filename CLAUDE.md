@@ -13,10 +13,11 @@ Do not read other files "to understand the project". Open a file only when the
 task names it, the diff touches it, or a test/compile error points to it.
 
 ## Your role
-Claude Code writes the code for the module « Contrôle de trésorerie v2 ».
-The plan is docs/controle/PLAN-V2.md. Do ONE phase per session, in order.
-At the start of a phase: read the phase in the plan, then use plan mode and show
-the plan (files, steps, tests) before writing code.
+Claude Code implements the HYDRA core plan, one prompt = one branch.
+The plan is docs/core/PLAN-CORE.md. UX rules: docs/core/UX-RULES.md.
+Role routines (home page content): docs/core/ROLES-ROUTINES.md.
+At the start of a task: read the task, then use plan mode and show the plan
+(files, migrations, tests) before writing code.
 Business rules: tools/controle/analyse.py is the reference. The app must give the
 same numbers as that script on the same file.
 The human merges. Claude never merges and never pushes to main.
