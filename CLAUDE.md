@@ -45,7 +45,6 @@ The human merges. Claude never merges and never pushes to main.
 - Backend tests: `cd backend && ./mvnw -q test 2>&1 | tail -40`
 - One backend test class: `cd backend && ./mvnw -q test -Dtest=ClassName 2>&1 | tail -40`
 - Frontend build: `cd frontend && npm run build 2>&1 | grep -E "ERROR|error TS|✘" | head -20`
-- Known pre-existing failures (ignore until fixed): `TicketServiceTest` (2 NPEs).
 - The owner's Windows PC may have no JDK 21, Node or PostgreSQL. Do not install
   anything without asking. If a command is missing, rely on the GitHub Actions
   result for the branch instead (`gh run list --branch <branch> --limit 1`, or ask
