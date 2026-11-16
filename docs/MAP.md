@@ -24,11 +24,12 @@ section (grep the method, then read around it).
 | `mail` | `MailService` (interface), `MailServiceSmtp`, `MailServiceDisabled`, `MailConfig` | Optional email: SMTP when `HYDRA_MAIL_HOST` + `HYDRA_MAIL_FROM` set, disabled otherwise. `sendAfterCommit` defers to after-commit. 3 templates (reset/invite/changed). |
 | `security` | `PermissionService`, `FolderAccessService`, `ToxicPairService`, `HydraUserDetailsService`, `SessionRevoker`, `PasswordPolicy` (U1), `TemporaryPasswordGenerator` (U1), `PasswordChangeRequiredFilter` (U1) | Permissions, folder ACL, segregation of duties, password policy (min 12, blocklist, personal info), temp password generation, forced change at first login |
 | `user`, `role`, `auth` | `UserService` (~690), `UserController`, `MyProfileController` (U1, `/api/me`), `RoleService` (~250), `RoleController`, `AuthController` (login + last_login_at/first_login_at + password-policy + mail-status), `PasswordTokenService` (U2), `PasswordResetController` (U2), `ForgotPasswordRateLimiter` (U2) | Users (incl. absence, phone, job_title, last_login_at, password_changed_at, first_login_at), roles (with userCount + moduleKeys + confirm-impact + duplicate), login, my profile, forgotten password + invitation tokens. See `backend/docs/users.md`. |
-| `config` | `SecurityConfig`, `CorsConfig`, `BootstrapRunner`, `DemoDataRunner` (off by default since T9), `DevDataSeedRunner`, `config/demo/` (`DemoScenarioRunner`, `DemoTachesScenario`, `DemoScenario`, `InMemoryMultipartFile`) | Security, CORS, seeding. `@Profile("demo")` demo pack creates the « HYDRA Démo » company + 9 users + 1 chantier + 11 signalements; never touches the real company. See `docs/DEMO.md`. |
+| `tenant` | `TenantContext` (ThreadLocal org/user, `runAs`/`callAs`), `TenantContextFilter` (security chain, after auth; ids cached in session `HYDRA_TENANT`), `TenantAwareDataSource` (primary DataSource: `set_config('app.org_id'/'app.user_id')` on borrow, reset on close) | Core 1a: tenant on every DB connection (JPA + JdbcTemplate, transactional or autocommit). No RLS policy yet. See `docs/core/DB-ROLES.md` |
+| `config` | `DataSourceConfig` (primary tenant-aware DataSource + JdbcTemplate; `systemDataSource` / `@Qualifier("system") JdbcTemplate` with Flyway owner credentials, BootstrapRunner only), `SecurityConfig`, `CorsConfig`, `BootstrapRunner`, `DemoDataRunner` (off by default since T9), `DevDataSeedRunner`, `config/demo/` (`DemoScenarioRunner`, `DemoTachesScenario`, `DemoScenario`, `InMemoryMultipartFile`) | Security, CORS, seeding. `@Profile("demo")` demo pack creates the « HYDRA Démo » company + 9 users + 1 chantier + 11 signalements; never touches the real company. See `docs/DEMO.md`. |
 | `common`, `exception` | `GlobalExceptionHandler`, `BusinessRuleException` | Errors → HTTP |
 
-Migrations: `backend/src/main/resources/db/migration/`, last = **V57__controle_recap.sql**.
-Never edit an existing migration; the next one is V58.
+Migrations: `backend/src/main/resources/db/migration/`, last = **V58__tenant_context.sql**.
+Never edit an existing migration; the next one is V59.
 Recent ones: V38 rule columns · V39 FINANCE_ONLY rule · V40 step approvals (ALL mode) ·
 V41 project_member default · V42 role substitute · V43 opt-out seed · V44 absences ·
 V45 bordereau_version.source_document_id / source_revision · V46 two-level folder tree
@@ -55,7 +56,9 @@ RLS enabled on all 7 tables) ·
 V56 controle_articles (ctl_line: article / piece / raw_key + index org+raw_key;
 ctl_article_alias (org_id, raw_key) → article with version; RLS enabled) ·
 V57 controle_recap (ctl_account.kind += 'echeance'; ctl_line: rubrique / famille;
-ctl_recap (org_id, project, rubrique, amount) = Excel « Récap des dépenses par projet », replaced at each import; RLS enabled).
+ctl_recap (org_id, project, rubrique, amount) = Excel « Récap des dépenses par projet », replaced at each import; RLS enabled) ·
+V58 tenant_context (functions `hydra_current_org()` / `hydra_current_user()` from `app.org_id` / `app.user_id`;
+`hydra_login_lookup(email)` SECURITY DEFINER for login, execute revoked from public/anon/authenticated; no role, no policy).
 
 Key behaviours to remember:
 - A rule is enabled on a chantier unless `project_process_template.enabled = false` (opt-out).
@@ -88,6 +91,7 @@ Tests: `backend/src/test/java/tn/hydra/<package>/`. Test DB: `hydra_test` on
 - `MAP.md` — this file (update it when a module or big file is added)
 - `BORDEREAU-ANALYSIS.md` — bordereau structure and import rules
 - `SECURITY.md` — what is protected and the owner's security checklist
+- `core/DB-ROLES.md` — app role `hydra_app` vs owner (Flyway/system), SQL for the owner, system JdbcTemplate allow-list
 - `backend/docs/users.md` — user accounts: password policy, statuses, endpoints
 - `DEMO.md` — how to switch on the « HYDRA Démo » company + scenario pack
 - `TEST-CONTROLE.md` — manual test script for the Contrôle de trésorerie module
