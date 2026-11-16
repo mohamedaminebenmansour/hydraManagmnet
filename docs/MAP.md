@@ -93,6 +93,9 @@ Tests: `backend/src/test/java/tn/hydra/<package>/`. Test DB: `hydra_test` on
 - `TEST-CONTROLE.md` — manual test script for the Contrôle de trésorerie module
 - `controle/PLAN-V2.md` — Contrôle v2 plan: business rules, screens, phases
 - `controle/prototype.html`, `controle/sample.json` — Contrôle UI prototype and FAKE import sample
+- `core/PLAN-CORE.md` — HYDRA core plan: invariants, soft controls, layers, wave 1/2 steps
+- `core/UX-RULES.md` — UX rules for every screen (icons + words, grids, side panel, alerts)
+- `core/ROLES-ROUTINES.md` — what each role does daily to yearly; drives the home page « Mes actions »
 
 ## Tools — `tools/controle/`
 - `convert.py` — converts the company's cash Excel to the import JSON (line ids = sha1 of sheet|date|e|d|designation)
