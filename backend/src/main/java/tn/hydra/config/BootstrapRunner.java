@@ -1,5 +1,6 @@
 package tn.hydra.config;
 
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.CommandLineRunner;
 import org.springframework.core.annotation.Order;
@@ -8,6 +9,7 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Component;
 import tn.hydra.audit.EventLogService;
+import tn.hydra.tenant.TenantContext;
 
 import java.util.UUID;
 
@@ -15,6 +17,7 @@ import java.util.UUID;
 @Order(Ordered.HIGHEST_PRECEDENCE)  // run before DemoDataRunner so the org + owner exist
 public class BootstrapRunner implements CommandLineRunner {
 
+    /** System (owner) connection: runs before any org exists. See docs/core/DB-ROLES.md. */
     private final JdbcTemplate jdbc;
     private final PasswordEncoder encoder;
     private final EventLogService audit;
@@ -22,7 +25,7 @@ public class BootstrapRunner implements CommandLineRunner {
     @Value("${app.owner.email}")    private String ownerEmail;
     @Value("${app.owner.password}") private String ownerPassword;
 
-    public BootstrapRunner(JdbcTemplate jdbc, PasswordEncoder encoder, EventLogService audit) {
+    public BootstrapRunner(@Qualifier("system") JdbcTemplate jdbc, PasswordEncoder encoder, EventLogService audit) {
         this.jdbc = jdbc;
         this.encoder = encoder;
         this.audit = audit;
@@ -44,8 +47,11 @@ public class BootstrapRunner implements CommandLineRunner {
         jdbc.update("insert into user_role (user_id, role_id, assigned_by) values (?, ?, ?)",
                 userId, roleId, userId);
 
-        audit.logAs(orgId, userId, "ORG_BOOTSTRAPPED", "organization", orgId, null);
-        audit.logAs(orgId, userId, "USER_CREATED", "app_user", userId,
-                "{\"email\":\"" + ownerEmail + "\"}");
+        // The audit service uses the normal (tenant) connection: run it inside the new org.
+        TenantContext.runAs(orgId, userId, () -> {
+            audit.logAs(orgId, userId, "ORG_BOOTSTRAPPED", "organization", orgId, null);
+            audit.logAs(orgId, userId, "USER_CREATED", "app_user", userId,
+                    "{\"email\":\"" + ownerEmail + "\"}");
+        });
     }
 }

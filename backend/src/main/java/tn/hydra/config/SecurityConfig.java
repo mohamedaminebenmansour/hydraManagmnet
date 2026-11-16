@@ -20,6 +20,8 @@ import org.springframework.security.web.header.writers.ReferrerPolicyHeaderWrite
 import org.springframework.web.cors.CorsConfigurationSource;
 import tn.hydra.security.HydraUserDetailsService;
 import tn.hydra.security.PasswordChangeRequiredFilter;
+import tn.hydra.tenant.TenantContextFilter;
+import org.springframework.jdbc.core.JdbcTemplate;
 
 @Configuration
 @EnableWebSecurity
@@ -36,7 +38,7 @@ public class SecurityConfig {
     }
 
     @Bean
-    SecurityFilterChain filterChain(HttpSecurity http) throws Exception {
+    SecurityFilterChain filterChain(HttpSecurity http, JdbcTemplate jdbc) throws Exception {
         http
             .csrf(csrf -> csrf
                     .csrfTokenRepository(
@@ -73,6 +75,8 @@ public class SecurityConfig {
         http.addFilterAfter(new CsrfCookieFilter(), BasicAuthenticationFilter.class);
         // U1: force password change at first login (after authentication, before controllers)
         http.addFilterAfter(passwordChangeRequiredFilter, BasicAuthenticationFilter.class);
+        // Core 1a: org + user of the authenticated user on every DB connection of the request
+        http.addFilterAfter(new TenantContextFilter(jdbc), BasicAuthenticationFilter.class);
         return http.build();
     }
 
